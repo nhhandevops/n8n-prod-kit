@@ -130,6 +130,7 @@ make preflight && make up && make status && make smoke
 
 ## 6. Weekly notes (3 lines max per week)
 - **Week of 2026-10-06:** Plan done. Decide start date relative to SoBan progress; the kit's Compose base can be built alongside SoBan's Phase A infra.
+- **2026-10-07:** S0–S3 shipped in one day (repo public, compose core running, doctor/scale/read-only, bootstrap matrix green on GitHub). Lesson: hand-author in the main loop; big agent fan-outs die on the 5-hour session limit. Next: S4 smoke suite + CI.
 
 ## 7. Questions for An (AI agents: add here instead of guessing)
 - Browser check wanted when convenient: on Windows run `scp k8svm:~/n8nkit-root.crt $env:USERPROFILE\Downloads\` then (admin) `certutil -addstore -f ROOT $env:USERPROFILE\Downloads\n8nkit-root.crt`, open https://n8n.localtest.me:8443/ and log in as owner@example.com / KitSmoke123! (test owner created by the S2 verification; `make clean` wipes it).
