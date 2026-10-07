@@ -3,7 +3,7 @@
 > **Read this first on every machine, every session. Update it last, then `git push`.**
 > If it is not in git, it does not exist. This file is the only shared memory between computers and between AI coding sessions.
 
-**Last updated:** 2026-10-07 (planning) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** _none_ · **Project start date (T):** _not started — set when you begin_
+**Last updated:** 2026-10-07 (S1 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** 7964709 (chore: repo skeleton) · **Project start date (T):** 2026-10-07 (day of the first public push)
 
 ---
 
@@ -26,13 +26,14 @@
 | M3 · Public launch (docs site, posts) | T + 3 months | ⬜ |
 | M4 · Business (setups + retainers) | T + 6 months | ⬜ |
 
-**Health:** S0 complete 2026-10-07; S1 skeleton local on VM `server1`, public repo pending An's OK · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
+**Health:** S0 + S1 complete 2026-10-07 — repo public at https://github.com/nhhandevops/n8n-prod-kit, CI lint green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
 
 ---
 
 ## 2. Work log
 
 ### ✅ Done
+- 2026-10-07 · S1 repo bootstrap: public repo `nhhandevops/n8n-prod-kit` created, commit 7964709 pushed, CI lint green (run 37583413865), Dependabot alerts on, topics set. Personal details scrubbed from HANDOFF/bug log before the first push (`<vm-ip>`, `<vm-user>`).
 - 2026-10-06 · Plan and docs bundle created.
 - 2026-10-07 · Build host on the laptop = Ubuntu 26.04 VM `server1` in VMware (not WSL2); VM RAM raised 5 → 7 GB (`memsize = "7168"`) so the monitoring profile fits. Guest inspected: Docker 29.5.2 + Compose 5.1.4 already installed (containerd image store), `<vm-user>` in `docker` group, passwordless sudo, NTP synced, cgroup v2, AppArmor on; kubectl/helm/kind present. **Shared VM:** 5 other compose projects + host nginx run here: port 80 = host nginx, 443/81 = nginx-proxy-manager. Root disk 77 GB with 15 GB free; Docker build cache 12 GB reclaimable (0 active), unused images 6.7 GB, journal 1 GB. Missing tools: gh, age, rclone, shellcheck, yamllint, hadolint, mkdocs.
 - 2026-10-07 · VM prepared for S0: Docker build cache + unused images pruned (15 → 32 GB free); installed age 1.2.1, shellcheck 0.11, hadolint 2.15.1, yamllint 1.37, rclone 1.75.1, gh 2.102, mkdocs-material (venv `~/.venvs/mkdocs`, symlink `~/.local/bin/mkdocs`); git `core.autocrlf=false`, `init.defaultBranch=main`. Decision: kit runs on **8080/8443** on this VM (80/443 belong to the other projects); 80/443 are exercised on the demo VPS. VS Code Remote-SSH installed on the laptop. Windows hosts entry added 2026-10-07 (`n8n.localtest.me` → <vm-ip> verified).
@@ -40,10 +41,10 @@
 
 ### 🔄 In progress
 Format: `- [machine] [branch] what · started date · where it stopped · how to verify`
-- [VM server1] [main] **S1 repo bootstrap** · started 2026-10-07 · skeleton written to `~/src/n8n-prod-kit`, lint + first commit local; public repo creation waits for An's OK · verify: `cd ~/src/n8n-prod-kit && make lint && git log --oneline`
+_(nothing)_
 
 ### ⏭️ Next up (ordered)
-1. S1 finish: `gh repo create nhhandevops/n8n-prod-kit --public --source . --push` (after An's OK) → CI lint green on `main` → enable Pages + Dependabot alerts → set **T**.
+1. ~~S1 finish~~ done 2026-10-07. GitHub Pages gets enabled in S9 together with `docs.yml`.
 2. S2 — `compose/`: `versions.env` + `scripts/pin.sh`, `docker-compose.yml` (caddy, n8n-main + runners, n8n-webhook-1/2, n8n-worker-1/2 + runners, postgres 18, valkey, backup placeholder), `caddy/*`, `.env.example`, `scripts/{lib,init,render}.sh`, minimal Makefile, `scripts/bootstrap-host.sh` (apt/dnf). Re-typed with generic values, never copied from real config. On this VM: `HTTP_PORT=8080 HTTPS_PORT=8443`.
 3. `compose/.env.example` + `make init` (generates key/passwords, 600 perms) + `make preflight` + `make status`. TC-001…TC-004.
 4. Smoke suite `tests/smoke/*.sh` (login, webhook roundtrip, execution on worker, metrics). TC-005/006. GitHub Actions runs it on every PR.
@@ -124,4 +125,4 @@ _(none yet)_
 - ~~Pin which n8n version at start?~~ → **2.42.3** (decided 2026-10-06; re-verify latest stable when S2 starts).
 - ~~Which S3-compatible backup target for the demo?~~ → **Cloudflare R2** default, AWS S3 for Target B, both supported via `BACKUP_REMOTES`.
 - Where to verify the RHEL path with real SELinux/firewalld (not possible in containers)? Options: small AlmaLinux 9 VM on the K: USB SSD, or a one-off Rocky 9 VPS. Decide in S3.
-- Set **T** (project start) = the day S1 creates the repo? M0 (T + 2 weeks) is tight for ≈ 35 h of evenings + 3 outside testers; T + 3–4 weeks is more realistic.
+- ~~Set **T**~~ → T = 2026-10-07 (first public push). Planned M0 = 2026-10-21; realistic M0 ≈ early November 2026 (35 h of evenings + 3 outside testers).

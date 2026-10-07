@@ -6,7 +6,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 ## [Unreleased]
 
 ### Added
-- Repo skeleton (S1, 2026-10-07): public `README.md`, `CLAUDE.md`, MIT `LICENSE`, `.gitignore` / `.gitattributes` / `.editorconfig`, lint configs (`.yamllint`, `.hadolint.yaml`, `.shellcheckrc`), root `Makefile` with empty-safe `lint`, issue forms (bug / template request / question), PR template, `CODEOWNERS`, Dependabot (actions + backup Dockerfile), lint-only CI (`ci.yml`; actions pinned by commit SHA, hadolint sha256-pinned), placeholder READMEs for `templates/`, `terraform/`, `k8s/`.
+- Repo skeleton (S1, 2026-10-07): public `README.md`, `CLAUDE.md`, MIT `LICENSE`, `.gitignore` / `.gitattributes` / `.editorconfig`, lint configs (`.yamllint`, `.hadolint.yaml`, `.shellcheckrc`), root `Makefile` with empty-safe `lint`, issue forms (bug / template request / question), PR template, `CODEOWNERS`, Dependabot (actions + backup Dockerfile), lint-only CI (`ci.yml`; actions pinned by commit SHA, hadolint sha256-pinned), placeholder READMEs for `templates/`, `terraform/`, `k8s/`. Repo public + CI green the same day.
 - Build plan (`n8n Production Kit — Build Plan (readable).md`, 2026-10-06): compose services, Caddyfile, `.env.example`, Makefile targets, smoke suite + CI, backups, monitoring, 11 build sessions S0–S10.
 - Target C: Kubernetes Helm chart (`k8s/helm/n8n-kit`) scheduled as milestone M2.5.
 
