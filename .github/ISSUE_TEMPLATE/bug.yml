@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in the kit does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please run the commands below on the affected host and paste the output — it answers most questions up front.
+        **Never paste your `.env` values, keys or backup contents.** `make env-keys` prints key names only.
+  - type: input
+    id: kit-version
+    attributes:
+      label: Kit version
+      description: Output of `make -C compose version` (or the git tag / commit)
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: n8n-version
+    attributes:
+      label: n8n version
+      description: '`N8N_VERSION` from `compose/versions.env`'
+      placeholder: 2.42.3
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Deployment target
+      options:
+        - A — Docker Compose (VPS / local)
+        - B — Terraform AWS
+        - C — Helm chart
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Host OS and Docker version
+      placeholder: Ubuntu 24.04, Docker 29.x, Compose 2.x
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: '`make -C compose doctor` output'
+      render: text
+  - type: textarea
+    id: status
+    attributes:
+      label: '`make -C compose status` output'
+      render: text
+  - type: textarea
+    id: env-keys
+    attributes:
+      label: '`make -C compose env-keys` output (key NAMES only)'
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: '`make -C compose logs SERVICE=… SINCE=10m`, redacted'
+      render: text

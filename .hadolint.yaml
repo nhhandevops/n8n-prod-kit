@@ -1,0 +1,4 @@
+# DL3018 (apk add without version pins): base images are pinned by digest and every
+# downloaded binary is sha256-pinned, so apk pins would only add churn without safety.
+ignored:
+  - DL3018

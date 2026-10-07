@@ -1,0 +1,17 @@
+name: Question
+description: Ask about using the kit, sizing, migration from n8n Cloud, or paid help
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: Include your target (Compose / AWS / Helm), rough scale (workflows, executions per day) and what you have tried
+    validations:
+      required: true
+  - type: checkboxes
+    id: paid
+    attributes:
+      label: Paid help
+      options:
+        - label: I am interested in paid setup, migration, or managed hosting

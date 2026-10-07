@@ -1,0 +1,10 @@
+extends: default
+
+rules:
+  line-length:
+    max: 160
+  truthy: disable            # GitHub Actions `on:` keys
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1   # `uses: x@sha # v1.2.3`
+  comments-indentation: disable

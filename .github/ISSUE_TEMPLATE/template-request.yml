@@ -1,0 +1,29 @@
+name: Workflow template request
+description: Suggest a ready-to-import n8n workflow for the templates library
+labels: ["templates"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Template name
+      placeholder: zalo-order-confirmation
+    validations:
+      required: true
+  - type: textarea
+    id: usecase
+    attributes:
+      label: What business problem does it solve, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: flow
+    attributes:
+      label: Trigger → steps → output
+      description: Which services are involved (Zalo OA, VietQR, Google Sheets, Google Chat, …) and what credentials they need
+    validations:
+      required: true
+  - type: textarea
+    id: test
+    attributes:
+      label: How could it be tested automatically?
+      description: A sample payload and the expected result, if you have one

@@ -1,0 +1,26 @@
+# --- secrets and local state (never commit) ---
+compose/.env
+compose/secrets/*
+compose/backups/*
+compose/.smoke/
+compose/.upgrade/
+*.age
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# --- generated ---
+compose/compose.scale.yml
+compose/monitoring/prometheus/targets/*.json
+site/
+
+# --- tooling ---
+.venv/
+__pycache__/
+.DS_Store
+Thumbs.db
+
+# --- keep ---
+!*.example
+!**/.gitkeep

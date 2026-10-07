@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["ci", "dependencies"]
+
+  # Backup sidecar base image (compose service images are pinned via `make pin`, not here)
+  - package-ecosystem: docker
+    directory: /compose/backup
+    schedule:
+      interval: weekly
+    labels: ["compose", "dependencies"]
