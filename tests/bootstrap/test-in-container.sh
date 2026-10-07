@@ -170,10 +170,20 @@ run_one() {   # $1 image  $2 slug
 
   t0="${SECONDS}"
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    printf '### pulling (not present locally)\n' >>"${logf}"
-    if ! docker pull -q "${image}" >>"${logf}" 2>&1; then
+    # Registries answer transient 5xx / token errors now and then (seen on public.ecr.aws from a GitHub runner):
+    # three attempts with growing pauses before the image counts as unpullable.
+    local attempt pulled=0
+    for attempt in 1 2 3; do
+      printf '### pulling (not present locally), attempt %s\n' "${attempt}" >>"${logf}"
+      if docker pull -q "${image}" >>"${logf}" 2>&1; then
+        pulled=1
+        break
+      fi
+      sleep $(( attempt * 10 ))
+    done
+    if (( pulled == 0 )); then
       pull_s=$(( SECONDS - t0 ))
-      printf 'status=PULL-FAIL pull=%s note=registry-pull-failed(see-log)\n' "${pull_s}" >"${result}"
+      printf 'status=PULL-FAIL pull=%s note=registry-pull-failed-after-3-attempts(see-log)\n' "${pull_s}" >"${result}"
       return 0
     fi
   fi
@@ -243,6 +253,16 @@ print_table() {
     printf '%-3s %-44s %-9s %5s %6s %6s %-8s %-7s %s\n' \
       "${i}" "${IMAGE_LIST[i - 1]}" "${status}" "${kv[pull]:-?}s" "${kv[t1]:-?}s" "${kv[t2]:-?}s" \
       "${kv[docker]:-?}" "${kv[compose]:-?}" "${kv[note]:-no-result-file}" >&2
+  done
+  # CI only ever sees stdout/stderr, never ${LOG_DIR}: show the tail of every non-PASS image's log right here,
+  # so a registry error or a failing dnf transaction is visible without re-running anything.
+  for slug in "${SLUGS[@]}"; do
+    result="${LOG_DIR}/${slug}.result"
+    if [[ ! -f "${result}" ]] || ! grep -q '^status=PASS' "${result}"; then
+      log ""
+      log "---- ${slug}: last 25 lines of ${LOG_DIR}/${slug}.log"
+      tail -n 25 "${LOG_DIR}/${slug}.log" 2>/dev/null | sed 's/^/    /' >&2 || true
+    fi
   done
   log ""
   log "logs: ${LOG_DIR}/<slug>.log  (slugs: ${SLUGS[*]})"
