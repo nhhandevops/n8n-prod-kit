@@ -89,6 +89,18 @@ Each line: symptom you would have seen → root cause → fix. Verified on n8n 2
 - **Root cause:** expected — the external task runner sandbox blocks `process`/env access (N8N_BLOCK_ENV_ACCESS_IN_NODE, 2.x default). My smoke test used `process.version`.
 - **Fix:** keep test Code nodes to pure JS over `$input`/`$execution`; this is the security feature working, not a kit bug.
 
+## 2026-10-07 · Remote script dies silently right after `make up` / `docker compose up`
+
+- **Symptom:** a script sent to the VM as `ssh host 'bash -s' <<'EOF' … EOF` prints nothing after the `compose up` step; later commands never run, no error.
+- **Root cause:** `bash -s` reads the script from stdin and `docker compose up` (and `make up`) also read stdin — they swallow the rest of the script.
+- **Fix:** copy the script to a file first (`ssh host 'cat > /tmp/x.sh' <<'EOF' … EOF; ssh host 'bash /tmp/x.sh </dev/null'`), or redirect stdin of such commands from /dev/null.
+
+## 2026-10-07 · shellcheck SC2016 on a `printf '…`cmd`…'` line
+
+- **Symptom:** `make lint` fails with SC2016 "Expressions don't expand in single quotes" on a comment-generating printf.
+- **Root cause:** backticks inside a single-quoted string look like a command substitution to shellcheck's heuristic.
+- **Fix:** drop the backticks in generated comments (or use double quotes with escaping when expansion is wanted).
+
 ## 2026-10-07 · Every test container has "No route to host" / cannot resolve DNS on the build VM
 
 - **Symptom:** the bootstrap container matrix failed 6/6 within a minute: `curl: (6) Could not resolve host: download.docker.com`, apt "Unable to locate package"; meanwhile the kit's own containers (user-defined networks) had full egress.

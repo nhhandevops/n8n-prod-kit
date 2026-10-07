@@ -1,0 +1,37 @@
+name: bootstrap-matrix
+
+# Runs scripts/bootstrap-host.sh inside a container of every supported distribution (install-only: no daemon) and
+# asserts docker + compose >= 2.30 come out — weekly, on changes to the script or the harness, and on demand.
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # Mondays 03:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - scripts/bootstrap-host.sh
+      - tests/bootstrap/**
+      - .github/workflows/bootstrap-matrix.yml
+  pull_request:
+    paths:
+      - scripts/bootstrap-host.sh
+      - tests/bootstrap/**
+      - .github/workflows/bootstrap-matrix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The harness pulls its base images from Docker-Hub-quota-free mirrors (public.ecr.aws, quay.io), so no login.
+      - name: Run the matrix
+        run: make bootstrap-test

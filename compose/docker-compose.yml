@@ -17,11 +17,11 @@
 # Every image reference is `<image>:<tag>@<digest>`; the `${X_DIGEST:?run make pin}` guard makes `compose config` fail with that exact
 # message instead of silently pulling a floating tag when versions.env is incomplete.
 #
-# TECH DEBT (S3): the five n8n services (main, webhooks, workers) are NOT `read_only`. n8n writes outside its two volumes — /tmp for
-# node temp files, ~/.npm and ~/.cache during community-node installs, the entrypoint's certificate handling — and the exact set of
-# paths has not been verified against the 2.42 image yet. Guessing a tmpfs list and shipping a stack that breaks on the first
-# community-node install is worse than a writable overlay for one session; S3 verifies the write set and flips `read_only: true`
-# (caddy, postgres, valkey and the runners sidecars are already read-only, each with a verified tmpfs/volume layout).
+# Every container has a read-only root filesystem. For the five n8n processes the write set outside their two volumes was
+# measured with `docker diff` after a real workload (S3): main writes its compiled editor assets to /home/node/.cache, every
+# role writes temp files to /tmp (n8nDataTableUploads), and community-node installs use npm's cache in /home/node/.npm — those
+# three paths are tmpfs; everything else is the n8n_data / n8n_files volumes. (caddy, postgres, valkey and the runners sidecars
+# have their own verified tmpfs/volume layout.)
 #
 # Hardening that IS in place on every service: `restart: unless-stopped`, `no-new-privileges`, `cap_drop: [ALL]` (caddy re-adds the one
 # capability its binary carries as a file capability), a memory limit from .env (MEM_LIMIT_*), json-file logs capped at 20 MB x 5, a
@@ -62,6 +62,14 @@ x-n8n-base: &n8n-base
     - no-new-privileges:true
   cap_drop:
     - ALL
+  # read-only rootfs; the three tmpfs mounts are the measured write set (see the header). Node's /tmp usage includes the
+  # data-table upload staging dir; ~/.cache holds the editor bundle main compiles at start; ~/.npm is npm's cache for
+  # community-node installs (the packages themselves land in the n8n_data volume under nodes/).
+  read_only: true
+  tmpfs:
+    - /tmp
+    - /home/node/.cache
+    - /home/node/.npm
   logging: *logging
   networks:
     - internal
@@ -392,10 +400,6 @@ services:
     networks:
       - proxy
       - internal
-    # main is the process that imports/installs things (community nodes via npm, workflow import); keep its temp files on a tmpfs
-    # rather than the container overlay. (Not read_only in S2 — see the header.)
-    tmpfs:
-      - /tmp
     environment:
       <<: *n8n-env
       # manual (editor "Test workflow") runs go to the workers too: main then starts NO task broker/runner (verified) and stays responsive.

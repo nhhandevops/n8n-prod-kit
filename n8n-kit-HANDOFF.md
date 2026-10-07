@@ -3,7 +3,7 @@
 > **Read this first on every machine, every session. Update it last, then `git push`.**
 > If it is not in git, it does not exist. This file is the only shared memory between computers and between AI coding sessions.
 
-**Last updated:** 2026-10-07 (S2 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** 7964709 (chore: repo skeleton) · **Project start date (T):** 2026-10-07 (day of the first public push)
+**Last updated:** 2026-10-07 (S3 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** 7964709 (chore: repo skeleton) · **Project start date (T):** 2026-10-07 (day of the first public push)
 
 ---
 
@@ -19,20 +19,21 @@
 
 | Milestone | Target | State |
 |---|---|---|
-| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S2 of S10 done (compose core runs); S3–S10 pending |
+| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S3 of S10 done (compose core + doctor/scale/read-only); S4–S10 pending |
 | M1 · Batteries (backups, monitoring, runbooks, 5 templates) | T + 5 weeks | ⬜ |
 | M2 · Terraform AWS | T + 8 weeks | ⬜ |
 | M2.5 · Kubernetes Helm chart (Target C) | T + 10 weeks | ⬜ |
 | M3 · Public launch (docs site, posts) | T + 3 months | ⬜ |
 | M4 · Business (setups + retainers) | T + 6 months | ⬜ |
 
-**Health:** S0–S2 complete 2026-10-07 — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
+**Health:** S0–S3 complete 2026-10-07 — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
 
 ---
 
 ## 2. Work log
 
 ### ✅ Done
+- 2026-10-07 · **S3 operability + RHEL path shipped**: `make doctor` (TC-026 with `DOCTOR_SIMULATE`), `make scale-workers N=` (TC-007: 2→4→1→2 verified, `N=1` parks the static worker-2 pair behind a Compose profile), every n8n container now `read_only` with a measured tmpfs set (/tmp, ~/.cache, ~/.npm — `docker diff` after a real workload), `docs/operations/rhel-hosts.md`, weekly `bootstrap-matrix.yml`. Hand-authored in the main loop (no agent fan-out) within one session window.
 - 2026-10-07 · **S2 compose core shipped**: `compose/` (docker-compose.yml, compose.dev.yml, versions.env, Caddyfile + snippets, .env.example, scripts: lib/init/render/pin/preflight/status/dev-ca/trust-ca/lint, Makefile, README), `scripts/bootstrap-host.sh`, `tests/bootstrap/test-in-container.sh`, root `make bootstrap-test`. Verified on the VM: `make init DOMAIN=n8n.localtest.me HTTP_PORT=8080 HTTPS_PORT=8443` → `make up` → 10/10 healthy in 2m28s; 308 redirect keeps the port; every path routes to the right upstream (`X-Kit-Upstream`); owner setup + API key + workflow publish via REST/public API; 3 webhook POSTs → 200 via the pool, executions success on workers, Code node ran in the runners sidecar; dev CA trusted by curl via `make trust-ca`. TC-001, TC-003, TC-004, TC-005 (manual) pass. Bootstrap matrix (`make bootstrap-test`): 6/6 PASS — Ubuntu 24.04/26.04, Debian 13, Rocky 9/10, Alma 9 → docker-ce 29.8.2 + compose 5.6.0, second run idempotent ≤ 1 s. Method: fact sweep (6 agents) → contract → files written by agents and by hand; the two agent authoring runs died on the 5-hour session limit, the main loop finished the make-ops group.
 - 2026-10-07 · S1 repo bootstrap: public repo `nhhandevops/n8n-prod-kit` created, commit 7964709 pushed, CI lint green (run 37583413865), Dependabot alerts on, topics set. Personal details scrubbed from HANDOFF/bug log before the first push (`<vm-ip>`, `<vm-user>`).
 - 2026-10-06 · Plan and docs bundle created.
@@ -46,7 +47,8 @@ _(nothing)_
 
 ### ⏭️ Next up (ordered)
 1. ~~S1 finish~~ done 2026-10-07. GitHub Pages gets enabled in S9 together with `docs.yml`.
-2. S2 — `compose/`: `versions.env` + `scripts/pin.sh`, `docker-compose.yml` (caddy, n8n-main + runners, n8n-webhook-1/2, n8n-worker-1/2 + runners, postgres 18, valkey, backup placeholder), `caddy/*`, `.env.example`, `scripts/{lib,init,render}.sh`, minimal Makefile, `scripts/bootstrap-host.sh` (apt/dnf). Re-typed with generic values, never copied from real config. On this VM: `HTTP_PORT=8080 HTTPS_PORT=8443`.
+2. ~~S2~~ ~~S3~~ done 2026-10-07. S4 next: smoke suite (`tests/smoke/*`), `ci.yml` smoke job, `weekly-latest-n8n.yml`, `docs/compat.md`.
+2. (S2 scope, done) `compose/`: `versions.env` + `scripts/pin.sh`, `docker-compose.yml` (caddy, n8n-main + runners, n8n-webhook-1/2, n8n-worker-1/2 + runners, postgres 18, valkey, backup placeholder), `caddy/*`, `.env.example`, `scripts/{lib,init,render}.sh`, minimal Makefile, `scripts/bootstrap-host.sh` (apt/dnf). Re-typed with generic values, never copied from real config. On this VM: `HTTP_PORT=8080 HTTPS_PORT=8443`.
 3. `compose/.env.example` + `make init` (generates key/passwords, 600 perms) + `make preflight` + `make status`. TC-001…TC-004.
 4. Smoke suite `tests/smoke/*.sh` (login, webhook roundtrip, execution on worker, metrics). TC-005/006. GitHub Actions runs it on every PR.
 5. Backups: `backup/backup.sh` (pg_dump + key bundle → age → S3/R2), `restore.sh`, `restore-test.sh`, cron sidecar. TC-011…TC-013.
@@ -118,13 +120,12 @@ make preflight && make up && make status && make smoke
 ---
 
 ## 5. Known issues / tech debt
-- n8n services (main/webhooks/workers) are not `read_only` — write set of the 2.42 image unverified (S3: verify, add tmpfs list, flip).
 - Shared `/home/node/.n8n` volume: `crash.journal` is shared too, so a process starting while another runs logs "Last session crashed" once; evaluate per-role volumes vs community-node sharing (S3).
 - Postgres logged `invalid input syntax for type integer: "NaN"` twice during API-key/workflow creation via the public API — reproduce and report upstream if it recurs (S4 smoke will tell).
 - Runners sidecars are on the internal (no-egress) network only; whether Code-node `fetch`/http needs egress is unverified (S3 real-workflow check).
-- `WORKER_REPLICAS=1` still starts the static worker-2 (`make scale-workers` in S3 handles ≤2 with `--scale`/profiles).
 - Docker Hub anonymous pull quota (100/h per IP) bites shared hosts and CI: `pin.sh` has a Hub-API fallback; CI should `docker login` or use ghcr.io/n8n-io/* (S4).
 - `make lint` runs `caddy validate` 12× in a container (~15 s); fine locally, keep an eye on CI time.
+- `make doctor` cannot check certificate expiry in `TLS_MODE=internal` (12 h leaf certs are normal there) — it reports the mode instead; ACME modes are checked.
 - Build-process lesson: a 20-agent workflow cannot survive the 5-hour session limit; author with ≤ 6 agents per run or by hand, and keep each run resumable.
 
 ## 6. Weekly notes (3 lines max per week)

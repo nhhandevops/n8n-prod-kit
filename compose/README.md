@@ -38,12 +38,14 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make restart SERVICE=n8n-main` | restart one service |
 | `make down` / `make up` | stop / start (volumes and `.env` are kept) |
 | `make preflight` | re-check host, ports, DNS, disk, clock |
+| `make doctor` | diagnose: versions, health + last logs of unhealthy services, certificate, disk, Postgres/Valkey state, dangerous settings — every FAIL comes with its fix |
+| `make scale-workers N=4` | 1–16 workers (each with its runner sidecar); `N=1` parks worker 2 |
 | `make pin N8N_VERSION=2.42.5` | move the n8n pin (and the runners sidecar with it); then `make up` |
 | `make lint` | shellcheck + yamllint + compose config + `caddy validate` for every mode |
 | `make env-keys` | key names of `.env` for bug reports (never paste values) |
 | `make clean` | destroys containers **and volumes**; asks for the word `destroy` |
 
-Scaling: set `WORKER_REPLICAS` (3–16) in `.env` and run `make up` — `render` generates `compose.scale.yml` with the extra workers and their runner sidecars. `WORKER_CONCURRENCY` is jobs per worker.
+Scaling: `make scale-workers N=<1..16>` writes `WORKER_REPLICAS`, regenerates `compose.scale.yml` (extra workers + sidecars, or a parked worker 2 for `N=1`) and converges the stack. `WORKER_CONCURRENCY` is jobs per worker.
 
 ## Modes and knobs (all in `.env`, every key is commented in `.env.example`)
 
@@ -54,6 +56,6 @@ Scaling: set `WORKER_REPLICAS` (3–16) in `.env` and run `make up` — `render`
 
 ## Known limits in this version
 
-- Backups (`make backup-now` / `restore`), monitoring (`--profile monitoring`), `make upgrade` / `rollback` / `doctor` / `chaos` arrive in the next sessions (see `n8n-kit-HANDOFF.md`).
-- The n8n containers are not `read_only` yet (their write set is being verified); Caddy, Postgres, Valkey and the runners are.
+- Backups (`make backup-now` / `restore`), monitoring (`--profile monitoring`), `make upgrade` / `rollback` / `chaos` arrive in the next sessions (see `n8n-kit-HANDOFF.md`).
+- RHEL-family hosts: see `docs/operations/rhel-hosts.md` (install path verified in containers; a real SELinux + firewalld host run is still pending).
 - All n8n processes share one `/home/node/.n8n` volume (community nodes must be visible to every worker); a worker starting while another process was writing may log "Last session crashed" once — harmless.
