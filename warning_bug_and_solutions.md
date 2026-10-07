@@ -88,3 +88,10 @@ Each line: symptom you would have seen → root cause → fix. Verified on n8n 2
 - **Symptom:** a webhook workflow returns 500; the worker logs `ReferenceError: process is not defined` from the Code node.
 - **Root cause:** expected — the external task runner sandbox blocks `process`/env access (N8N_BLOCK_ENV_ACCESS_IN_NODE, 2.x default). My smoke test used `process.version`.
 - **Fix:** keep test Code nodes to pure JS over `$input`/`$execution`; this is the security feature working, not a kit bug.
+
+## 2026-10-07 · Every test container has "No route to host" / cannot resolve DNS on the build VM
+
+- **Symptom:** the bootstrap container matrix failed 6/6 within a minute: `curl: (6) Could not resolve host: download.docker.com`, apt "Unable to locate package"; meanwhile the kit's own containers (user-defined networks) had full egress.
+- **Root cause:** the default bridge `docker0` on the long-lived VM was link-DOWN with no IPv4 address (only fe80::), so containers on the default network had no gateway. User-defined bridges (`n8nkit_proxy`, compose networks) were unaffected.
+- **Verify:** `ip -4 -br addr show docker0` (empty = broken); `docker run --rm ubuntu:24.04 bash -c "</dev/tcp/1.1.1.1/443"` → "No route to host".
+- **Fix:** `sudo ip addr add 172.17.0.1/16 dev docker0 && sudo ip link set docker0 up` (no daemon restart, other projects untouched); the test harness now creates its own network (`--network <prefix>-net`) so it never depends on docker0.

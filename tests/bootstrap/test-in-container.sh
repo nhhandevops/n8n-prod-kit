@@ -183,7 +183,7 @@ run_one() {   # $1 image  $2 slug
   # then pipes it into bash exactly like a user would). Proxy variables are passed
   # through only when set on the host (docker's `-e NAME` semantics).
   t0="${SECONDS}"
-  docker run --rm -i --name "${name}" --label "${NAME_PREFIX}=1" \
+  docker run --rm -i --name "${name}" --label "${NAME_PREFIX}=1" --network "${TEST_NET}" \
     -e "IDEMPOTENT_MAX_SECONDS=${IDEMPOTENT_MAX_SECONDS}" \
     -e http_proxy -e https_proxy -e no_proxy -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \
     "${image}" bash -c "${INNER}" <"${BOOTSTRAP}" >>"${logf}" 2>&1 || rc=$?
@@ -206,6 +206,7 @@ cleanup_on_signal() {
   for n in "${STARTED_NAMES[@]}"; do
     docker rm -f "${n}" >/dev/null 2>&1 || true
   done
+  docker network rm "${TEST_NET:-}" >/dev/null 2>&1 || true
   exit 130
 }
 
@@ -303,6 +304,12 @@ main() {
 
   trap cleanup_on_signal INT TERM
 
+  # A bridge network of our own for the test containers: it does not depend on the host's default bridge
+  # (on a long-lived VM docker0 was once found DOWN without an IPv4 address — every container got "No route
+  # to host" and the whole matrix failed on DNS) and it is removed together with the containers.
+  TEST_NET="${NAME_PREFIX}-net"
+  docker network inspect "${TEST_NET}" >/dev/null 2>&1 || docker network create --label "${NAME_PREFIX}=1" "${TEST_NET}" >/dev/null
+
   idx=0
   for image in "${IMAGE_LIST[@]}"; do
     slug="${SLUGS[idx]}"
@@ -318,6 +325,7 @@ main() {
   done
   wait
   trap - INT TERM
+  docker network rm "${TEST_NET}" >/dev/null 2>&1 || true
 
   print_table
   if [[ "${FAILURES}" -eq 0 ]]; then
