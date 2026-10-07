@@ -15,7 +15,7 @@ bootstrap-test: ## Run scripts/bootstrap-host.sh inside Ubuntu/Debian/Rocky/Alma
 	@tests/bootstrap/test-in-container.sh
 
 lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then compose/ lint if present
-	@if [ -n "$(SH_FILES)" ]; then shellcheck $(SH_FILES) && echo "shellcheck: OK"; else echo "shellcheck: no .sh files yet"; fi
+	@if [ -n "$(SH_FILES)" ]; then shellcheck -x $(SH_FILES) && echo "shellcheck: OK"; else echo "shellcheck: no .sh files yet"; fi
 	@if [ -n "$(DOCKERFILES)" ]; then hadolint $(DOCKERFILES) && echo "hadolint: OK"; else echo "hadolint: no Dockerfiles yet"; fi
 	@if [ -n "$(YAML_FILES)" ]; then yamllint -s $(YAML_FILES) && echo "yamllint: OK"; else echo "yamllint: no YAML yet"; fi
 	@if [ -f compose/Makefile ]; then $(MAKE) -C compose lint; fi

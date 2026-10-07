@@ -199,7 +199,7 @@ run_one() {   # $1 image  $2 slug
 
 # Ctrl-C / TERM: `docker run --rm` containers would otherwise keep installing
 # packages in the background until their own exit.
-# shellcheck disable=SC2329  # reached through the INT/TERM trap, not by a direct call
+# shellcheck disable=SC2329,SC2317  # reached through the INT/TERM trap, not by a direct call (SC2317 = older shellcheck's code)
 cleanup_on_signal() {
   local n
   fail "interrupted — removing containers"
