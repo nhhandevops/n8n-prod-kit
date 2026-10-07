@@ -5,7 +5,7 @@
 
 Production-grade self-hosted **n8n** in 15 minutes: queue mode (main + webhook processors + workers + task runners), Postgres, Valkey, automatic TLS, encrypted off-host backups with weekly restore tests, Prometheus / Grafana / Loki monitoring, and safe upgrade / rollback — as **Docker Compose** for a VPS, **Terraform** for AWS, and a **Helm chart** for Kubernetes. Plus ready-to-import workflow templates for Vietnamese businesses (Zalo, VietQR, Google Sheets, Google Chat, AI FAQ bot).
 
-> **Status: building in public — nothing runnable yet.** The Compose kit (milestone M0) is being built session by session; progress lives in [`n8n-kit-HANDOFF.md`](n8n-kit-HANDOFF.md). Star / watch the repo if you want to be told when `make up` works.
+> **Status: building in public.** The Compose core runs (queue mode, TLS, `make init / up / status / doctor / scale-workers`) — see [`compose/README.md`](compose/README.md). Backups, monitoring, upgrades and the docs site are still being built; progress lives in [`n8n-kit-HANDOFF.md`](n8n-kit-HANDOFF.md). Not production-ready until v0.1.0.
 
 ## Why this exists
 
@@ -66,7 +66,7 @@ make preflight && make up && make status                        # DNS, ports, di
 compose/      Docker Compose kit (Target A)        docs/        MkDocs site
 terraform/    AWS (Target B)                       templates/   importable n8n workflows
 k8s/          Helm chart (Target C)                tests/       smoke + bootstrap tests
-scripts/      bootstrap-host.sh (apt + dnf)        n8n-kit-*.md project plan, handoff, changelog
+scripts/      bootstrap-host.sh (apt + dnf)        n8n-kit-*.md plan, build plan, handoff, changelog
 ```
 
 ## Need help?

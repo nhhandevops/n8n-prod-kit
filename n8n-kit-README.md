@@ -9,6 +9,7 @@ Owner: An · Planned: 2026-10-06 · Status: planning (not started) · License: M
 | File | What it is | When to read it |
 |---|---|---|
 | `n8n-kit-PLAN.md` | Problem, users, usage, benefits, forecast · Architecture for both targets (HA / scalability / fault tolerance / resilience / security) · Demo script, 26 test cases, change-logging process | Before building anything |
+| `n8n-kit-BUILD-PLAN.md` | Session-by-session build plan S0–S10 (services, Caddyfile, Makefile targets, smoke suite, backups, monitoring); §8–§11 superseded by the code where they differ | At the start of every build session |
 | `n8n-kit-HANDOFF.md` | Living status: done / in progress / next / blockers / decisions / how to resume on any machine | **First read of every session, last update of every session** |
 | `n8n-kit-CHANGELOG.md` | Kit releases and the n8n versions each was tested with | When shipping or looking something up |
 

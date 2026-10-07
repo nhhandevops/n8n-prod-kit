@@ -3,13 +3,15 @@
 > **Read this first on every machine, every session. Update it last, then `git push`.**
 > If it is not in git, it does not exist. This file is the only shared memory between computers and between AI coding sessions.
 
-**Last updated:** 2026-10-07 (S3 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** 120b83d (test(bootstrap): retry pulls, print failed logs) — S3 complete · **Project start date (T):** 2026-10-07 (day of the first public push)
+**Last updated:** 2026-10-07 end of day (S0–S3 done, hand-off) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** see `git log -1` (the hand-off commit "docs(handoff): …") · **Project start date (T):** 2026-10-07 (day of the first public push)
+
+> **Picking this up on another computer?** `git pull` → read §2 "Next up" (S4 is next, with a starting recipe) → §4 "How to resume" (generic steps for any Linux / WSL2 / VM host) → `n8n-kit-BUILD-PLAN.md` §12 + §15 for the S4 details. Nothing is in progress and nothing is uncommitted.
 
 ---
 
 ## 0. The protocol (do not skip)
 
-**Start of session:** `git pull` → read this file → check Blockers and In progress → `make -C compose smoke` (once it exists).
+**Start of session:** `git pull` → read this file → check Blockers and In progress → `make lint` and, on a machine with a dev stack, `make -C compose up && make -C compose status && make -C compose doctor` (from S4 on: `make -C compose smoke`).
 **End of session:** run the relevant tests (`make -C compose smoke`, `terraform validate`) → commit (Conventional Commits) on a pushed branch → update `n8n-kit-CHANGELOG.md` Unreleased → update sections 1, 2, 3, 5 here + the "Last updated" line → `git push`.
 **AI agents:** same protocol. This repo is **public**: never paste real domains, IPs, keys, or anything from An's work infrastructure into code, docs, examples, or this file. Use `example.com` and generated values.
 
@@ -26,7 +28,9 @@
 | M3 · Public launch (docs site, posts) | T + 3 months | ⬜ |
 | M4 · Business (setups + retainers) | T + 6 months | ⬜ |
 
-**Health:** S0–S3 complete 2026-10-07 — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
+**Health:** S0–S3 complete 2026-10-07 — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.4 (+ `n8nio/runners:2.42.4`, digests in `compose/versions.env`) — check for a newer 2.x stable at the start of S4 (`gh api repos/n8n-io/n8n/releases/latest --jq .tag_name`; then `make -C compose pin N8N_VERSION=x`)
+
+**Hand-off test run (2026-10-07, HEAD cf388ca, build VM): 18/18 PASS** — `make lint`; `make up` (96 s, 10/10 healthy); `make status`; `make doctor` (0 FAIL, 1 expected warn: backups not configured yet); `DOCTOR_SIMULATE` exits non-zero with injected FAILs; http→https redirect keeps the dev port; UI/API/`*-test` paths → n8n-main and production paths → webhook pool (`X-Kit-Upstream`); security headers present, `Server` removed; webhook → queue → worker → runner Code-node round trip; `scale-workers N=3` (generated worker-3 read-only) and back to 2; every container read-only, zero EROFS/EACCES in logs; `make down`; GitHub `ci` and `bootstrap-matrix` (6/6 distros) green.
 
 ---
 
@@ -43,23 +47,19 @@
 
 ### 🔄 In progress
 Format: `- [machine] [branch] what · started date · where it stopped · how to verify`
-_(nothing)_
+_(nothing — everything is committed and pushed. The dev stack on the build VM is DOWN with its volumes and `.env` kept; `make -C compose up` restores it in ~2 min.)_
 
-### ⏭️ Next up (ordered)
-1. ~~S1 finish~~ done 2026-10-07. GitHub Pages gets enabled in S9 together with `docs.yml`.
-2. ~~S2~~ ~~S3~~ done 2026-10-07. S4 next: smoke suite (`tests/smoke/*`), `ci.yml` smoke job, `weekly-latest-n8n.yml`, `docs/compat.md`.
-2. (S2 scope, done) `compose/`: `versions.env` + `scripts/pin.sh`, `docker-compose.yml` (caddy, n8n-main + runners, n8n-webhook-1/2, n8n-worker-1/2 + runners, postgres 18, valkey, backup placeholder), `caddy/*`, `.env.example`, `scripts/{lib,init,render}.sh`, minimal Makefile, `scripts/bootstrap-host.sh` (apt/dnf). Re-typed with generic values, never copied from real config. On this VM: `HTTP_PORT=8080 HTTPS_PORT=8443`.
-3. `compose/.env.example` + `make init` (generates key/passwords, 600 perms) + `make preflight` + `make status`. TC-001…TC-004.
-4. Smoke suite `tests/smoke/*.sh` (login, webhook roundtrip, execution on worker, metrics). TC-005/006. GitHub Actions runs it on every PR.
-5. Backups: `backup/backup.sh` (pg_dump + key bundle → age → S3/R2), `restore.sh`, `restore-test.sh`, cron sidecar. TC-011…TC-013.
-6. Monitoring: Prometheus, Grafana provisioning (3 dashboards), Loki/Promtail, Uptime Kuma, alert rules → Telegram. TC-017/018.
-7. `make upgrade` / `make rollback` / `make scale-workers` / `make doctor`. TC-014/015/026.
-8. Chaos script `make chaos` + TC-008/009/010.
-9. Docs site (MkDocs Material): quickstart, architecture (diagram), operations runbooks, security checklist, sizing table. Have 3 people run the quickstart (TC-025) → **M0/M1**.
-10. First 5 templates with README + test payload + template tests: `zalo-form-notify`, `vietqr-payment-link`, `sheets-order-log`, `gchat-approval`, `ai-faq-bot`. TC-021/022.
-11. Terraform AWS modules; `plan` snapshot tests; weekly sandbox `apply`/`destroy`; cost table. TC-023/024 → **M2**.
-12. Weekly `latest-n8n` workflow + `docs/compat.md`.
-13. Launch: LinkedIn post, r/n8n, Viblo article (Vietnamese), dev community groups; add "Need help deploying? → contact" section → **M3**.
+### ⏭️ Next up (ordered — details per session in `n8n-kit-BUILD-PLAN.md` §15; S0–S3 are done)
+1. **S4 (≈ 4 h) — smoke suite + CI** (TC-003…006, plan §12):
+   - `tests/smoke/run.sh` + `lib.sh` (`req`, `wait_for`, `assert_eq`; state in `compose/.smoke/`, gitignored) and `01-health.sh` … `06-metrics.sh`; `make -C compose smoke [ONLY=04,05]`.
+   - Recipe already proven by hand on 2026-10-07 (S2 entry in Done): `POST /rest/owner/setup` → `POST /rest/login` (cookie) → `GET /rest/api-keys/scopes` → `POST /rest/api-keys {label, scopes, expiresAt:null}` → `data.rawApiKey` → `POST /api/v1/workflows` (Webhook + Code node) → `POST /api/v1/workflows/{id}/activate` → `POST /webhook/<path>` must answer 200 with `X-Kit-Upstream: n8n-webhook-N:5678` → `GET /api/v1/executions?workflowId=` status success. The Code node must stay pure JS (`process` is blocked in the runner sandbox).
+   - `ci.yml` smoke job on ubuntu-24.04: `/etc/hosts` entry for `n8n.localtest.me` + `kuma.`, `make -C compose init DOMAIN=n8n.localtest.me CI=1`, `make up`, `make smoke`, logs artifact on failure. Docker Hub pull quota: `docker login` (repo secret) or switch `N8N_IMAGE`/`RUNNERS_IMAGE` to `ghcr.io/n8n-io/*` in CI.
+   - `weekly-latest-n8n.yml` (latest stable from the GitHub Releases API → `make pin N8N_VERSION=` → smoke → `gh issue create --label n8n-upstream` on failure); `docs/compat.md` first row (0.1.0-dev × n8n 2.42.4 × 2026-10-07).
+   - Watch for: the Postgres `NaN` error (§5) — does the smoke reproduce it?
+2. **S5 (≈ 4 h) — backups**: `compose/backup/` sidecar (`FROM postgres:18-alpine` + age + rclone + supercronic), `backup.sh` / `restore.sh` / `restore-test.sh`, `make backup-now / restore / restore-test`, smoke 07/08, R2 bucket + token (and S3 if the AWS account exists). TC-011…013. Needs from An: Cloudflare R2 bucket + API token, Telegram bot token + chat id.
+3. **S6 (≈ 4 h) — monitoring profile**: Prometheus 3.5, Grafana 13 at `/grafana/`, Loki 3.7 + Alloy, node-exporter, cAdvisor, Uptime Kuma (`KUMA_ENABLED=on`), 3 dashboards, alert rules → Telegram. TC-017/018. On the build VM stop heavy neighbour containers first (RAM).
+4. **S7 (≈ 3 h)** `make upgrade` / `make rollback` (TC-014/015). **S8 (≈ 3 h)** `make loadtest` + `make chaos` (TC-008…010). **S9 (≈ 4 h)** MkDocs site + Pages + timed fresh-VPS quickstart, recruit 3 testers (TC-025). **S10 (≈ 2 h)** M0 gate: CHANGELOG 0.1.0, `docs/compat.md`, tag `v0.1.0`, GitHub Release.
+5. Later milestones: M1 rest (5 templates, TC-021/022) → M2 Terraform AWS (TC-023/024) → M2.5 Helm chart → M3 launch posts → M4 business.
 
 ### 🚫 Blockers
 _(none)_
@@ -93,15 +93,24 @@ _(none)_
 
 ## 4. How to resume on a new machine
 
+**Any machine** (Linux host, WSL2 distro or Linux VM; always work on a Linux filesystem, never a Windows share — chmod 600 and LF line endings matter):
+
 ```bash
-# On this laptop: everything runs inside the VM — `ssh k8svm` (or VS Code → Remote-SSH → k8svm). Clone on the VM's ext4, never on a Windows share.
-ssh k8svm
-mkdir -p ~/src && cd ~/src && gh repo clone nhhandevops/n8n-prod-kit && cd n8n-prod-kit/compose
-make init DOMAIN=n8n.localtest.me HTTP_PORT=8080 HTTPS_PORT=8443   # internal TLS; 80/443 belong to the other projects on this VM
-make preflight && make up && make status && make smoke
-# Windows hosts file (admin): <vm-ip> n8n.localtest.me kuma.n8n.localtest.me → https://n8n.localtest.me:8443
-# Terraform: cd terraform/aws && cp terraform.tfvars.example terraform.tfvars && terraform init
+# 0. Docker missing? On Ubuntu 24.04/26.04, Debian 12/13, Rocky/Alma/CentOS Stream/Oracle/RHEL 9–10:
+#    sudo scripts/bootstrap-host.sh            (after cloning; or: curl -fsSL https://raw.githubusercontent.com/nhhandevops/n8n-prod-kit/main/scripts/bootstrap-host.sh | sudo bash)
+git clone https://github.com/nhhandevops/n8n-prod-kit && cd n8n-prod-kit      # existing clone: git pull
+# Dev tools for `make lint` (CI pins the same versions): shellcheck 0.11.0, yamllint, hadolint 2.15.1, jq, make; gh for CI/releases.
+make lint                                     # repo + compose: shellcheck, yamllint, compose config, caddy validate x12
+cd compose
+make init DOMAIN=n8n.localtest.me             # add HTTP_PORT=8080 HTTPS_PORT=8443 if 80/443 are taken on this machine
+make up && make status && make doctor         # ~2–3 min on first pull; expect 10 services healthy and doctor "no problems"
+make trust-ca                                 # trust the dev CA on this host; prints the Windows certutil line for a browser
+# Terraform (from M2): cd terraform/aws && cp terraform.tfvars.example terraform.tfvars && terraform init
 ```
+
+Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — dev data is disposable, never copy a dev `.env` between machines (a production `.env`/encryption key lives only in the password manager). If 127.0.0.1 is not where the stack runs (VM, remote host), add `<host-ip> n8n.localtest.me kuma.n8n.localtest.me` to the browser machine's hosts file.
+
+**This laptop (Windows 10 + VMware VM `server1`):** everything runs in the VM — `ssh k8svm` or VS Code → Remote-SSH → k8svm. Repo at `~/src/n8n-prod-kit`; `.env` exists (stack down, volumes kept, test owner `owner@example.com` / `KitSmoke123!`): `cd ~/src/n8n-prod-kit/compose && make up`. Ports 8080/8443 (80/443 belong to other projects on the VM); the Windows hosts entry is in place. If containers on the default bridge ever get "No route to host": `sudo ip addr add 172.17.0.1/16 dev docker0 && sudo ip link set docker0 up` (see `warning_bug_and_solutions.md`).
 
 **Secrets (password manager only):** `n8nkit/demo-vps-ssh`, `n8nkit/backup-bucket`, `n8nkit/age-private-key`, `n8nkit/aws-sandbox`, `n8nkit/alert-telegram`. None of these ever go in the repo.
 
@@ -120,9 +129,9 @@ make preflight && make up && make status && make smoke
 ---
 
 ## 5. Known issues / tech debt
-- Shared `/home/node/.n8n` volume: `crash.journal` is shared too, so a process starting while another runs logs "Last session crashed" once; evaluate per-role volumes vs community-node sharing (S3).
+- Shared `/home/node/.n8n` volume: `crash.journal` is shared too, so a process starting while another runs logs "Last session crashed" once; evaluate per-role volumes vs community-node sharing (open; harmless so far).
 - Postgres logged `invalid input syntax for type integer: "NaN"` twice during API-key/workflow creation via the public API — reproduce and report upstream if it recurs (S4 smoke will tell).
-- Runners sidecars are on the internal (no-egress) network only; whether Code-node `fetch`/http needs egress is unverified (S3 real-workflow check).
+- Runners sidecars are on the internal (no-egress) network only; whether a Code node that makes HTTP calls needs egress is unverified (add a smoke case in S4; HTTP Request nodes run on the workers, which do have egress).
 - Docker Hub anonymous pull quota (100/h per IP) bites shared hosts and CI: `pin.sh` has a Hub-API fallback; CI should `docker login` or use ghcr.io/n8n-io/* (S4).
 - `make lint` runs `caddy validate` 12× in a container (~15 s); fine locally, keep an eye on CI time.
 - `make doctor` cannot check certificate expiry in `TLS_MODE=internal` (12 h leaf certs are normal there) — it reports the mode instead; ACME modes are checked.
@@ -133,8 +142,9 @@ make preflight && make up && make status && make smoke
 - **2026-10-07:** S0–S3 shipped in one day (repo public, compose core running, doctor/scale/read-only, bootstrap matrix green on GitHub). Lesson: hand-author in the main loop; big agent fan-outs die on the 5-hour session limit. Next: S4 smoke suite + CI.
 
 ## 7. Questions for An (AI agents: add here instead of guessing)
-- Browser check wanted when convenient: on Windows run `scp k8svm:~/n8nkit-root.crt $env:USERPROFILE\Downloads\` then (admin) `certutil -addstore -f ROOT $env:USERPROFILE\Downloads\n8nkit-root.crt`, open https://n8n.localtest.me:8443/ and log in as owner@example.com / KitSmoke123! (test owner created by the S2 verification; `make clean` wipes it).
-- ~~Pin which n8n version at start?~~ → **2.42.3** (decided 2026-10-06; re-verify latest stable when S2 starts).
+- Browser check wanted when convenient (this laptop): in the VM `make -C ~/src/n8n-prod-kit/compose up`; on Windows `scp k8svm:~/n8nkit-root.crt $env:USERPROFILE\Downloads\` then (admin) `certutil -addstore -f ROOT $env:USERPROFILE\Downloads\n8nkit-root.crt`, open https://n8n.localtest.me:8443/ and log in as owner@example.com / KitSmoke123! (test owner created by the S2 verification; `make clean` wipes it).
+- For S5: create the Cloudflare R2 bucket `n8n-backups` + an S3-API token scoped to it, and a Telegram bot (@BotFather) + chat id — store all in the password manager.
+- ~~Pin which n8n version at start?~~ → **2.42.4** (2.42.3 decided 2026-10-06; 2.42.4 became stable on 2026-10-07 and is pinned).
 - ~~Which S3-compatible backup target for the demo?~~ → **Cloudflare R2** default, AWS S3 for Target B, both supported via `BACKUP_REMOTES`.
-- Where to verify the RHEL path with real SELinux/firewalld (not possible in containers)? Options: small AlmaLinux 9 VM on the K: USB SSD, or a one-off Rocky 9 VPS. Decide in S3.
+- Where to verify the RHEL path with real SELinux/firewalld (not possible in containers)? Options: small AlmaLinux 9 VM on the laptop's external SSD, or a one-off Rocky 9 VPS. Still open — decide before S9 (the install path is already verified in containers).
 - ~~Set **T**~~ → T = 2026-10-07 (first public push). Planned M0 = 2026-10-21; realistic M0 ≈ early November 2026 (35 h of evenings + 3 outside testers).

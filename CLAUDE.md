@@ -4,7 +4,7 @@ Instructions for AI coding agents (Claude Code, Cursor, …) and a cheat-sheet f
 
 ## Rules
 
-1. **Start:** `git pull`, read `n8n-kit-HANDOFF.md` fully (status, next steps, blockers, decisions, how to resume on each machine). `n8n-kit-PLAN.md` explains the project; do not ask the user to re-explain it. The build plan referenced in HANDOFF is the step-by-step source for every session.
+1. **Start:** `git pull`, read `n8n-kit-HANDOFF.md` fully (status, next steps, blockers, decisions, how to resume on each machine). `n8n-kit-PLAN.md` explains the project; do not ask the user to re-explain it. `n8n-kit-BUILD-PLAN.md` is the step-by-step source for every session (§15 lists S0–S10; where its §8–§11 differ from `compose/`, the code and HANDOFF §3 win). `warning_bug_and_solutions.md` lists every verified upstream gotcha — read it before touching n8n, Caddy, Compose or the bootstrap script.
 2. **This repo is public.** Never include real domains, IPs, credentials, or anything resembling the owner's employer infrastructure. Placeholders only: `example.com`, `n8n.localtest.me`, `203.0.113.0/24`, generated secrets.
 3. **Build against `n8n-kit-PLAN.md` §2.** Deviations go into `n8n-kit-HANDOFF.md` → Decisions log *before* coding.
 4. **Every feature ships with a docs page and a test** (smoke / template / terraform / helm). The product is the docs as much as the config.
@@ -31,9 +31,12 @@ Instructions for AI coding agents (Claude Code, Cursor, …) and a cheat-sheet f
 | Target | What |
 |---|---|
 | `make help` | list targets |
-| `make lint` | shellcheck + hadolint + yamllint over tracked files, then `compose/` lint when it exists |
+| `make lint` | shellcheck + hadolint + yamllint over tracked files, then `compose/` lint (compose config, caddy validate x12) |
+| `make bootstrap-test` | run `scripts/bootstrap-host.sh` inside Ubuntu/Debian/Rocky/Alma containers (~5–15 min) |
 
-The Compose kit's own targets (`init`, `preflight`, `up`, `status`, `smoke`, `doctor`, `backup-now`, `restore`, `upgrade`, `rollback`, `scale-workers`, `chaos`, …) live in `compose/Makefile` and arrive from session S2 onward: `make -C compose help`.
+The Compose kit's targets live in `compose/Makefile` — `make -C compose help`. Available now: `init`, `pin`, `render`, `preflight`, `config`, `up`, `down`, `restart`, `pull`, `ps`, `logs`, `status`, `doctor`, `scale-workers`, `dev-ca`, `trust-ca`, `lint`, `version`, `env-keys`, `clean`. Coming: `smoke` (S4), `backup-now`/`restore` (S5), `upgrade`/`rollback` (S7), `loadtest`/`chaos` (S8).
+
+Remote shell tip (learned the hard way): `docker compose up` and `make up` read stdin — never feed a multi-step script to a remote host through `ssh host 'bash -s' <<EOF`; copy it to a file and run `bash file </dev/null`.
 
 ## Definition of done
 

@@ -23,6 +23,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 ### Templates
 
 ### Docs
+- `n8n-kit-BUILD-PLAN.md` committed (sanitized copy of the session plan) so any machine can continue; HANDOFF rewritten as a hand-off point (generic resume steps, S4 recipe, test results); CLAUDE.md points at the build plan and the gotcha list.
 - HANDOFF: M2.5 row, decisions log 2026-10-06/07, machines table, §4 resume block for the VM, §7 questions answered.
 
 ---

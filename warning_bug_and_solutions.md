@@ -11,14 +11,14 @@ Format per entry: symptom → root cause → how to verify → fix → date.
 
 ## 2026-10-07 · VMware: VM shows as powered off but a `.vmem.lck` lock directory exists
 
-- **Symptom:** `vmrun list` → 0 running VMs, yet `D:\vms\server1\server1-<id>.vmem.lck\` is present (dated weeks earlier).
+- **Symptom:** `vmrun list` → 0 running VMs, yet `<vm-folder>\server1-<id>.vmem.lck\` is present (dated weeks earlier).
 - **Root cause:** stale lock from an unclean host shutdown; only `vmware-tray.exe` was running.
 - **Verify:** `Get-Process vmware, vmware-vmx` → none; lock directory timestamp old.
 - **Fix:** nothing to delete — VMware clears it on next power-on (choose "Take Ownership" if prompted). Edit `.vmx` only while no `vmware-vmx.exe` runs; keep a backup copy of the `.vmx` first.
 
 ## 2026-10-07 · Build plan drafted for the wrong machine
 
-- **Symptom:** build plan §2/§6 assumed an MSI desktop with WSL2 (user `nguye`, 32 GB, `D:\Hobbies\…`); the machine in use is a laptop (16 GB, Windows 10, no WSL distro) whose only Linux is the VMware VM `server1` (Ubuntu 26.04).
+- **Symptom:** build plan §2/§6 assumed an MSI desktop with WSL2 (a different Windows user, 32 GB, a different project folder); the machine in use is a laptop (16 GB, Windows 10, no WSL distro) whose only Linux is the VMware VM `server1` (Ubuntu 26.04).
 - **Root cause:** the plan was written from a different session/host without re-checking the environment.
 - **Verify:** `Get-CimInstance Win32_ComputerSystem`; `wsl -l -v`; `vmrun list`; `%APPDATA%\VMware\inventory.vmls`.
 - **Fix:** §2/§5/§6/§17/§18 of the build plan rewritten for the VM (ports 8080/8443, Remote-SSH, Ubuntu 26.04 in the bootstrap/CI matrix); HANDOFF §3/§4/§7 updated. Rule going forward: start every machine-setup session with the read-only host/VM inventory block before editing plans.
