@@ -1,0 +1,285 @@
+# =============================================================================
+#  n8n Production Kit -- Caddy edge configuration (compose/caddy/Caddyfile)
+# =============================================================================
+#
+#  Caddy is the ONLY container that publishes ports. It terminates TLS,
+#  redirects http -> https, adds the security headers, and splits traffic
+#  between the n8n main process (editor UI, /rest API, test webhooks) and the
+#  pool of n8n webhook processes (production webhooks, forms, MCP).
+#
+#  Every value that differs per deployment arrives as an ENVIRONMENT VARIABLE,
+#  set on the caddy service by compose/docker-compose.yml from .env:
+#      DOMAIN ACME_EMAIL TLS_MODE HTTP_PORT HTTPS_PORT UI_PROTECT UI_ALLOW_CIDR
+#      UI_BASIC_AUTH_USER UI_BASIC_AUTH_HASH WEBHOOK_UPSTREAMS KUMA_ENABLED
+#  `{$VAR}` / `{$VAR:default}` is Caddy's environment placeholder. It is
+#  substituted on the RAW FILE BYTES before the Caddyfile is lexed, which is
+#  why it also works inside import paths and site addresses. The default is
+#  used only when the variable is UNSET; a variable that is set to the empty
+#  string stays empty (compose must therefore not pass empty values).
+#  HTTP_PORT and HTTPS_PORT are the numbers compose publishes; Caddy listens
+#  on exactly those (http_port global + the port on each site address).
+#  Mode switches are implemented as tiny snippet files chosen by name:
+#      import /etc/caddy/tls-{$TLS_MODE:acme}.caddy         (tls-*.caddy)
+#      import /etc/caddy/ui-protect-{$UI_PROTECT:off}.caddy (ui-protect-*.caddy)
+#      import /etc/caddy/kuma-{$KUMA_ENABLED:off}.caddy     (kuma-*.caddy)
+#  An "off" file is deliberately empty (comments only); Caddy only logs
+#  "Import file is empty" for it. A wrong value is a hard error at start
+#  ("File to import not found"), which is what we want.
+#
+#  ---- THE MULTI-LINE RULE (verified against caddy 2.11.7) -------------------
+#  EVERY block MUST span several lines: `{` is the LAST token on its line,
+#  ONE directive per line, `}` ALONE on its line. One-liners such as
+#  `log { output stdout  format json }` or `handle /x { respond "y" }` make
+#  the adapter fail with "Unexpected next token after '{' on same line".
+#  This applies to the snippet files too. `caddy fmt` keeps this layout;
+#  never "compact" a block by hand.
+#
+#  ---- VALIDATION -----------------------------------------------------------
+#  `make lint` runs, inside the pinned image, for every TLS_MODE / UI_PROTECT /
+#  KUMA_ENABLED combination:
+#      caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#  DOMAIN and ACME_EMAIL are hard requirements even for TLS_MODE=internal:
+#  validation fails when either is unset ("server block without any key is
+#  global configuration" / "wrong argument count ... after 'email'").
+#  UI_PROTECT=on additionally needs UI_BASIC_AUTH_USER and UI_BASIC_AUTH_HASH.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  Global options -- must be the first block of the file.
+# -----------------------------------------------------------------------------
+{
+	# ACME account e-mail (Let's Encrypt sends expiry warnings there).
+	# docker-compose.yml passes ${ACME_EMAIL:?}, so this is never empty; an
+	# empty value is a parse error even in internal TLS mode.
+	email {$ACME_EMAIL}
+
+	# Caddy's own Prometheus metrics (caddy_http_* series), served by the admin
+	# endpoint at http://127.0.0.1:2019/metrics for the S6 monitoring stack.
+	# This is the GLOBAL option: the nested `servers { metrics }` form is
+	# deprecated in 2.11 and logs a warning at every start.
+	metrics
+
+	# Admin API on loopback only. The compose healthcheck is
+	# `wget -qO- http://127.0.0.1:2019/config/` -- 127.0.0.1, NOT localhost:
+	# busybox resolves localhost to ::1 first while Caddy binds 127.0.0.1 only
+	# (verified: "Connection refused"). Never publish 2019: /config/ returns
+	# the running config INCLUDING the basic_auth hash.
+	admin localhost:2019
+
+	# Do not try to install the internal CA into the container's trust store.
+	# Caddy runs here as uid 1000 on a read-only rootfs, so the attempt only
+	# logs "failed to install root certificate ... read-only file system", and
+	# a trust store inside this container is useless anyway: n8n receives the
+	# CA through compose.dev.yml (caddy_data volume + NODE_EXTRA_CA_CERTS) and
+	# browsers through `make trust-ca`.
+	skip_install_trust
+
+	# PORTS. Compose publishes `${HTTP_PORT}:${HTTP_PORT}` and
+	# `${HTTPS_PORT}:${HTTPS_PORT}`, so the container must listen on the SAME
+	# numbers: HTTP_PORT here (this is where Caddy's automatic http -> https
+	# redirect listens) and HTTPS_PORT on the site addresses below.
+	# The `https_port` global is deliberately NOT set. Verified against
+	# 2.11.7: the redirect's Location drops the request port and appends the
+	# HTTPS listener's port only when that port is neither 443 nor the
+	# configured https_port (Caddy's source: "that config parameter is for
+	# internal use only"). With `https_port 18443` a dev host was sent to
+	# https://DOMAIN/ -- port 443, dead. With the port on the site address
+	# instead it is sent to https://DOMAIN:18443/ as intended, and production
+	# (80/443) is unaffected either way. HTTP/3 (UDP) is served on HTTPS_PORT.
+	http_port {$HTTP_PORT:80}
+}
+
+# -----------------------------------------------------------------------------
+#  Snippet: security headers for every response of every site.
+#  `header` is deferred (applied when the response is written), so it covers
+#  proxied responses too. `-Server` removes the `Server: Caddy` banner.
+#  CAVEAT (verified): responses that Caddy generates ITSELF on an error path
+#  -- 502 from a dead upstream, 401 from basic_auth -- bypass this handler.
+#  That is why every site also has a `handle_errors` block that imports this
+#  snippet again.
+# -----------------------------------------------------------------------------
+(security_headers) {
+	header {
+		# One year, including subdomains (kuma.DOMAIN is one). No `preload`:
+		# submitting to the preload list is a one-way door for the whole domain.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Browsers must not guess a content-type different from the one sent.
+		X-Content-Type-Options nosniff
+		# The editor must not be framed by other origins (clickjacking);
+		# SAMEORIGIN keeps n8n's own iframes working.
+		X-Frame-Options SAMEORIGIN
+		# Send only the origin on cross-origin requests, nothing on downgrade.
+		Referrer-Policy strict-origin-when-cross-origin
+		# The workflow UI needs none of these browser features.
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# Remove the `Server: Caddy` banner.
+		-Server
+	}
+}
+
+# -----------------------------------------------------------------------------
+#  Snippet: load balancing + health checking for the webhook pool.
+#  Imported inside every `reverse_proxy { }` that targets the pool.
+# -----------------------------------------------------------------------------
+(pool_health) {
+	# Alternate between the webhook processes; all members are equal.
+	lb_policy round_robin
+	# If the chosen member cannot be DIALLED, try the others for up to 5 s /
+	# 2 more attempts before answering 502. Retries happen only on transport
+	# failures, never after the upstream has sent a response -- a webhook
+	# POST is not replayed into a second member.
+	lb_try_duration 5s
+	lb_retries 2
+	# Active check: GET /healthz on each member every 10 s with a 3 s budget;
+	# only HTTP 200 counts. n8n's /healthz answers as soon as the process is
+	# up (the stricter /healthz/readiness is used by the compose healthcheck,
+	# which also gates `depends_on`; the proxy only needs liveness).
+	health_uri /healthz
+	health_interval 10s
+	health_timeout 3s
+	health_status 200
+	# Passive check: 2 transport failures within 30 s take a member out of
+	# rotation for 30 s, so a restarting webhook process is not felt by
+	# clients.
+	fail_duration 30s
+	max_fails 2
+	# Stamp every proxied response with the member that served it. This is
+	# the kit's routing contract -- `X-Kit-Upstream: n8n-webhook-N:5678` for
+	# the pool, `n8n-main:5678` for everything else -- asserted by the tests
+	# and by the definition of done. `+` adds the header without replacing
+	# anything the upstream sent.
+	header_down +X-Kit-Upstream {upstream_hostport}
+}
+
+# -----------------------------------------------------------------------------
+#  The n8n site.
+#
+#  ROUTING CONTRACT (path matchers are case-insensitive; `*` = prefix match):
+#      /healthz                         -> n8n-main      (liveness of main)
+#      /healthz/webhook                 -> pool, rewritten to /healthz
+#      /webhook/*  /webhook-waiting/*  /webhook-waiting-slack*
+#      /webhook-waiting-telegram*  /form/*  /form-waiting/*  /mcp/*
+#                                       -> webhook pool (production triggers)
+#      /grafana/*                       -> grafana:3000  (S6; 502 until then)
+#      everything else (/, /rest/*, /webhook-test/*, /form-test/*,
+#      /mcp-test/*, /chat, /push, ...)  -> n8n-main
+#
+#  WHY the split: n8n-main runs with N8N_DISABLE_PRODUCTION_MAIN_PROCESS=true
+#  and no longer answers production webhooks -- a misrouted /webhook/x would
+#  silently fall through to the editor SPA (HTTP 200 HTML, verified). The
+#  *-test routes on the other hand exist ONLY on main (the editor's "Test
+#  workflow" session lives there) and the webhook processes answer
+#  "Cannot GET" for /rest/* and the UI. The paths are n8n's defaults
+#  (N8N_ENDPOINT_WEBHOOK, _WEBHOOK_TEST, _WEBHOOK_WAIT, _FORM, _FORM_TEST,
+#  _FORM_WAIT, _MCP, _MCP_TEST); the kit does not override them.
+#  Known and fine: `/webhook` or `/form` WITHOUT a trailing path, and /chat
+#  (Chat Trigger websocket), stay on main -- n8n always uses /webhook/<id>.
+#
+#  Caddy orders `handle` blocks by directive order, then by path length
+#  (longest path first) and puts the catch-all last, so the textual order
+#  below is informational; none of the specific paths overlap anyway.
+#
+#  Site address = DOMAIN plus the published HTTPS port (see the `http_port`
+#  comment in the global options for why the port lives here). With
+#  HTTPS_PORT=443 this is simply n8n.example.com:443. Any port other than
+#  http_port gets automatic HTTPS, so TLS_MODE applies unchanged.
+# -----------------------------------------------------------------------------
+{$DOMAIN}:{$HTTPS_PORT:443} {
+	import security_headers
+
+	# TLS policy, chosen by TLS_MODE:
+	#   acme          -> tls-acme.caddy (empty: Let's Encrypt production, the
+	#                    Caddy default; DOMAIN must resolve to this host)
+	#   acme-staging  -> tls-acme-staging.caddy (LE staging CA for rehearsals;
+	#                    untrusted certs but no production rate limits)
+	#   internal      -> tls-internal.caddy (`tls internal`: Caddy's own CA,
+	#                    for dev hosts such as n8n.localtest.me)
+	import /etc/caddy/tls-{$TLS_MODE:acme}.caddy
+
+	# Compress responses (the editor bundle is several MB). zstd preferred,
+	# gzip for older clients. WebSocket upgrades are not affected.
+	encode zstd gzip
+
+	# Access log as JSON lines on stdout -> `make logs SERVICE=caddy` / Loki.
+	log {
+		output stdout
+		format json
+	}
+
+	# Cap request bodies (webhook payloads, binary uploads, workflow imports).
+	# n8n's own N8N_PAYLOAD_SIZE_MAX default is 16 MiB; 64 MiB leaves room for
+	# form-data file uploads. MiB is binary (67,108,864 bytes) -- Caddy reads
+	# `64MB` as SI 64,000,000, so the unit is written out explicitly.
+	request_body {
+		max_size 64MiB
+	}
+
+	# Responses Caddy generates on its own error path -- 502 when an upstream
+	# is down, 401 from basic_auth, 403 from the IP allow-list -- do NOT go
+	# through the normal header handler: without this block they carry
+	# `Server: Caddy` and no HSTS (verified). Re-apply the security headers
+	# and answer with a plain "<code> <text>" body, keeping the status code.
+	handle_errors {
+		import security_headers
+		respond "{err.status_code} {err.status_text}"
+	}
+
+	# Liveness of the main process (status.sh, uptime checks). Stamped with
+	# X-Kit-Upstream so that every proxied response proves its upstream.
+	handle /healthz {
+		reverse_proxy n8n-main:5678 {
+			header_down +X-Kit-Upstream {upstream_hostport}
+		}
+	}
+
+	# Liveness of the webhook pool: a healthy member answers its own /healthz.
+	handle /healthz/webhook {
+		rewrite * /healthz
+		reverse_proxy {$WEBHOOK_UPSTREAMS:n8n-webhook-1:5678 n8n-webhook-2:5678} {
+			import pool_health
+		}
+	}
+
+	# Production triggers -> webhook pool. WEBHOOK_UPSTREAMS lets a scaled
+	# deployment extend the pool ("n8n-webhook-1:5678 n8n-webhook-2:5678
+	# n8n-webhook-3:5678"); the default matches docker-compose.yml.
+	# `/webhook-waiting-slack*` and `/webhook-waiting-telegram*` carry no
+	# slash on purpose: n8n registers the Slack/Telegram human-in-the-loop
+	# callbacks as `/${webhookWaiting}${SLACK_HITL_WEBHOOK_SUFFIX}` with the
+	# suffix constants '-slack' / '-telegram' (n8n-core 2.42, verified in the
+	# image), and `*` matches the bare path as well as anything after it.
+	@pool path /webhook/* /webhook-waiting/* /webhook-waiting-slack* /webhook-waiting-telegram* /form/* /form-waiting/* /mcp/*
+	handle @pool {
+		reverse_proxy {$WEBHOOK_UPSTREAMS:n8n-webhook-1:5678 n8n-webhook-2:5678} {
+			import pool_health
+		}
+	}
+
+	# Grafana (S6 monitoring profile, served under a sub-path). Until that
+	# service exists Caddy answers 502 here -- by design, not a misconfig.
+	handle /grafana/* {
+		reverse_proxy grafana:3000
+	}
+
+	# Everything else: the editor UI, /rest API, test webhooks, websocket
+	# push. The optional UI protection (IP allow-list + basic auth) is imported
+	# ONLY here, so production webhooks, forms, MCP and the health paths are
+	# never behind it. Active health checks on main let Caddy answer 502
+	# immediately while n8n-main restarts instead of hanging on a dial.
+	handle {
+		import /etc/caddy/ui-protect-{$UI_PROTECT:off}.caddy
+		reverse_proxy n8n-main:5678 {
+			health_uri /healthz
+			health_interval 10s
+			header_down +X-Kit-Upstream {upstream_hostport}
+		}
+	}
+}
+
+# -----------------------------------------------------------------------------
+#  Optional second site: Uptime Kuma (KUMA_ENABLED=on, S6 monitoring profile).
+#  kuma-off.caddy is empty; kuma-on.caddy holds the `kuma.{$DOMAIN}` site.
+#  A top-level import may bring in whole site blocks; it must come AFTER the
+#  snippets it uses, so it stays at the end of the file.
+# -----------------------------------------------------------------------------
+import /etc/caddy/kuma-{$KUMA_ENABLED:off}.caddy

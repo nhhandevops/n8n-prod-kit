@@ -1,0 +1,7 @@
+# tls-acme.caddy -- imported inside the site blocks when TLS_MODE=acme (the
+# default). It is INTENTIONALLY EMPTY: with no `tls` directive Caddy uses its
+# built-in automation, i.e. publicly trusted certificates from Let's Encrypt
+# (ZeroSSL as fallback) via ACME, with the account e-mail from the global
+# `email` option. DOMAIN must resolve to this host and ports 80/443 must be
+# reachable (preflight.sh checks the DNS). Caddy logs "Import file is empty"
+# for this file at start -- that is a warning, not an error (verified).

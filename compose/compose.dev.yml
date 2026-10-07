@@ -1,0 +1,41 @@
+# n8n Production Kit — DEV override (compose.dev.yml).
+#
+# Auto-included by `make up` / lib.sh's `compose` wrapper ONLY when TLS_MODE=internal (see CONTRACT §4). It is never
+# used with a public ACME certificate: there the system trust store already knows the issuer.
+#
+# Why it exists: with `tls internal` Caddy signs the site certificate with its own private CA. n8n itself has to call
+# its PUBLIC_URL (HTTP Request nodes hitting the kit's own webhooks, OAuth callbacks, the editor fetching
+# /rest/* through the proxy from a worker, …). Node rejects an unknown CA, so each n8n process gets:
+#   1. extra_hosts   — DOMAIN resolves to the Docker host (host-gateway), where Caddy publishes HTTPS_PORT. Without it
+#                      a dev name such as n8n.localtest.me resolves to 127.0.0.1 INSIDE the container (= itself).
+#   2. volumes       — Caddy's data volume mounted read-only at /certs. Caddy runs as uid 1000 in this kit (see
+#                      docker-compose.yml), so the PKI it writes is readable by n8n's uid 1000 straight through the
+#                      volume: no copy step, and the trust survives Caddy's own CA rotations.
+#   3. environment   — NODE_EXTRA_CA_CERTS points Node at that root certificate (path verified in FACTS verify:caddy).
+#
+# Merge semantics (verified): an override file APPENDS to `volumes`/`extra_hosts` lists and MERGES the `environment`
+# map, so the base definitions in docker-compose.yml are extended, not replaced. `caddy_data` is declared in
+# docker-compose.yml; Compose validates the merged model, so it is not re-declared here.
+#
+# One YAML anchor keeps the five service stanzas identical; it is applied as a plain alias (no `<<:` merge needed
+# because these services have no other keys in this file). The runners sidecars are deliberately NOT listed: they only
+# talk HTTP to their worker's task broker on the internal network and never see the public certificate.
+#
+# Note: `host-gateway` is only reachable when the service's network is NOT `internal: true` (verified on the build VM:
+# an internal-only container cannot reach 172.17.0.1). docker-compose.yml keeps the backend network routable for that
+# reason — see its header.
+
+x-dev-trust: &dev-trust
+  extra_hosts:
+    - "${DOMAIN:?set DOMAIN}:host-gateway"
+  volumes:
+    - caddy_data:/certs:ro
+  environment:
+    NODE_EXTRA_CA_CERTS: /certs/caddy/pki/authorities/local/root.crt
+
+services:
+  n8n-main: *dev-trust
+  n8n-webhook-1: *dev-trust
+  n8n-webhook-2: *dev-trust
+  n8n-worker-1: *dev-trust
+  n8n-worker-2: *dev-trust

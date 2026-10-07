@@ -1,0 +1,34 @@
+# kuma-on.caddy -- imported at the END of the Caddyfile (top level) when
+# KUMA_ENABLED=on. Publishes Uptime Kuma (S6 monitoring profile, service
+# `uptime-kuma` on the internal network) on its own hostname kuma.DOMAIN.
+#
+# TLS follows the main site's TLS_MODE: with `tls internal` Caddy mints the
+# certificate itself; in acme / acme-staging mode kuma.DOMAIN MUST resolve
+# publicly to this host, otherwise Caddy keeps retrying ACME for it
+# (preflight.sh checks that DNS record when KUMA_ENABLED=on).
+# The site address carries the published HTTPS port for the same reason as
+# the main site (see the `http_port` comment in the Caddyfile). This file is
+# a whole site block, so the multi-line rule of the Caddyfile header applies
+# here as well.
+kuma.{$DOMAIN}:{$HTTPS_PORT:443} {
+	import security_headers
+	import /etc/caddy/tls-{$TLS_MODE:acme}.caddy
+
+	# Without its own `log` block Caddy puts this host into the server's
+	# skip_hosts list and Kuma requests are never access-logged (verified).
+	log {
+		output stdout
+		format json
+	}
+
+	# Same reason as in the main site: the 502 Caddy generates while Kuma is
+	# still starting must carry the security headers and no Server banner.
+	handle_errors {
+		import security_headers
+		respond "{err.status_code} {err.status_text}"
+	}
+
+	# Uptime Kuma speaks HTTP + WebSocket (socket.io); reverse_proxy passes
+	# the Upgrade handshake through transparently.
+	reverse_proxy uptime-kuma:3001
+}

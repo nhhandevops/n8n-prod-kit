@@ -5,11 +5,14 @@ SH_FILES    := $(shell git ls-files '*.sh' 2>/dev/null)
 DOCKERFILES := $(shell git ls-files '*Dockerfile*' 2>/dev/null)
 YAML_FILES  := $(shell git ls-files '*.yml' '*.yaml' '.yamllint' 2>/dev/null)
 
-.PHONY: help lint
+.PHONY: help lint bootstrap-test
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-16s %s\n", $$1, $$2}'
 	@if [ -d compose ]; then echo; echo "Compose kit targets: make -C compose help"; fi
+
+bootstrap-test: ## Run scripts/bootstrap-host.sh inside Ubuntu/Debian/Rocky/Alma containers (install-only, ~10 min)
+	@tests/bootstrap/test-in-container.sh
 
 lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then compose/ lint if present
 	@if [ -n "$(SH_FILES)" ]; then shellcheck $(SH_FILES) && echo "shellcheck: OK"; else echo "shellcheck: no .sh files yet"; fi

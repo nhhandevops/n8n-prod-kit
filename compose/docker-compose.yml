@@ -1,0 +1,588 @@
+# n8n Production Kit — Compose core (session S2).
+#
+# Topology:
+#   caddy            the ONLY published service: HTTP_PORT/HTTPS_PORT (+ HTTPS_PORT/udp for HTTP/3); terminates TLS (ACME or internal CA),
+#                    sends UI/API/test-webhooks to n8n-main and production webhooks round-robin to the n8n-webhook pool; health-checks them itself.
+#   n8n-main         editor UI, REST API, triggers/schedules, DB migrations; manual runs are offloaded to the workers (so main has NO runner sidecar).
+#   n8n-webhook-1/2  stateless production-webhook receivers: they only enqueue jobs and never execute code (no runners either).
+#   n8n-worker-1/2   execute every queued job; each has a 1:1 n8nio/runners sidecar (n8n-worker-N-runners) that sandboxes Code-node tasks.
+#   postgres, valkey state (PostgreSQL 18) and queue/broker (Bull on Valkey); unpublished, reachable only on the backend network.
+#
+# How to run it: ALWAYS through `make …` or scripts/lib.sh (`compose "$@"`), which pass
+#   --project-directory compose/ --env-file versions.env --env-file .env -f docker-compose.yml [-f compose.dev.yml when TLS_MODE=internal]
+# `versions.env` (pins, rewritten by `make pin`) is loaded FIRST and `.env` (site settings + secrets, written by `make init`) overrides it.
+# There is deliberately no top-level `name:` here: the project name comes from COMPOSE_PROJECT_NAME in .env (contract §2), so a second
+# copy of the kit on the same host only needs a different .env. Never hard-code container names — use service names (Compose DNS).
+#
+# Every image reference is `<image>:<tag>@<digest>`; the `${X_DIGEST:?run make pin}` guard makes `compose config` fail with that exact
+# message instead of silently pulling a floating tag when versions.env is incomplete.
+#
+# TECH DEBT (S3): the five n8n services (main, webhooks, workers) are NOT `read_only`. n8n writes outside its two volumes — /tmp for
+# node temp files, ~/.npm and ~/.cache during community-node installs, the entrypoint's certificate handling — and the exact set of
+# paths has not been verified against the 2.42 image yet. Guessing a tmpfs list and shipping a stack that breaks on the first
+# community-node install is worse than a writable overlay for one session; S3 verifies the write set and flips `read_only: true`
+# (caddy, postgres, valkey and the runners sidecars are already read-only, each with a verified tmpfs/volume layout).
+#
+# Hardening that IS in place on every service: `restart: unless-stopped`, `no-new-privileges`, `cap_drop: [ALL]` (caddy re-adds the one
+# capability its binary carries as a file capability), a memory limit from .env (MEM_LIMIT_*), json-file logs capped at 20 MB x 5, a
+# healthcheck with a start_period long enough for the observed cold start, and `depends_on … service_healthy` ordering (postgres/valkey →
+# main → webhooks/workers → runners) so migrations run exactly once, on main, before anything else connects.
+#
+# Networks: `internal` is the backend network (every service) and IS `internal: true` — a container attached only to it has no route
+# out at all (verified: no default route, cannot reach 1.1.1.1 or host-gateway), which is exactly the isolation postgres, valkey and the
+# runners sidecars should have. `proxy` is the routable bridge: caddy (edge) plus every n8n process that must reach the Internet —
+# main and the webhook pool (Caddy's upstreams) AND the workers, because HTTP Request / API nodes execute on workers. The runners
+# stay internal-only: Code-node network calls go through the worker's helpers, not the sandbox (S3 re-checks this with a real workflow).
+#
+# YAML anchors (`x-*` blocks, echoed harmlessly by `compose config`): `<<:` merges are SHALLOW — a service that declares its own
+# `environment:` would REPLACE a merged one. Hence TWO anchors per role: `*n8n-base` merged at service level (image, networks, volumes,
+# logging, security, restart) and `*n8n-env` merged INSIDE `environment:` so each service can add its own keys on top. Likewise
+# `*runners-base` / `*runners-env`. Keys a service re-declares at service level (networks, tmpfs, …) override the base — intentionally.
+
+x-logging: &logging
+  # 20 MB x 5 files per container ≈ 100 MB worst case each, ~1 GB for the stack; enough history for `make logs SINCE=…` without ever filling
+  # the disk. json-file keeps `docker logs` and the S6 log shipper working; n8n itself logs JSON lines (N8N_LOG_FORMAT=json below).
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+# ----------------------------------------------------------------------------------------------------------------------------------------
+# n8n (main / webhook / worker) — service-level base. Everything here is identical for the five n8n processes.
+# ----------------------------------------------------------------------------------------------------------------------------------------
+x-n8n-base: &n8n-base
+  image: ${N8N_IMAGE}:${N8N_VERSION}@${N8N_DIGEST:?run make pin}
+  # unless-stopped (not on-failure): survives host reboots and keeps retrying after a DB/Redis outage; `make down` still stops it for good.
+  restart: unless-stopped
+  # N8N_GRACEFUL_SHUTDOWN_TIMEOUT (default 30 s, .env) is how long n8n waits for running executions on SIGTERM; Compose's default
+  # grace is 10 s, which would SIGKILL mid-execution. 40 s = n8n's budget + margin. Raise both together if you raise the .env knob.
+  stop_grace_period: 40s
+  # The image already runs as uid 1000 (`node`); no `user:` override, so the shared volumes keep one consistent owner.
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *logging
+  networks:
+    - internal
+  volumes:
+    # n8n_data: /home/node/.n8n — `config` (encryption-key file, mode 0600, enforced), community nodes, event log, storage. Shared by all
+    # five processes so that every instance sees the same community nodes and settings (the encryption key itself comes from .env).
+    - n8n_data:/home/node/.n8n
+    # n8n_files: /home/node/.n8n-files — the 2.x default N8N_RESTRICT_FILE_ACCESS_TO location, i.e. the only tree the Read/Write Files
+    # node may touch. A dedicated volume keeps user files out of the config tree that N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES protects.
+    - n8n_files:/home/node/.n8n-files
+
+# ----------------------------------------------------------------------------------------------------------------------------------------
+# n8n — shared environment map. Every variable NAME below was checked against the list extracted from the 2.42 image (contract §1).
+# Values in `${X:-default}` form are site knobs from .env (defaults = n8n's own or the kit's opinionated ones, see .env.example);
+# `${X:?…}` are secrets/identity that `make init` must have written — Compose refuses to start without them rather than booting a
+# half-configured stack (e.g. a worker without the encryption key cannot decrypt a single credential).
+# ----------------------------------------------------------------------------------------------------------------------------------------
+x-n8n-env: &n8n-env
+  # --- database: all five processes share one PostgreSQL ---
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_PORT: "5432"
+  DB_POSTGRESDB_DATABASE: n8n
+  DB_POSTGRESDB_USER: n8n
+  DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (make init)}
+  # 4 connections per process (n8n default 2): 5 processes x 4 = 20, up to 16 workers = 76, well under postgres max_connections=150.
+  DB_POSTGRESDB_POOL_SIZE: "4"
+  # --- queue mode: Bull on Valkey is the job broker between main/webhooks (producers) and workers (consumers) ---
+  EXECUTIONS_MODE: queue
+  QUEUE_BULL_REDIS_HOST: valkey
+  QUEUE_BULL_REDIS_PORT: "6379"
+  QUEUE_BULL_REDIS_PASSWORD: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD (make init)}
+  QUEUE_BULL_REDIS_DB: "0"
+  # key prefix (n8n default "bull"): namespaces the kit's keys so a shared Valkey could host something else later.
+  QUEUE_BULL_PREFIX: n8n
+  # --- credentials encryption: MUST be identical on main, webhooks and workers; main/webhook would silently auto-generate one if unset ---
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY (make init)}
+  # filesystem binary mode is UNSUPPORTED in queue mode (docs); `database` is the licence-free queue-mode default — set explicitly so the
+  # deprecated in-memory `default` mode can never be selected. S3/Azure need a paid licence.
+  N8N_DEFAULT_BINARY_DATA_MODE: database
+  # --- task runners: external mode = the separate n8nio/runners sidecars (internal mode is deprecated and cannot run Python) ---
+  N8N_RUNNERS_MODE: external
+  N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?set N8N_RUNNERS_AUTH_TOKEN (make init)}
+  # the task broker (port 5679 on each worker) listens on 127.0.0.1 by default — unreachable from a sidecar container.
+  N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+  # broker-side task timeout; the same value is given to the sidecars (whose launcher would otherwise force 60 s).
+  N8N_RUNNERS_TASK_TIMEOUT: ${RUNNERS_TASK_TIMEOUT:-300}
+  # --- public identity behind the reverse proxy ---
+  N8N_HOST: ${DOMAIN:?set DOMAIN}
+  N8N_PROTOCOL: https
+  N8N_PORT: "5678"
+  # N8N_WEBHOOK_URL (not the deprecated WEBHOOK_URL alias) sets the base of production AND test webhook URLs; PUBLIC_URL is written by
+  # `make init` as https://DOMAIN/ or https://DOMAIN:HTTPS_PORT/ so dev hosts on 8443 get correct links too.
+  N8N_WEBHOOK_URL: ${PUBLIC_URL:?set PUBLIC_URL (make init)}
+  N8N_EDITOR_BASE_URL: ${PUBLIC_URL:?set PUBLIC_URL (make init)}
+  # exactly one proxy (Caddy) in front: trust its X-Forwarded-* so client IPs and the https scheme are seen correctly.
+  N8N_PROXY_HOPS: "1"
+  N8N_SECURE_COOKIE: "true"
+  N8N_SAMESITE_COOKIE: lax
+  # --- logging: JSON lines to stdout so `docker logs`, Loki/Promtail (S6) and grep all see structured records; 'json' is the exact value ---
+  N8N_LOG_LEVEL: info
+  N8N_LOG_OUTPUT: console
+  N8N_LOG_FORMAT: json
+  # --- metrics: /metrics on every process (main additionally publishes the Bull queue gauges); scraped by Prometheus in S6 ---
+  N8N_METRICS: "true"
+  N8N_METRICS_INCLUDE_QUEUE_METRICS: "true"
+  N8N_METRICS_INCLUDE_DEFAULT_METRICS: "true"
+  N8N_METRICS_QUEUE_METRICS_INTERVAL: "20"
+  # --- site knobs from .env (group 1/4/5 of .env.example); names verified, defaults mirror .env.example ---
+  GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+  TZ: ${TZ:-Asia/Ho_Chi_Minh}
+  N8N_GRACEFUL_SHUTDOWN_TIMEOUT: ${N8N_GRACEFUL_SHUTDOWN_TIMEOUT:-30}
+  # -1 = use the worker's --concurrency flag; any other value overrides it on every worker.
+  N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY_PRODUCTION_LIMIT:--1}
+  EXECUTIONS_DATA_PRUNE: ${EXECUTIONS_DATA_PRUNE:-true}
+  EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-336}
+  EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-10000}
+  EXECUTIONS_DATA_SAVE_ON_SUCCESS: ${EXECUTIONS_DATA_SAVE_ON_SUCCESS:-all}
+  EXECUTIONS_DATA_SAVE_ON_ERROR: ${EXECUTIONS_DATA_SAVE_ON_ERROR:-all}
+  EXECUTIONS_DATA_SAVE_ON_PROGRESS: ${EXECUTIONS_DATA_SAVE_ON_PROGRESS:-false}
+  EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: ${EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS:-true}
+  EXECUTIONS_TIMEOUT: ${EXECUTIONS_TIMEOUT:--1}
+  EXECUTIONS_TIMEOUT_MAX: ${EXECUTIONS_TIMEOUT_MAX:-3600}
+  # security (2.x defaults made explicit so a future default change cannot silently loosen the kit)
+  N8N_BLOCK_ENV_ACCESS_IN_NODE: ${N8N_BLOCK_ENV_ACCESS_IN_NODE:-true}
+  N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES: ${N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES:-true}
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: ${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
+  N8N_GIT_NODE_DISABLE_BARE_REPOS: ${N8N_GIT_NODE_DISABLE_BARE_REPOS:-true}
+  # telemetry/UI noise off, templates and version notices on (see .env.example for the rationale of each)
+  N8N_DIAGNOSTICS_ENABLED: ${N8N_DIAGNOSTICS_ENABLED:-false}
+  N8N_PERSONALIZATION_ENABLED: ${N8N_PERSONALIZATION_ENABLED:-false}
+  N8N_HIRING_BANNER_ENABLED: ${N8N_HIRING_BANNER_ENABLED:-false}
+  N8N_TEMPLATES_ENABLED: ${N8N_TEMPLATES_ENABLED:-true}
+  N8N_VERSION_NOTIFICATIONS_ENABLED: ${N8N_VERSION_NOTIFICATIONS_ENABLED:-true}
+  N8N_PUBLIC_API_DISABLED: ${N8N_PUBLIC_API_DISABLED:-false}
+  # community packages that n8n has not verified: off (the 3.0 default; 2.42 warns at startup that the default will change)
+  N8N_UNVERIFIED_PACKAGES_ENABLED: ${N8N_UNVERIFIED_PACKAGES_ENABLED:-false}
+  # setting NODES_EXCLUDE REPLACES n8n's default list, so the two dangerous nodes it disables by default are repeated here.
+  NODES_EXCLUDE: '${NODES_EXCLUDE:-["n8n-nodes-base.executeCommand","n8n-nodes-base.localFileTrigger"]}'
+
+# ----------------------------------------------------------------------------------------------------------------------------------------
+# runners sidecars — service-level base (one sidecar per worker; main offloads manual runs, webhooks never execute code).
+# ----------------------------------------------------------------------------------------------------------------------------------------
+x-runners-base: &runners-base
+  # same N8N_VERSION as n8n on purpose: the runners image MUST match the n8n version (docs); only the digest is its own.
+  image: ${RUNNERS_IMAGE}:${N8N_VERSION}@${RUNNERS_DIGEST:?run make pin}
+  # The launcher takes runner types as positional args; the string form is split by Compose into argv, so RUNNERS_LANGS="javascript python"
+  # enables the Python runner as well (there is no env var for that — N8N_NATIVE_PYTHON_RUNNER does not exist in 2.42).
+  command: ${RUNNERS_LANGS:-javascript}
+  # unless-stopped MATTERS here: with a wrong token the launcher stays silent for 60 s and then exits 0 — `on-failure` would never
+  # restart it, so the symptom would be "Code nodes hang" instead of a visible restart loop.
+  restart: unless-stopped
+  # the launcher drains for N8N_RUNNERS_LAUNCHER_GRACEFUL_SHUTDOWN_TIMEOUT (10 s below; its default is 50 s) before exiting → 15 s grace.
+  stop_grace_period: 15s
+  # runs user code: read-only rootfs + private /tmp, image default user `runner` (uid 1000), no capabilities, no volumes.
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *logging
+  networks:
+    - internal
+  healthcheck:
+    # LIVENESS only: the launcher answers 200 on 5680 even while the broker is unreachable or the token is wrong (verified) — it proves the
+    # process is alive, nothing more. Never probe 5681/5682: runner processes only exist while a task runs. busybox wget, no curl in the image.
+    test: ["CMD-SHELL", "wget -qO- -T 3 http://127.0.0.1:5680/healthz | grep -q ok"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 20s
+  deploy:
+    resources:
+      limits:
+        # idle ≈ 3 MiB; budget ≈ 200 MiB per concurrently running JS runner, +75 MiB for Python — size with RUNNERS_MAX_CONCURRENCY.
+        memory: ${MEM_LIMIT_RUNNERS:-512m}
+
+x-runners-env: &runners-env
+  # the launcher refuses to start without the token (exit 1); it must equal the broker's N8N_RUNNERS_AUTH_TOKEN above.
+  N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?set N8N_RUNNERS_AUTH_TOKEN (make init)}
+  # seconds of idleness before a runner process exits (the launcher re-spawns one on the next task); 0 would keep ~200 MiB resident.
+  N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT: "15"
+  # forwarded to the runner processes (allowed-env); JS default would be 10, Python 5.
+  N8N_RUNNERS_MAX_CONCURRENCY: ${RUNNERS_MAX_CONCURRENCY:-5}
+  # the launcher otherwise FORCES 60 s into the runners regardless of the broker's 300 s — long Code nodes would die at 60 s.
+  N8N_RUNNERS_TASK_TIMEOUT: ${RUNNERS_TASK_TIMEOUT:-300}
+  # drain window on SIGTERM (launcher default 50 s would be SIGKILLed by any sane stop_grace_period).
+  N8N_RUNNERS_LAUNCHER_GRACEFUL_SHUTDOWN_TIMEOUT: "10"
+  # one of the few variables the launcher forwards to runners: Date/luxon inside Code nodes use it.
+  GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+
+services:
+  # ======================================================================================================================================
+  # caddy — edge: TLS, routing, the only published ports
+  # ======================================================================================================================================
+  caddy:
+    image: ${CADDY_IMAGE}:${CADDY_VERSION}@${CADDY_DIGEST:?run make pin}
+    restart: unless-stopped
+    # Non-root on purpose (verified): the internal CA it writes under /data is then owned by uid 1000, i.e. readable by n8n (uid 1000)
+    # through compose.dev.yml's read-only mount — root-owned PKI (mode 0700) would be invisible to n8n. The image ships /data/caddy and
+    # /config/caddy world-writable (1777) with no VOLUME, so fresh named volumes let uid 1000 create everything it needs.
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # MANDATORY even though Docker allows unprivileged low ports: /usr/bin/caddy carries the file capability cap_net_bind_service=ep and
+      # exec() of such a binary fails with "operation not permitted" when that capability is missing from the bounding set (verified).
+      - NET_BIND_SERVICE
+    ports:
+      # host port == container port on purpose: the Caddyfile listens on {$HTTP_PORT}/{$HTTPS_PORT} too, so the http→https redirect and
+      # Alt-Svc advertise the port a browser can actually reach (Caddy strips the request port and appends only its own https_port ≠ 443).
+      - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+      # HTTP/3 (QUIC); without it browsers simply fall back to h2, with it the Alt-Svc header Caddy already sends becomes true.
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}/udp"
+    environment:
+      # Caddyfile placeholders ({$VAR} / {$VAR:default}); contract §9 lists this exact set. DOMAIN and ACME_EMAIL are hard requirements
+      # even with tls internal (`caddy validate` fails without them), hence `:?`.
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      TLS_MODE: ${TLS_MODE:-acme}
+      HTTP_PORT: ${HTTP_PORT:-80}
+      HTTPS_PORT: ${HTTPS_PORT:-443}
+      UI_PROTECT: ${UI_PROTECT:-off}
+      # Caddy applies a {$VAR:default} only when VAR is UNSET — a set-but-empty value (what .env.example ships: UI_ALLOW_CIDR=) yields an
+      # empty matcher argument (verified on the build VM). So the "allow everyone" default is applied here, where empty counts as unset.
+      UI_ALLOW_CIDR: "${UI_ALLOW_CIDR:-0.0.0.0/0 ::/0}"
+      UI_BASIC_AUTH_USER: ${UI_BASIC_AUTH_USER:-}
+      # bcrypt hash from `caddy hash-password`; must be single-quoted in .env or Compose eats the `$…` segments (verified).
+      UI_BASIC_AUTH_HASH: ${UI_BASIC_AUTH_HASH:-}
+      # the webhook pool; static in S2 (two webhook processes are static services). Space-separated → N upstreams in the Caddyfile.
+      WEBHOOK_UPSTREAMS: n8n-webhook-1:5678 n8n-webhook-2:5678
+      KUMA_ENABLED: ${KUMA_ENABLED:-off}
+    volumes:
+      # /data: certificates, ACME account, internal PKI — losing it means re-issuing (and hitting Let's Encrypt rate limits).
+      - caddy_data:/data
+      # /config: Caddy's autosaved last-good config.
+      - caddy_config:/config
+      # the Caddyfile and its snippet files, read-only; `:z` relabels for SELinux hosts (no-op elsewhere, verified).
+      - ./caddy:/etc/caddy:ro,z
+    networks:
+      - proxy
+      - internal
+    healthcheck:
+      # the admin API on loopback. 127.0.0.1, NEVER `localhost`: busybox resolves localhost to ::1 while Caddy's admin listens on
+      # 127.0.0.1 only (verified). Port 2019 is not published — the config it returns contains the basic-auth hash.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # No depends_on: Caddy health-checks its upstreams itself and serves 502s until n8n is ready, which is exactly what we want during a
+    # 60-120 s n8n cold start; `make up` with TLS_MODE=internal even starts it first to export the dev CA.
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_CADDY:-256m}
+
+  # ======================================================================================================================================
+  # postgres — the database (PostgreSQL 18)
+  # ======================================================================================================================================
+  postgres:
+    image: ${POSTGRES_IMAGE}:${POSTGRES_VERSION}@${POSTGRES_DIGEST:?run make pin}
+    # shared_buffers 256 MB for a ~1 GB container; max_connections 150 covers up to 16 workers x pool 4 plus admins; statements slower
+    # than 2 s are logged (slow-query visibility without pg_stat_statements). PG18 enables data checksums by default — no INITDB_ARGS.
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=150", "-c", "log_min_duration_statement=2000"]
+    # uid/gid of `postgres` in the alpine image (verified); with an explicit user the entrypoint skips chown/gosu and initdb runs directly.
+    user: "70:70"
+    read_only: true
+    tmpfs:
+      # the unix socket dir (/var/run → /run symlink in the image) and temp files are the only writes outside the data volume (verified).
+      - /var/run/postgresql
+      - /tmp
+    restart: unless-stopped
+    # SIGINT = fast shutdown (image StopSignal); 30 s lets a checkpoint finish instead of forcing crash recovery on the next start.
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_DB: n8n
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (make init)}
+    volumes:
+      # PG18 moved the volume to /var/lib/postgresql (PGDATA=/var/lib/postgresql/18/docker): mounting the parent keeps future
+      # major-version upgrades (pg_upgrade needs old and new cluster side by side) inside one volume.
+      - pg_data:/var/lib/postgresql
+    networks:
+      - internal
+    healthcheck:
+      # TCP probe on purpose: during first-boot initdb the entrypoint's temporary server answers the unix-socket probe ~2 s before the real
+      # server listens, which would release depends_on too early; the TCP probe only succeeds once the final server binds 0.0.0.0:5432.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "n8n", "-d", "n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_POSTGRES:-1g}
+
+  # ======================================================================================================================================
+  # valkey — the queue broker (Redis-compatible)
+  # ======================================================================================================================================
+  valkey:
+    image: ${VALKEY_IMAGE}:${VALKEY_VERSION}@${VALKEY_DIGEST:?run make pin}
+    # SHELL form on purpose: in exec form Compose's `$$VAR` reaches the process unexpanded and the LITERAL string "$VALKEY_PASSWORD" becomes
+    # the password (verified). `sh -c` expands it at start-up and `exec` makes valkey-server PID 1's child directly, so docker inspect and
+    # `ps` show only the variable name, never the value.
+    #   --appendonly yes / everysec : durable queue (Bull jobs survive a restart, at most 1 s lost)
+    #   --maxmemory 256mb + noeviction : a full broker must ERROR, not silently drop jobs (Bull cannot survive evicted keys)
+    #   --save ''                   : no RDB snapshots on top of AOF (less I/O, one persistence mechanism)
+    # (block-folded `>-` so the single shell string stays under the 160-column lint limit; `$$` is Compose's escape for a literal `$`)
+    command:
+      - sh
+      - -c
+      - >-
+        exec valkey-server --requirepass "$$VALKEY_PASSWORD"
+        --appendonly yes --appendfsync everysec
+        --maxmemory 256mb --maxmemory-policy noeviction
+        --save ''
+    # uid 999 / gid 1000 = valkey:valkey in THIS image (not 999:999 — gid 999 is Alpine's `ping` group; verified).
+    user: "999:1000"
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD (make init)}
+    volumes:
+      # the image declares no VOLUME; with read_only the AOF directory needs this explicit volume (verified).
+      - valkey_data:/data
+    networks:
+      - internal
+    healthcheck:
+      # `valkey-cli ping` exits 0 even on NOAUTH/WRONGPASS (verified), so authenticate via VALKEYCLI_AUTH and require the literal PONG.
+      test: ["CMD-SHELL", "VALKEYCLI_AUTH=$$VALKEY_PASSWORD valkey-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          # maxmemory 256 MB + AOF rewrite buffers + allocator overhead; vm.overcommit_memory=1 on the host silences Valkey's warning.
+          memory: ${MEM_LIMIT_VALKEY:-384m}
+
+  # ======================================================================================================================================
+  # n8n-main — UI, API, triggers, migrations. Runs NO production webhooks and NO executions itself.
+  # ======================================================================================================================================
+  n8n-main:
+    <<: *n8n-base
+    # default command (`n8n` = start). Reached by Caddy on the proxy network; talks to the backend on internal.
+    networks:
+      - proxy
+      - internal
+    # main is the process that imports/installs things (community nodes via npm, workflow import); keep its temp files on a tmpfs
+    # rather than the container overlay. (Not read_only in S2 — see the header.)
+    tmpfs:
+      - /tmp
+    environment:
+      <<: *n8n-env
+      # manual (editor "Test workflow") runs go to the workers too: main then starts NO task broker/runner (verified) and stays responsive.
+      # Value must be the literal string "true". Becomes the only behaviour in n8n 3.0.
+      OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+      # main stops mounting /webhook, /form, /webhook-waiting, /mcp: production traffic belongs to the webhook pool only. Caddy routes those
+      # paths explicitly; a misroute to main would otherwise fall through to the SPA with HTTP 200 (verified), so this is belt AND braces.
+      N8N_DISABLE_PRODUCTION_MAIN_PROCESS: "true"
+      # shared ~/.n8n volume → give every process its own event-log file name (name verified in the image's env list).
+      N8N_EVENTBUS_LOGWRITER_LOGBASENAME: eventlog-n8n-main
+    healthcheck:
+      # readiness (DB connected + migrated + server fully up), not plain /healthz: webhooks/workers wait on this, so it must mean "migrated".
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5678/healthz/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # ≈ 51 s observed on a loaded VM including ~150 migrations on a fresh DB; a major upgrade can take longer → generous 120 s.
+      start_period: 120s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_MAIN:-1g}
+
+  # ======================================================================================================================================
+  # n8n-webhook-1/2 — production webhook receivers (the Caddy pool). Identical except for the event-log name.
+  # ======================================================================================================================================
+  n8n-webhook-1:
+    <<: *n8n-base
+    command: ["webhook"]
+    networks:
+      - proxy
+      - internal
+    environment:
+      <<: *n8n-env
+      # Response relay (≥ 2.34): bodies above SIZE_MAX MiB are stored in binary-data storage instead of failing the node. The flag is READ
+      # ON THE WORKERS (they produce the response); it is repeated here so every instance carries the same relay settings (docs: set it
+      # once every main/webhook runs ≥ 2.34, which the version lock guarantees).
+      N8N_WEBHOOK_RESPONSE_RELAY_OFFLOAD_ENABLED: "true"
+      N8N_WEBHOOK_RESPONSE_RELAY_SIZE_MAX: "64"
+      N8N_EVENTBUS_LOGWRITER_LOGBASENAME: eventlog-n8n-webhook-1
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5678/healthz/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # ≈ 36 s observed; no migrations to run (main did them), hence shorter than main.
+      start_period: 90s
+    depends_on:
+      # "main healthy" = DB migrated by exactly one process; any instance type WOULD run migrations on an empty DB (verified).
+      n8n-main:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WEBHOOK:-512m}
+
+  n8n-webhook-2:
+    <<: *n8n-base
+    command: ["webhook"]
+    networks:
+      - proxy
+      - internal
+    environment:
+      <<: *n8n-env
+      N8N_WEBHOOK_RESPONSE_RELAY_OFFLOAD_ENABLED: "true"
+      N8N_WEBHOOK_RESPONSE_RELAY_SIZE_MAX: "64"
+      N8N_EVENTBUS_LOGWRITER_LOGBASENAME: eventlog-n8n-webhook-2
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5678/healthz/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      n8n-main:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WEBHOOK:-512m}
+
+  # ======================================================================================================================================
+  # n8n-worker-1/2 + their runners sidecars. WORKER_REPLICAS>2 adds worker-3..N via render.sh (compose.scale.yml), copied from worker-1.
+  # ======================================================================================================================================
+  n8n-worker-1:
+    <<: *n8n-base
+    # --concurrency = parallel jobs per worker (n8n default 10; N8N_CONCURRENCY_PRODUCTION_LIMIT ≠ -1 overrides it).
+    command: ["worker", "--concurrency=${WORKER_CONCURRENCY:-10}"]
+    # proxy = outbound Internet for HTTP Request / API nodes (internal alone has no route out); nothing is published.
+    networks:
+      - proxy
+      - internal
+    environment:
+      <<: *n8n-env
+      # REQUIRED for /healthz(/readiness) on a worker: N8N_METRICS alone starts the worker server with /metrics but WITHOUT health routes.
+      QUEUE_HEALTH_CHECK_ACTIVE: "true"
+      # Bull job-lock tuning (n8n defaults, made explicit): a job is considered stalled when its lock (60 s, renewed every 10 s) lapses;
+      # the stalled-check runs every 30 s. QUEUE_WORKER_MAX_STALLED_COUNT was REMOVED in 2.x and is deliberately absent.
+      QUEUE_WORKER_LOCK_DURATION: "60000"
+      QUEUE_WORKER_LOCK_RENEW_TIME: "10000"
+      QUEUE_WORKER_STALLED_INTERVAL: "30000"
+      # Response relay — this is where the flag takes effect (the worker stores oversize webhook responses for main to stream); see the
+      # webhook services for the matching values. Requires a storing binary mode (database, set above).
+      N8N_WEBHOOK_RESPONSE_RELAY_OFFLOAD_ENABLED: "true"
+      N8N_WEBHOOK_RESPONSE_RELAY_SIZE_MAX: "64"
+      N8N_EVENTBUS_LOGWRITER_LOGBASENAME: eventlog-n8n-worker-1
+    healthcheck:
+      # worker readiness additionally requires a LIVE Redis connection (verified) — a worker cut off from Valkey turns unhealthy.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5678/healthz/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      n8n-main:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WORKER:-1g}
+
+  n8n-worker-1-runners:
+    <<: *runners-base
+    environment:
+      <<: *runners-env
+      # the task broker of ITS worker (port 5679, service DNS name). The launcher retries every 5 s until the broker is up, so the
+      # depends_on below only avoids 30-60 s of connection noise in the logs.
+      N8N_RUNNERS_TASK_BROKER_URI: http://n8n-worker-1:5679
+    depends_on:
+      n8n-worker-1:
+        condition: service_healthy
+
+  n8n-worker-2:
+    <<: *n8n-base
+    command: ["worker", "--concurrency=${WORKER_CONCURRENCY:-10}"]
+    networks:
+      - proxy
+      - internal
+    environment:
+      <<: *n8n-env
+      QUEUE_HEALTH_CHECK_ACTIVE: "true"
+      QUEUE_WORKER_LOCK_DURATION: "60000"
+      QUEUE_WORKER_LOCK_RENEW_TIME: "10000"
+      QUEUE_WORKER_STALLED_INTERVAL: "30000"
+      N8N_WEBHOOK_RESPONSE_RELAY_OFFLOAD_ENABLED: "true"
+      N8N_WEBHOOK_RESPONSE_RELAY_SIZE_MAX: "64"
+      N8N_EVENTBUS_LOGWRITER_LOGBASENAME: eventlog-n8n-worker-2
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5678/healthz/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      n8n-main:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WORKER:-1g}
+
+  n8n-worker-2-runners:
+    <<: *runners-base
+    environment:
+      <<: *runners-env
+      N8N_RUNNERS_TASK_BROKER_URI: http://n8n-worker-2:5679
+    depends_on:
+      n8n-worker-2:
+        condition: service_healthy
+
+networks:
+  # backend network: every service; `internal: true` = no route to the outside world (see the header). postgres, valkey and the runners
+  # sidecars live ONLY here.
+  internal:
+    internal: true
+  # routable network: caddy (edge) + main, webhook pool and workers (outbound HTTP for nodes). Nothing here publishes a port except caddy.
+  proxy: {}
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  pg_data: {}
+  valkey_data: {}
+  n8n_data: {}
+  n8n_files: {}

@@ -1,0 +1,10 @@
+# tls-acme-staging.caddy -- imported inside the site blocks when
+# TLS_MODE=acme-staging. Same ACME flow as `acme`, but against Let's Encrypt's
+# STAGING directory: the certificates are NOT browser-trusted, yet the strict
+# production rate limits (5 duplicate certs/week, failed-validation limits) do
+# not apply. Use it to rehearse DNS/firewall/port setup on a new host, then
+# switch to TLS_MODE=acme. Multi-line form is mandatory: the one-line
+# `tls { ca ... }` fails to parse (verified).
+tls {
+	ca https://acme-staging-v02.api.letsencrypt.org/directory
+}

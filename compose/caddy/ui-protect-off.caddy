@@ -1,0 +1,7 @@
+# ui-protect-off.caddy -- imported inside the catch-all `handle` of the n8n
+# site when UI_PROTECT=off (the default). INTENTIONALLY EMPTY: the editor UI
+# and /rest API are then guarded only by n8n's own login. Caddy logs
+# "Import file is empty" for it at start -- a warning, not an error.
+# Set UI_PROTECT=on (plus UI_ALLOW_CIDR / UI_BASIC_AUTH_*) in .env to add an
+# IP allow-list and HTTP basic auth in front of the UI; see
+# ui-protect-on.caddy.

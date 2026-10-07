@@ -1,0 +1,7 @@
+# kuma-off.caddy -- imported at the END of the Caddyfile (top level) when
+# KUMA_ENABLED=off (the default). INTENTIONALLY EMPTY: no kuma.DOMAIN site is
+# defined, so Caddy neither listens for that hostname nor requests a
+# certificate for it (in ACME mode that would need public DNS for
+# kuma.DOMAIN). Caddy logs "Import file is empty" for it at start -- a
+# warning, not an error. The S6 monitoring profile sets KUMA_ENABLED=on,
+# which imports kuma-on.caddy instead.

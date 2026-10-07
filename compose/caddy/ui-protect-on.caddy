@@ -1,0 +1,40 @@
+# ui-protect-on.caddy -- imported INSIDE the catch-all `handle` of the n8n
+# site (editor UI, /rest API, test webhooks, push) when UI_PROTECT=on.
+# Production webhooks, forms, MCP and the health paths are matched by earlier
+# handles and never pass through this file.
+#
+# Two layers, evaluated in THIS order:
+#   1. IP allow-list: a client outside UI_ALLOW_CIDR gets a bare 403 and is
+#      never offered a password prompt.
+#   2. HTTP basic auth for everybody else (401 challenge, then n8n's own login).
+#
+# The `route` wrapper is ESSENTIAL (verified): inside a plain handle block
+# Caddy re-orders directives by its built-in directive order, which places
+# basic_auth BEFORE respond -- clients outside the CIDR would then get a 401
+# challenge and only see the 403 after typing a correct password. `route`
+# keeps the written order.
+#
+# UI_ALLOW_CIDR: space-separated CIDRs, e.g. "203.0.113.0/24 2001:db8::/32".
+#   UNSET -> the default "0.0.0.0/0 ::/0" allows every address through to
+#   basic auth. The default applies only when the variable is unset; a value
+#   that is set but EMPTY leaves `remote_ip` without ranges and `not` then
+#   matches everyone -> 403 for all (compose must not pass an empty value).
+#   `remote_ip` is the TCP peer address: a request made on the Docker host
+#   itself arrives from the bridge gateway (172.x.0.1), not 127.0.0.1, and a
+#   proxy in front of Caddy would need `trusted_proxies` + the client_ip
+#   matcher instead.
+# UI_BASIC_AUTH_USER / UI_BASIC_AUTH_HASH: the hash is the output of
+#   `docker compose exec caddy caddy hash-password --plaintext '...'` (bcrypt,
+#   `$2a$14$...`). In .env it MUST be single-quoted ('$2a$14$...') or every
+#   `$` doubled, otherwise Compose interpolation silently eats the `$...`
+#   segments and no password ever matches (verified). Both values must be
+#   non-empty or validation fails ("username and password cannot be empty").
+#
+# Multi-line rule: `basic_auth { user hash }` on one line fails to parse.
+route {
+	@denied not remote_ip {$UI_ALLOW_CIDR:0.0.0.0/0 ::/0}
+	respond @denied 403
+	basic_auth {
+		{$UI_BASIC_AUTH_USER} {$UI_BASIC_AUTH_HASH}
+	}
+}

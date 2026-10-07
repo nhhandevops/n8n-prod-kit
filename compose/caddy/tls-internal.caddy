@@ -1,0 +1,11 @@
+# tls-internal.caddy -- imported inside the site blocks when TLS_MODE=internal
+# (what `make init` selects for dev domains: *.localtest.me, localhost, ...).
+#
+# Caddy mints its own CA ("Caddy Local Authority") in /data/caddy/pki and
+# issues 12-hour leaf certificates for DOMAIN (and kuma.DOMAIN) from it,
+# renewing them automatically. Because the caddy service runs as uid 1000,
+# the CA files are owned by uid 1000 and n8n (also uid 1000) can read
+# root.crt straight from the shared caddy_data volume -- that is how
+# compose.dev.yml hands it to n8n via NODE_EXTRA_CA_CERTS. Browsers trust it
+# after `make trust-ca`.
+tls internal

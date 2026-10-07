@@ -3,7 +3,7 @@
 > **Read this first on every machine, every session. Update it last, then `git push`.**
 > If it is not in git, it does not exist. This file is the only shared memory between computers and between AI coding sessions.
 
-**Last updated:** 2026-10-07 (S1 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** 7964709 (chore: repo skeleton) · **Project start date (T):** 2026-10-07 (day of the first public push)
+**Last updated:** 2026-10-07 (S2 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** 7964709 (chore: repo skeleton) · **Project start date (T):** 2026-10-07 (day of the first public push)
 
 ---
 
@@ -19,20 +19,21 @@
 
 | Milestone | Target | State |
 |---|---|---|
-| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | ⬜ not started |
+| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S2 of S10 done (compose core runs); S3–S10 pending |
 | M1 · Batteries (backups, monitoring, runbooks, 5 templates) | T + 5 weeks | ⬜ |
 | M2 · Terraform AWS | T + 8 weeks | ⬜ |
 | M2.5 · Kubernetes Helm chart (Target C) | T + 10 weeks | ⬜ |
 | M3 · Public launch (docs site, posts) | T + 3 months | ⬜ |
 | M4 · Business (setups + retainers) | T + 6 months | ⬜ |
 
-**Health:** S0 + S1 complete 2026-10-07 — repo public at https://github.com/nhhandevops/n8n-prod-kit, CI lint green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
+**Health:** S0–S2 complete 2026-10-07 — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.3 (+ `n8nio/runners:2.42.3`) — re-check latest stable on the day S2 starts
 
 ---
 
 ## 2. Work log
 
 ### ✅ Done
+- 2026-10-07 · **S2 compose core shipped**: `compose/` (docker-compose.yml, compose.dev.yml, versions.env, Caddyfile + snippets, .env.example, scripts: lib/init/render/pin/preflight/status/dev-ca/trust-ca/lint, Makefile, README), `scripts/bootstrap-host.sh`, `tests/bootstrap/test-in-container.sh`, root `make bootstrap-test`. Verified on the VM: `make init DOMAIN=n8n.localtest.me HTTP_PORT=8080 HTTPS_PORT=8443` → `make up` → 10/10 healthy in 2m28s; 308 redirect keeps the port; every path routes to the right upstream (`X-Kit-Upstream`); owner setup + API key + workflow publish via REST/public API; 3 webhook POSTs → 200 via the pool, executions success on workers, Code node ran in the runners sidecar; dev CA trusted by curl via `make trust-ca`. TC-001, TC-003, TC-004, TC-005 (manual) pass. Method: fact sweep (6 agents) → contract → files written by agents and by hand; the two agent authoring runs died on the 5-hour session limit, the main loop finished the make-ops group.
 - 2026-10-07 · S1 repo bootstrap: public repo `nhhandevops/n8n-prod-kit` created, commit 7964709 pushed, CI lint green (run 37583413865), Dependabot alerts on, topics set. Personal details scrubbed from HANDOFF/bug log before the first push (`<vm-ip>`, `<vm-user>`).
 - 2026-10-06 · Plan and docs bundle created.
 - 2026-10-07 · Build host on the laptop = Ubuntu 26.04 VM `server1` in VMware (not WSL2); VM RAM raised 5 → 7 GB (`memsize = "7168"`) so the monitoring profile fits. Guest inspected: Docker 29.5.2 + Compose 5.1.4 already installed (containerd image store), `<vm-user>` in `docker` group, passwordless sudo, NTP synced, cgroup v2, AppArmor on; kubectl/helm/kind present. **Shared VM:** 5 other compose projects + host nginx run here: port 80 = host nginx, 443/81 = nginx-proxy-manager. Root disk 77 GB with 15 GB free; Docker build cache 12 GB reclaimable (0 active), unused images 6.7 GB, journal 1 GB. Missing tools: gh, age, rclone, shellcheck, yamllint, hadolint, mkdocs.
@@ -67,6 +68,7 @@ _(none)_
 
 | Date | Decision | Why | Alternatives rejected |
 |---|---|---|---|
+| 2026-10-07 | **S2 design (after the fact sweep):** pin **n8n 2.42.4** (stable since 07:22 UTC today) + `n8nio/runners:2.42.4` (docker.n8n.io has no runners image); runners sidecars on **workers only** (main runs no broker with `OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true`, webhooks never need one); `N8N_DEFAULT_BINARY_DATA_MODE=database` (filesystem is unsupported in queue mode); `N8N_WEBHOOK_URL` not `WEBHOOK_URL`; Caddy runs as uid 1000 (PKI readable by n8n), `cap_add NET_BIND_SERVICE`, multi-line Caddyfile, `handle_errors` headers, container listens on the published port numbers; Valkey `user 999:1000` + shell-form command; Postgres TCP healthcheck; two-anchor YAML env merge; EL bootstrap copies the centos `.repo` file and never lists `curl` on EL9 | Every item was refuted or corrected by running the real images (see `warning_bug_and_solutions.md`, 2026-10-07 S2 entry) | The plan's literal §8–§10 values |
 | 2026-10-07 | Dev/build host = Ubuntu 26.04 VM `server1` (VMware, `ssh k8svm`), kit on ports **8080/8443**; `bootstrap-host.sh` and CI matrix cover Ubuntu 24.04 **and 26.04** | Only Linux on this laptop; VM is shared with other projects that own 80/443; 26.04 is what runs here and Docker's apt repo already serves `resolute` | WSL2 + Docker Engine (plan's original), Docker Desktop, reinstalling the VM as 24.04 |
 | 2026-10-06 | Pin **n8n 2.42.3** + `n8nio/runners:2.42.3`, one `${N8N_VERSION}` in `compose/versions.env` (tag + digest); every main/worker gets a 1:1 runners sidecar | 2.x requires external task runners; version lock by construction | `latest` tag; one shared runners service; `deploy.replicas` |
 | 2026-10-06 | **Valkey 9.1** (`noeviction`, AOF everysec) as queue backend; Redis documented as drop-in | BSD licence, ElastiCache engine, ioredis-compatible | Redis 7/8 (tri-licensed) |
@@ -116,12 +118,20 @@ make preflight && make up && make status && make smoke
 ---
 
 ## 5. Known issues / tech debt
-_(none yet)_
+- n8n services (main/webhooks/workers) are not `read_only` — write set of the 2.42 image unverified (S3: verify, add tmpfs list, flip).
+- Shared `/home/node/.n8n` volume: `crash.journal` is shared too, so a process starting while another runs logs "Last session crashed" once; evaluate per-role volumes vs community-node sharing (S3).
+- Postgres logged `invalid input syntax for type integer: "NaN"` twice during API-key/workflow creation via the public API — reproduce and report upstream if it recurs (S4 smoke will tell).
+- Runners sidecars are on the internal (no-egress) network only; whether Code-node `fetch`/http needs egress is unverified (S3 real-workflow check).
+- `WORKER_REPLICAS=1` still starts the static worker-2 (`make scale-workers` in S3 handles ≤2 with `--scale`/profiles).
+- Docker Hub anonymous pull quota (100/h per IP) bites shared hosts and CI: `pin.sh` has a Hub-API fallback; CI should `docker login` or use ghcr.io/n8n-io/* (S4).
+- `make lint` runs `caddy validate` 12× in a container (~15 s); fine locally, keep an eye on CI time.
+- Build-process lesson: a 20-agent workflow cannot survive the 5-hour session limit; author with ≤ 6 agents per run or by hand, and keep each run resumable.
 
 ## 6. Weekly notes (3 lines max per week)
 - **Week of 2026-10-06:** Plan done. Decide start date relative to SoBan progress; the kit's Compose base can be built alongside SoBan's Phase A infra.
 
 ## 7. Questions for An (AI agents: add here instead of guessing)
+- Browser check wanted when convenient: on Windows run `scp k8svm:~/n8nkit-root.crt $env:USERPROFILE\Downloads\` then (admin) `certutil -addstore -f ROOT $env:USERPROFILE\Downloads\n8nkit-root.crt`, open https://n8n.localtest.me:8443/ and log in as owner@example.com / KitSmoke123! (test owner created by the S2 verification; `make clean` wipes it).
 - ~~Pin which n8n version at start?~~ → **2.42.3** (decided 2026-10-06; re-verify latest stable when S2 starts).
 - ~~Which S3-compatible backup target for the demo?~~ → **Cloudflare R2** default, AWS S3 for Target B, both supported via `BACKUP_REMOTES`.
 - Where to verify the RHEL path with real SELinux/firewalld (not possible in containers)? Options: small AlmaLinux 9 VM on the K: USB SSD, or a one-off Rocky 9 VPS. Decide in S3.
