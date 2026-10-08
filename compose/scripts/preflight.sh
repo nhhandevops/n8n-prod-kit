@@ -98,11 +98,43 @@ fi
 if [[ -z "$(env_get BACKUP_AGE_PUBLIC_KEY)" ]]; then
   flag_fail "BACKUP_AGE_PUBLIC_KEY is empty in .env — re-run make init FORCE=1 (keeps the existing age keys)"
 fi
-backup_local_path="$(env_get BACKUP_LOCAL_PATH)"
-if [[ -n "${backup_local_path}" && ! -d "${backup_local_path}" ]]; then
-  flag_fail "BACKUP_LOCAL_PATH=${backup_local_path} does not exist — mount the external disk / NAS first (backups to /backups/external would land on the root disk)"
+if [[ -z "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" && "$(env_get BACKUP_ALLOW_SINGLE_RECIPIENT)" != "true" ]]; then
+  flag_fail "BACKUP_AGE_RECOVERY_PUBLIC_KEY is empty — backups would only open with this host's key, which is lost with the host; put the recovery public key back (age-keygen -y <recovery key file>) or set BACKUP_ALLOW_SINGLE_RECIPIENT=true"
 fi
-if [[ "$(env_get BACKUP_ENABLED)" == "true" && -z "$(env_get BACKUP_REMOTES)" ]]; then
+backup_remotes="$(env_get BACKUP_REMOTES)"
+for remote in ${backup_remotes}; do
+  remote="${remote%/}"
+  if [[ "${remote}" == *..* ]] || ! [[ "${remote}" =~ ^/backups/(local|external)(/[A-Za-z0-9._-]+)*$ || "${remote}" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9._/-]*$ ]]; then
+    flag_fail "BACKUP_REMOTES entry '${remote}' is not /backups/local, /backups/external[/dir] or an rclone remote 'name:bucket/path' — anything else is written inside the container and lost on restart"
+  fi
+done
+for setting in BACKUP_RETENTION_DAILY_DAYS BACKUP_RETENTION_MONTHLY_DAYS BACKUP_RETENTION_MIN_KEEP; do
+  value="$(env_get "${setting}")"
+  if [[ -n "${value}" && ! "${value}" =~ ^[1-9][0-9]{0,4}$ ]]; then
+    flag_fail "${setting}='${value}' must be a whole number >= 1 — 0 would delete every bundle, '30d' would keep all"
+  fi
+done
+tmpfs_mb="$(size_mb "$(env_get BACKUP_TMPFS_SIZE)")"
+mem_mb="$(size_mb "$(env_get MEM_LIMIT_BACKUP)")"
+tmpfs_mb="${tmpfs_mb:-1024}"
+mem_mb="${mem_mb:-1536}"
+if (( mem_mb < tmpfs_mb + 256 )); then
+  flag_fail "MEM_LIMIT_BACKUP (${mem_mb} MiB) must be at least BACKUP_TMPFS_SIZE (${tmpfs_mb} MiB) + 256 MiB — the tmpfs counts against the memory limit and a growing dump would be OOM-killed"
+fi
+backup_local_path="$(env_get BACKUP_LOCAL_PATH)"
+if [[ -n "${backup_local_path}" ]]; then
+  problem="$(backup_path_problem "${backup_local_path}")"
+  if [[ -n "${problem}" ]]; then
+    flag_fail "BACKUP_LOCAL_PATH=${backup_local_path} ${problem}"
+  elif command -v mountpoint >/dev/null 2>&1 && ! mountpoint -q "${backup_local_path}" && ! mountpoint -q "$(dirname "${backup_local_path}")"; then
+    warn "BACKUP_LOCAL_PATH=${backup_local_path} is not on a mount of its own — if the external disk is not mounted, /backups/external lands on the root disk"
+  else
+    ok "BACKUP_LOCAL_PATH=${backup_local_path} usable"
+  fi
+elif [[ " ${backup_remotes} " == *" /backups/external"* ]]; then
+  warn "BACKUP_REMOTES lists /backups/external but BACKUP_LOCAL_PATH is empty — it is the same directory as /backups/local, not a second copy"
+fi
+if [[ "$(env_get BACKUP_ENABLED)" != "false" && -z "${backup_remotes}" ]]; then
   warn "BACKUP_REMOTES is empty — nothing will be backed up; set an off-host target (e.g. r2:n8n-backups/prod) before going live"
 fi
 

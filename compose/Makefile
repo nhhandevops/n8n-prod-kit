@@ -42,7 +42,7 @@ SINCE ?= 10m
 with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
 
 .PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers \
-        backup-now backups restore restore-test detach-recovery-key dev-ca trust-ca lint version env-keys clean
+        backup-now backups restore restore-clean restore-test detach-recovery-key dev-ca trust-ca lint version env-keys clean
 
 help: ## Show this help
 	@printf 'n8n Production Kit — compose/ targets (run from anywhere: make -C compose <target>)\n\n'
@@ -114,7 +114,10 @@ backups: ## List the backups on every remote (newest first): make backups [FROM=
 restore: ## Replace the DB with a backup: make restore BACKUP=latest|<name> [FROM=…] [AGE_KEY=file] [ADOPT_KEY=1] [YES=1]
 	@$(KIT_DIR)/scripts/restore.sh
 
-restore-test: ## Restore the newest backup into a scratch Postgres and verify it (weekly from cron)
+restore-clean: ## Empty the backup_work volume (a decrypted bundle left by an interrupted make restore)
+	@$(COMPOSE) run --rm -T backup /opt/backup/restore.sh clean
+
+restore-test: ## Verify every target's newest backup, restore the newest into a scratch Postgres (weekly from cron)
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@$(COMPOSE) run --rm -T backup /opt/backup/restore-test.sh $(BACKUP)
 

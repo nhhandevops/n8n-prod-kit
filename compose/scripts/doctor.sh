@@ -57,6 +57,10 @@ else
 fi
 if [[ -f secrets/age-recovery-key.txt ]]; then
   key_age_days=$(( ( $(date +%s) - $(stat -c %Y secrets/age-recovery-key.txt) ) / 86400 ))
+  recovery_pub="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint age-keygen     -v "${KIT_DIR}/secrets/age-recovery-key.txt:/k.txt:ro,z" n8nkit/backup:local -y /k.txt 2>/dev/null || true)"
+  if [[ -n "${recovery_pub}" && "${recovery_pub}" != "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" ]]; then
+    flag_fail "BACKUP_AGE_RECOVERY_PUBLIC_KEY in .env is not the public key of secrets/age-recovery-key.txt — new backups are encrypted to a key you may not have; set it to: ${recovery_pub}"
+  fi
   if (( key_age_days > 7 )); then
     flag_warn "secrets/age-recovery-key.txt has been on this host for ${key_age_days} days — store it in your password manager and run make detach-recovery-key; a backup that can be decrypted from the same host it protects is not a recovery plan"
   else
@@ -67,7 +71,9 @@ elif [[ -n "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" ]]; then
 else
   flag_warn "no recovery key: BACKUP_AGE_RECOVERY_PUBLIC_KEY is empty — backups can only be opened with this host's key"
 fi
-if [[ "$(env_get BACKUP_ENABLED)" == "true" && ! -s secrets/age-key.txt ]]; then
+backup_enabled="$(env_get BACKUP_ENABLED)"
+backup_enabled="${backup_enabled:-true}"   # the compose default
+if [[ "${backup_enabled}" == "true" && ! -s secrets/age-key.txt ]]; then
   flag_fail "secrets/age-key.txt is missing — backups cannot be encrypted or restore-tested (re-run make init FORCE=1 only if you also restore the old key)"
 fi
 
@@ -235,7 +241,7 @@ fi
 # ---------------------------------------------------------------------------------------------------------------------
 section "backups"
 backup_remotes="$(env_get BACKUP_REMOTES)"
-if [[ "$(env_get BACKUP_ENABLED)" != "true" ]]; then
+if [[ "${backup_enabled}" != "true" ]]; then
   flag_warn "BACKUP_ENABLED is not true — no scheduled backups protect the database (make backup-now works manually)"
 elif [[ -z "${backup_remotes}" ]]; then
   flag_fail "BACKUP_REMOTES is empty — nothing is backed up; set e.g. BACKUP_REMOTES=\"r2:n8n-backups/prod\" (+ RCLONE_CONFIG_R2_*) and make up"
@@ -248,7 +254,9 @@ else
     remote="${remote%/}"
     last="$(awk -v r="backup_last_success_timestamp_seconds{remote=\"${remote}\"}" '$1 == r { print $2 }' <<<"${metrics}")"
     status="$(awk -v r="backup_last_status{remote=\"${remote}\"}" '$1 == r { print $2 }' <<<"${metrics}")"
-    if [[ -z "${last}" ]]; then
+    if [[ -z "${last}" && "${status}" == "0" ]]; then
+      flag_fail "every backup to ${remote} has failed so far — make logs SERVICE=backup SINCE=48h; make backup-now"
+    elif [[ -z "${last}" ]]; then
       schedule="$(env_get BACKUP_SCHEDULE)"
       flag_warn "no successful backup to ${remote} yet — run make backup-now (the nightly job runs on cron '${schedule:-0 2 * * *}')"
     else
@@ -256,12 +264,18 @@ else
       if (( age_h >= 26 )); then
         flag_fail "last successful backup to ${remote} was ${age_h} h ago — make logs SERVICE=backup SINCE=48h; make backup-now"
       elif [[ "${status}" == "0" ]]; then
-        flag_warn "the LAST attempt to ${remote} failed (previous success ${age_h} h ago) — make logs SERVICE=backup"
+        flag_fail "the LAST backup attempt to ${remote} failed (previous success ${age_h} h ago) — make logs SERVICE=backup; make backup-now"
       else
         ok "backup to ${remote}: last success ${age_h} h ago"
       fi
     fi
   done
+  size="$(awk '$1 == "backup_last_size_bytes" { print $2 }' <<<"${metrics}")"
+  tmpfs_mb="$(size_mb "$(env_get BACKUP_TMPFS_SIZE)")"
+  tmpfs_mb="${tmpfs_mb:-1024}"
+  if [[ -n "${size}" ]] && (( ${size%.*} * 5 / 1048576 > tmpfs_mb * 2 )); then
+    flag_warn "the last bundle is $(( ${size%.*} / 1048576 )) MiB, over 40 % of BACKUP_TMPFS_SIZE (${tmpfs_mb} MiB) — backups and the restore test will soon run out of scratch space; raise BACKUP_TMPFS_SIZE and MEM_LIMIT_BACKUP together"
+  fi
   rt_success="$(awk '$1 == "restore_test_last_success_timestamp_seconds" { print $2 }' <<<"${metrics}")"
   rt_status="$(awk '$1 == "restore_test_last_status" { print $2 }' <<<"${metrics}")"
   if [[ "${rt_status}" == "0" ]]; then

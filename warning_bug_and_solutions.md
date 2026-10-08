@@ -179,3 +179,63 @@ Each line: symptom you would have seen → root cause → fix. Verified on n8n 2
 - **Symptom:** the smoke job fails in "Bring the stack up" while pulling; a docs-only commit turned CI red.
 - **Root cause:** the AWS public registry throttles anonymous bursts; `compose pull` fetches every image in parallel. (Docker Hub has its own 100 pulls/h limit, which is why CI uses the mirrors.)
 - **Fix:** `make up` / `make pull` retry the pull (and the backup image build) three times with 20 s / 40 s pauses (`with_retry` in compose/Makefile); `make pull` also skips the locally built backup image (`--ignore-buildable`).
+
+## 2026-10-08 · Adversarial review of the S5 backup/restore code (3 agents) — 28 findings, all fixed the same day
+
+Three independent reviewers (restore/DR data loss · backup truthfulness · security) attacked commit c0e8c1d; most
+findings were reproduced on the VM with throw-away containers. Each entry below: symptom → root cause → verify → fix.
+Regression test for the worst ones: `tests/ci/dr-drill.sh` (CI runs it on every change).
+
+### Disaster recovery left n8n unable to start ("Mismatching encryption keys")
+- **Symptom:** the documented new-host restore (`make init` → `make up` → `make restore … ADOPT_KEY=1`) ended with n8n-main crash-looping; the S5 "verified" DR test had not followed that order.
+- **Root cause:** n8n caches its key in `/home/node/.n8n/config` (volume n8n_data) on first start and refuses an `N8N_ENCRYPTION_KEY` that differs from it.
+- **Verify:** start n8n with key A on a volume, restart with key B → `Error: Mismatching encryption keys`.
+- **Fix:** `make restore` deletes that file after every successful swap (n8n re-creates it from .env). dr-drill.sh proves the whole procedure.
+
+### pg_restore failure after the DROP left an EMPTY live database
+- **Root cause:** DROP and CREATE ran in autocommit; only pg_restore was transactional, and the docs claimed "one transaction".
+- **Fix:** restore into a staging DB `n8n_restore`, verify its counts, swap atomically (`ALTER DATABASE … RENAME` twice inside one transaction — verified to work in PG 18), keep the replaced DB as `n8n_prev` until the stack is healthy. A corrupt dump now leaves the live DB untouched and n8n is restarted (verified with a planted truncated dump).
+
+### `latest` could be chosen by anyone who can write to a target, by a clock jump, or be the pre-restore safety copy
+- **Root cause:** `latest` = newest basename of any `n8n-*.tar.age`; names were never validated or bound to the content; pre-restore copies counted; an unlistable remote was silently skipped.
+- **Fix:** strict name/layout regex; `latest` skips `pre-restore/` and names > 1 day in the future; the manifest must name the file it came from (a renamed old bundle is refused); `latest` refuses when any remote cannot be listed (use `FROM=`).
+
+### The weekly restore test ran an untrusted bundle's SQL as superuser before any authenticity check
+- **Root cause:** age gives confidentiality, not origin — anyone with write access to a target can encrypt to the PUBLIC keys; the key check came after `pg_restore -U postgres`.
+- **Fix:** key match (+ 2 recipients) checked first; pg_restore runs as a NOSUPERUSER role (verified: `COPY … PROGRAM` denied; n8n's `uuid-ossp` is a trusted extension, so the restore still works). ADOPT_KEY now shows key hints and asks for a human comparison.
+
+### Backup failures before the upload loop were silent
+- **Symptom:** pg_dump error, full tmpfs, OOM, malformed recovery key, retention typo → exit, no Telegram, metrics still "status 1".
+- **Fix:** EXIT handler in backup.sh: any failure sets `backup_last_status 0` for every remote (previous success timestamps kept) and alerts with the failed stage. Doctor FAILs on a failed last attempt and on a remote that never succeeded.
+
+### Retention: `0` deleted the backup just written, `30d` silently disabled pruning, a forward clock jump could empty every remote
+- **Fix:** whole numbers ≥ 1 required (backup.sh and preflight); pruning by the UTC name, never the bundle just written, never below `BACKUP_RETENTION_MIN_KEEP` (7) newest; errors reported instead of `2>/dev/null || true`. Monthly copies are self-healing (first daily of each UTC month).
+
+### Other fixes from the review
+- `BACKUP_REMOTES` typo without a colon (`r2/bucket`) wrote into the container tmpfs → validated in backup.sh, preflight.
+- Recovery key: an empty `BACKUP_AGE_RECOVERY_PUBLIC_KEY` produced host-key-only bundles silently → refused (`BACKUP_ALLOW_SINGLE_RECIPIENT=true` overrides); restore test asserts 2 recipients; doctor checks the on-host recovery file matches .env; `make detach-recovery-key` is always interactive and makes you paste the key back before shredding.
+- Defaults MEM_LIMIT_BACKUP 1g < BACKUP_TMPFS_SIZE 2g (tmpfs counts against the cgroup → OOM) → 1536m / 1g, preflight enforces mem ≥ tmpfs + 256m, doctor warns when bundles outgrow the tmpfs.
+- Counts in the manifest were taken outside pg_dump's snapshot → counted in the dump itself (`pg_restore --data-only --table`).
+- The safety backup ran while n8n was still writing → n8n is stopped first. The key check happens before the safety backup and the stop.
+- Plaintext dump + key stayed in the backup_work volume after an aborted/failed restore → EXIT trap empties it on every exit; `make restore-clean`.
+- Lock on each container's own /tmp → `/state/backup.lock`, shared by cron and every `compose run`; host-side flock for `make restore`.
+- Restore test only ever looked at one remote → it verifies every remote's newest bundle and fails when it is older than 26 h.
+- N8N_ENCRYPTION_KEY on the openssl command line and the Telegram token on curl's (both readable by every host user in /proc) → `-pass env:`, `curl -K -`.
+- backup-perms.sh chowned whatever BACKUP_LOCAL_PATH named, as root (`$HOME`, `/`) → refused unless empty or kit-only and outside system dirs/$HOME.
+- ADOPT_KEY wrote an unvalidated key into .env; env_set could store a backtick inside double quotes → key format check; env_set refuses `'` + backtick.
+- `.env.bak.*` not git-ignored → `compose/.env.*`. Community packages were lost on a new host → `N8N_REINSTALL_MISSING_PACKAGES=true`; the n8n_files volume is documented as not covered.
+- Open (HANDOFF §5): n8n connects as the Postgres bootstrap superuser, so live restores run as superuser (safe only after the key check); n8n_files not backed up.
+
+## 2026-10-08 · BusyBox flock has no `-w`: "flock: unrecognized option: w"
+
+- **Symptom:** every backup failed in seconds with "another backup … is still running after 15 min".
+- **Root cause:** the backup image (Postgres alpine) ships BusyBox `flock` (`-s -x -u -n` only); `flock -w 900` is a usage error, which the code read as "lock busy". The OPS-004 rule "check the real tool before writing code" was skipped for this one flag.
+- **Verify:** `docker run --rm --entrypoint flock n8nkit/backup:local -w 1 9` → usage text.
+- **Fix:** poll `flock -n` every 5 s up to the timeout (lib.sh `take_lock`). Every other tool flag the new code uses was then checked in the image in one pass.
+
+## 2026-10-08 · bash regex `{16,256}` is invalid: the genuine key was "unexpected format"
+
+- **Symptom:** the DR drill's `ADOPT_KEY=1` restore refused the real 64-char key.
+- **Root cause:** POSIX regex repetition counts are capped at RE_DUP_MAX = 255; `[[ x =~ ^…{16,256}$ ]]` is a compile error, and `[[ ]]` returns 2 (false) without stopping a script.
+- **Verify:** `[[ abc =~ ^a{1,256}$ ]]` → `invalid repetition count(s)`.
+- **Fix:** `{16,255}`. Found only because the drill runs the real procedure — exactly why it is in CI now.

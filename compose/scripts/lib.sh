@@ -233,6 +233,10 @@ env_set() {
     quoted="${value}"
   elif [[ "${value}" != *"'"* ]]; then
     quoted="'${value}'"
+  elif [[ "${value}" == *'`'* ]]; then
+    # inside double quotes a backtick is command substitution for anything that sources .env with bash (load_env),
+    # and Compose has no escape for it — such a value cannot be stored safely
+    die "env_set: the value for ${key} contains both ' and \` — not supported in .env"
   else
     quoted="${value//"${bs}"/${bs}${bs}}"
     quoted="${quoted//"${dq}"/${bs}${dq}}"
@@ -259,6 +263,75 @@ env_set() {
     printf '%s=%s\n' "${key}" "${quoted}" >"${tmp}"
   fi
   mv -f "${tmp}" "${file}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# size_mb SIZE   Docker/compose size ("1536m", "2g", "512M", "1048576k", plain bytes) -> whole MiB;
+# prints nothing for an unparsable value.
+# ---------------------------------------------------------------------------------------------
+size_mb() {
+  local v="${1,,}" n unit
+  if [[ ! "${v}" =~ ^([0-9]+)([bkmg]?)b?$ ]]; then
+    return 0
+  fi
+  n="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]}"
+  case "${unit}" in
+    g) printf '%s
+' "$(( n * 1024 ))" ;;
+    m) printf '%s
+' "${n}" ;;
+    k) printf '%s
+' "$(( n / 1024 ))" ;;
+    *) printf '%s
+' "$(( n / 1048576 ))" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------------------------
+# backup_path_problem PATH   why PATH must not be BACKUP_LOCAL_PATH (prints the reason; prints
+# nothing when it is fine). backup-perms.sh hands that directory to the backup container's uid as
+# root, so a wrong value could lock the operator out of $HOME (sshd refuses keys in a home dir it
+# does not own) or open a system directory to a group. Accepted: an existing directory that is
+# empty or holds only what the kit writes there (the kind directories), outside system paths.
+# ---------------------------------------------------------------------------------------------
+backup_path_problem() {
+  local p="${1}" real entry base home_real
+  if [[ ! -d "${p}" ]]; then
+    printf 'does not exist (mount the external disk / NAS first)
+'
+    return 0
+  fi
+  real="$(cd "${p}" && pwd -P)"
+  case "${real}" in
+    / | /home | /mnt | /media | /srv | /opt | /var | /tmp | /var/tmp | /root | /data | /backup | /backups |       /bin | /bin/* | /boot | /boot/* | /dev | /dev/* | /etc | /etc/* | /lib | /lib/* | /lib32 | /lib32/* |       /lib64 | /lib64/* | /proc | /proc/* | /run | /run/* | /sbin | /sbin/* | /sys | /sys/* | /usr | /usr/* |       /var/lib | /var/lib/* | /var/log | /var/log/*)
+      printf 'is a system directory (%s) — use a dedicated sub-directory, e.g. /mnt/usb/n8n-backups
+' "${real}"
+      return 0
+      ;;
+    *) ;;
+  esac
+  home_real=''
+  if [[ -n "${HOME:-}" && -d "${HOME}" ]]; then
+    home_real="$(cd "${HOME}" && pwd -P)" || home_real=''
+  fi
+  if [[ "${real}" == "${home_real}" || "${KIT_DIR}/" == "${real}/"* ]]; then
+    printf 'is your home directory or contains the kit (%s) — use a dedicated sub-directory
+' "${real}"
+    return 0
+  fi
+  for entry in "${real}"/* "${real}"/.[!.]*; do
+    [[ -e "${entry}" ]] || continue
+    base="${entry##*/}"
+    case "${base}" in
+      daily | monthly | manual | pre-upgrade | pre-restore | lost+found) ;;
+      *)
+        printf 'already holds other files (%s) — the kit changes its owner; use an empty sub-directory, e.g. %s/n8n-backups
+' "${base}" "${real}"
+        return 0
+        ;;
+    esac
+  done
 }
 
 # ---------------------------------------------------------------------------------------------

@@ -48,7 +48,7 @@ jobs:
   smoke:
     needs: lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -67,6 +67,11 @@ jobs:
         run: |
           make -C compose restore BACKUP=latest YES=1
           make -C compose smoke ONLY=01,04,05
+
+      # The documented disaster recovery: destroy the stack (volumes, .env, age keys), init a "new host" with a new
+      # encryption key, prove a restore without ADOPT_KEY refuses, restore with the recovery key + ADOPT_KEY=1, smoke.
+      - name: Disaster-recovery drill (new host, recovery key, ADOPT_KEY)
+        run: tests/ci/dr-drill.sh
 
       - name: Collect logs
         if: failure()

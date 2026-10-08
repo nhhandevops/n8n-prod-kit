@@ -43,9 +43,10 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make scale-workers N=4` | 1–16 workers (each with its runner sidecar); `N=1` parks worker 2 |
 | `make backup-now [NAME=x]` | encrypted backup (DB + encryption key) to every `BACKUP_REMOTES` target now; nightly from cron |
 | `make backups` | list the backups on every target |
-| `make restore BACKUP=latest` | replace the database with a backup (safety backup first, key check, queue flush) |
-| `make restore-test` | restore the newest backup into a scratch Postgres and verify it; weekly from cron |
-| `make detach-recovery-key` | move the offline recovery key into your password manager (prints once, then shreds) |
+| `make restore BACKUP=latest` | replace the database with a backup (key check, safety backup, staging DB + atomic swap, queue flush) |
+| `make restore-clean` | empty the work volume after an interrupted restore (never needed normally) |
+| `make restore-test` | verify every target's newest backup, restore the newest into a scratch Postgres; weekly from cron |
+| `make detach-recovery-key` | move the offline recovery key into your password manager (paste it back to prove the copy, then shreds) |
 | `make pin N8N_VERSION=2.42.5` | move the n8n pin (and the runners sidecar with it); then `make up` |
 | `make lint` | shellcheck + yamllint + compose config + `caddy validate` for every mode |
 | `make env-keys` | key names of `.env` for bug reports (never paste values) |

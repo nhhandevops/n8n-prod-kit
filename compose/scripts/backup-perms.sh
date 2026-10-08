@@ -3,7 +3,9 @@
 # local backup directories, without sudo and without locking the operator out:
 #   secrets/age-key.txt                  -> owner 70, group = the operator's group, mode 0440
 #   backups/ (+ BACKUP_LOCAL_PATH if set) -> owner 70, group = the operator's group, mode 2775 (setgid: new files keep
-#                                           the group, so the operator can still list and delete backups)
+#                                           the group, so the operator can still list and delete backups). Only the
+#                                           directory itself, never recursively; BACKUP_LOCAL_PATH must pass
+#                                           lib.sh's backup_path_problem (empty or kit-only, not a system dir or $HOME)
 # Runs as root inside a throw-away container of the backup image (the Docker daemon does the chown). Idempotent;
 # called by `make up`, `make backup-now`, `make restore`, `make restore-test`.
 # shellcheck disable=SC2310,SC2311,SC2312
@@ -27,8 +29,9 @@ mounts=(-v "${KIT_DIR}/secrets:/k/secrets:z" -v "${KIT_DIR}/backups:/k/backups:z
 targets="/k/backups"
 external="$(env_get BACKUP_LOCAL_PATH)"
 if [[ -n "${external}" ]]; then
-  if [[ ! -d "${external}" ]]; then
-    die "BACKUP_LOCAL_PATH=${external} is not a directory — mount the disk first (preflight checks this too)"
+  problem="$(backup_path_problem "${external}")"
+  if [[ -n "${problem}" ]]; then
+    die "BACKUP_LOCAL_PATH=${external} ${problem}"
   fi
   mounts+=(-v "${external}:/k/external:z")
   targets="${targets} /k/external"

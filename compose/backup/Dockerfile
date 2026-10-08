@@ -56,13 +56,14 @@ COPY --chmod=0755 *.sh /opt/backup/
 
 # Mount points for the backup_state / backup_work volumes, owned by uid 70: Docker copies this ownership into a NEW
 # named volume on first use (existing volumes are fixed by scripts/backup-perms.sh).
-RUN mkdir -p /state /work && chown 70:70 /state /work
+# /etc/rclone.conf: an EMPTY, read-only config file — every remote is defined through RCLONE_CONFIG_<NAME>_* environment
+# variables; a missing file would make rclone log "Config file not found" on every command.
+RUN mkdir -p /state /work && chown 70:70 /state /work && install -m 0444 /dev/null /etc/rclone.conf
 
-# HOME/XDG on the tmpfs: the root filesystem is read-only and rclone wants a cache dir; RCLONE_CONFIG points at a file
-# that never exists — every remote is defined through RCLONE_CONFIG_<NAME>_* environment variables instead.
+# HOME/XDG on the tmpfs: the root filesystem is read-only and rclone wants a cache dir.
 ENV HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
-    RCLONE_CONFIG=/tmp/rclone-unused.conf
+    RCLONE_CONFIG=/etc/rclone.conf
 USER 70:70
 WORKDIR /tmp
 ENTRYPOINT ["/opt/backup/entrypoint.sh"]
