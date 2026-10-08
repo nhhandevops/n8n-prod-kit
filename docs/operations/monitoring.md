@@ -65,7 +65,7 @@ one, edit it in Grafana, *Export → Save to file*, and commit the JSON.
 | RestoreTestStale | no passing restore test for 8 days | 30 m |
 | DiskHigh | root filesystem more than 80 % full | 10 m |
 | CertExpiring | the certificate Caddy serves expires within 14 days (ACME modes; hourly cert-check) | 1 h |
-| ContainerRestarting | a container of the stack restarted more than twice in 15 min | — |
+| ContainerRestarting | a container restarted more than twice in 15 min (one alert per Compose project on the host) | — |
 | MonitoringTargetDown | Caddy metrics, node-exporter, cAdvisor, Loki or Alloy cannot be scraped | 5 m |
 
 Notification policy: grouped per alert, first message after 30 s, repeated every 4 h while firing, plus a message when

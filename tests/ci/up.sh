@@ -36,6 +36,10 @@ LOKI_IMAGE=mirror.gcr.io/grafana/loki
 ALLOY_IMAGE=mirror.gcr.io/grafana/alloy
 ENV
 sed -i -e 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=monitoring,kuma/' -e 's/^KUMA_ENABLED=.*/KUMA_ENABLED=on/' compose/.env
+# A dummy Telegram bot: render.sh then provisions the contact point and smoke 09 checks that Grafana expanded the token.
+# Telegram rejects every delivery (no such bot), so nobody receives anything.
+sed -i -e 's/^ALERT_TELEGRAM_BOT_TOKEN=.*/ALERT_TELEGRAM_BOT_TOKEN=000000000:ci-dummy-token-never-valid/' \
+  -e 's/^ALERT_TELEGRAM_CHAT_ID=.*/ALERT_TELEGRAM_CHAT_ID=-1000000000000/' compose/.env
 
 make -C compose up
 make -C compose doctor

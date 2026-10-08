@@ -1,9 +1,10 @@
 # compose/monitoring/grafana/provisioning/alerting/rules.yml — Grafana-managed alert rules of the kit (S6).
 # Evaluated every 30 s in the folder "n8n-kit"; notifications go to the Telegram contact point that render.sh writes into
 # notifications.yml when ALERT_TELEGRAM_BOT_TOKEN + ALERT_TELEGRAM_CHAT_ID are set (otherwise they only show in
-# Grafana -> Alerting). Grafana expands ${VAR} from its environment inside the query models (${KIT_PROJECT} below) but
-# NOT in annotations, so alert templates use plain $values (verified in CI 2026-10-08: "$$values" broke the templates).
-# Shape of every rule: A = an instant PromQL query that returns ONE value, C = a threshold on A.
+# Grafana -> Alerting). Grafana does NOT expand environment variables in rule files — neither in the queries nor in the
+# annotations (verified in CI 2026-10-08) — so nothing here depends on the environment and alert templates use plain
+# $values / $labels.
+# Shape of every rule: A = an instant PromQL query, C = a threshold on A (one alert instance per returned series).
 apiVersion: 1
 
 groups:
@@ -387,9 +388,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'A container restarted more than twice in 15 minutes'
+          summary: 'A container of Compose project {{ $labels.container_label_com_docker_compose_project }} restarted more than twice in 15 minutes'
           description: >-
-            Crash loop: make status shows which one; make logs SERVICE=<name> SINCE=15m
+            Crash loop (one alert per Compose project on this host): make status shows which one; make logs SERVICE=<name>
+            SINCE=15m
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
@@ -397,8 +399,8 @@ groups:
             model:
               refId: A
               expr: >-
-                max(changes(container_start_time_seconds{container_label_com_docker_compose_project="${KIT_PROJECT}"}[15m]))
-                or vector(0)
+                max by (container_label_com_docker_compose_project)
+                (changes(container_start_time_seconds{container_label_com_docker_compose_project!=""}[15m]))
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200

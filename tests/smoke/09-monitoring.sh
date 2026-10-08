@@ -63,9 +63,13 @@ done
 req GET /grafana/api/v1/provisioning/alert-rules -u "${gf_auth}"
 rule_count="$(jq -r 'length' <<<"$(req_body)" 2>/dev/null || echo 0)"
 check "alert rules provisioned (${rule_count})" test "${rule_count}" -ge 13
-restart_expr="$(jq -r '.[] | select(.uid == "kit-container-restarting") | .data[0].model.expr' <<<"$(req_body)" 2>/dev/null || true)"
-check "Grafana expanded \${KIT_PROJECT} in the ContainerRestarting query" \
-  bash -c '[[ "$1" == *"=\"$2\""* && "$1" != *KIT_PROJECT* ]]' _ "${restart_expr}" "${project}"
+if grep -q 'type: telegram' "${KIT_DIR}/monitoring/grafana/provisioning/alerting/notifications.yml" 2>/dev/null; then
+  # the contact point references $ALERT_TELEGRAM_BOT_TOKEN: prove Grafana expanded it (decrypted export, admin only)
+  req GET '/grafana/api/v1/provisioning/contact-points/export?decrypt=true&format=json' -u "${gf_auth}"
+  bot_token="$(jq -r '.contactPoints[]? | select(.name == "telegram") | .receivers[0].settings.bottoken // empty' <<<"$(req_body)" 2>/dev/null || true)"
+  check "Telegram contact point carries the token from .env (HTTP ${REQ_STATUS})" \
+    test "${bot_token}" = "$(env_get ALERT_TELEGRAM_BOT_TOKEN)"
+fi
 rules_ok() {
   req GET /grafana/api/prometheus/grafana/api/v1/rules -u "${gf_auth}"
   [[ "${REQ_STATUS}" == 200 ]] && jq -e '[.data.groups[].rules[]] | length >= 13 and all(.health != "error")' <<<"$(req_body)" >/dev/null

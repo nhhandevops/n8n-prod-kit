@@ -752,10 +752,9 @@ services:
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_LOG_MODE: console
       GF_LOG_CONSOLE_FORMAT: json
-      # expanded by Grafana inside the provisioning files (alerting/notifications.yml, alerting/rules.yml)
+      # referenced by the contact point in alerting/notifications.yml (render.sh); smoke 09 proves Grafana expanded them
       ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
       ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
-      KIT_PROJECT: ${COMPOSE_PROJECT_NAME:-n8nkit}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro,z
