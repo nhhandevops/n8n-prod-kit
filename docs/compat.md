@@ -7,6 +7,7 @@ TC-017 part) passed; "bootstrap" means `make bootstrap-test` passed for the list
 | Kit | n8n (+ runners) | Caddy | Postgres | Valkey | Tested on | Date | Result |
 |---|---|---|---|---|---|---|---|
 | 0.1.0-dev | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | Ubuntu 26.04 VM (Docker 29.5, Compose 5.1; ports 8080/8443, internal CA) | 2026-10-08 | smoke ✅ · bootstrap ✅ (Ubuntu 24.04/26.04, Debian 13, Rocky 9/10, Alma 9) |
+| 0.1.0-dev | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | GitHub Actions ubuntu-24.04 (Docker 28.0, Compose 2.38; ports 80/443, internal CA, images from ghcr.io / public.ecr.aws mirrors) | 2026-10-08 | smoke ✅ ×2 (run 37724038543, 171 s incl. init + up + doctor) |
 
 ## How the matrix is kept honest
 

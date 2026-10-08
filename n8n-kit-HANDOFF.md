@@ -3,15 +3,15 @@
 > **Read this first on every machine, every session. Update it last, then `git push`.**
 > If it is not in git, it does not exist. This file is the only shared memory between computers and between AI coding sessions.
 
-**Last updated:** 2026-10-07 end of day (S0–S3 done, hand-off) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** see `git log -1` (the hand-off commit "docs(handoff): …") · **Project start date (T):** 2026-10-07 (day of the first public push)
+**Last updated:** 2026-10-08 (S4 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** see `git log -1` (the hand-off commit "docs(handoff): …") · **Project start date (T):** 2026-10-07 (day of the first public push)
 
-> **Picking this up on another computer?** `git pull` → read §2 "Next up" (S4 is next, with a starting recipe) → §4 "How to resume" (generic steps for any Linux / WSL2 / VM host) → `n8n-kit-BUILD-PLAN.md` §12 + §15 for the S4 details. Nothing is in progress and nothing is uncommitted.
+> **Picking this up on another computer?** `git pull` → read §2 "Next up" (S5 is next) → §4 "How to resume" (generic steps for any Linux / WSL2 / VM host) → `n8n-kit-BUILD-PLAN.md` §13 + §15 for the S5 details. Nothing is in progress and nothing is uncommitted.
 
 ---
 
 ## 0. The protocol (do not skip)
 
-**Start of session:** `git pull` → read this file → check Blockers and In progress → `make lint` and, on a machine with a dev stack, `make -C compose up && make -C compose status && make -C compose doctor` (from S4 on: `make -C compose smoke`).
+**Start of session:** `git pull` → read this file → check Blockers and In progress → `make lint` and, on a machine with a dev stack, `make -C compose up && make -C compose status && make -C compose doctor && make -C compose smoke`.
 **End of session:** run the relevant tests (`make -C compose smoke`, `terraform validate`) → commit (Conventional Commits) on a pushed branch → update `n8n-kit-CHANGELOG.md` Unreleased → update sections 1, 2, 3, 5 here + the "Last updated" line → `git push`.
 **AI agents:** same protocol. This repo is **public**: never paste real domains, IPs, keys, or anything from An's work infrastructure into code, docs, examples, or this file. Use `example.com` and generated values.
 
@@ -21,14 +21,14 @@
 
 | Milestone | Target | State |
 |---|---|---|
-| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S3 of S10 done (compose core + doctor/scale/read-only); S4–S10 pending |
+| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S4 of S10 done (compose core, doctor/scale/read-only, smoke suite + CI smoke); S5–S10 pending |
 | M1 · Batteries (backups, monitoring, runbooks, 5 templates) | T + 5 weeks | ⬜ |
 | M2 · Terraform AWS | T + 8 weeks | ⬜ |
 | M2.5 · Kubernetes Helm chart (Target C) | T + 10 weeks | ⬜ |
 | M3 · Public launch (docs site, posts) | T + 3 months | ⬜ |
 | M4 · Business (setups + retainers) | T + 6 months | ⬜ |
 
-**Health:** S0–S3 complete 2026-10-07 — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.4 (+ `n8nio/runners:2.42.4`, digests in `compose/versions.env`) — check for a newer 2.x stable at the start of S4 (`gh api repos/n8n-io/n8n/releases/latest --jq .tag_name`; then `make -C compose pin N8N_VERSION=x`)
+**Health:** S0–S4 complete 2026-10-08 — `make smoke` green on the VM and on GitHub Actions (every PR now boots the stack and runs the suite twice) — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.4 (+ `n8nio/runners:2.42.4`, digests in `compose/versions.env`) — check for a newer 2.x stable at the start of S4 (`gh api repos/n8n-io/n8n/releases/latest --jq .tag_name`; then `make -C compose pin N8N_VERSION=x`)
 
 **Hand-off test run (2026-10-07, HEAD cf388ca, build VM): 18/18 PASS** — `make lint`; `make up` (96 s, 10/10 healthy); `make status`; `make doctor` (0 FAIL, 1 expected warn: backups not configured yet); `DOCTOR_SIMULATE` exits non-zero with injected FAILs; http→https redirect keeps the dev port; UI/API/`*-test` paths → n8n-main and production paths → webhook pool (`X-Kit-Upstream`); security headers present, `Server` removed; webhook → queue → worker → runner Code-node round trip; `scale-workers N=3` (generated worker-3 read-only) and back to 2; every container read-only, zero EROFS/EACCES in logs; `make down`; GitHub `ci` and `bootstrap-matrix` (6/6 distros) green.
 
@@ -37,6 +37,7 @@
 ## 2. Work log
 
 ### ✅ Done
+- 2026-10-08 · **S4 smoke suite + CI shipped** (9f88b4c, 7b0bc5a): `tests/smoke/` (run.sh, lib.sh, 01-health, 02-tls, 03-owner, 04-webhook-routing, 05-execution-on-worker, 06-metrics, fixtures) → `make smoke [ONLY=04,05]`, ~30 s on the VM, idempotent; `ci.yml` smoke job (`tests/ci/up.sh`: init + up + doctor on the runner with quota-free registry mirrors, smoke ×2, `tests/ci/collect-logs.sh` artifact on failure) — first run green: lint 32 s, smoke 171 s on ubuntu-24.04 with ports 80/443 and Docker 28 / Compose 2.38 (run 37724038543); `weekly-latest-n8n.yml` (manual run: green — resolved n8n 2.42.4, pinned, smoke 6/6, no issue opened (run 37724372755)); `docs/compat.md`. **Security fix:** n8n-main's Prometheus endpoint was public at `https://DOMAIN/metrics` through Caddy's catch-all → now 404 (smoke 06 asserts it). TC-003…006 automated.
 - 2026-10-07 · **S3 operability + RHEL path shipped**: `make doctor` (TC-026 with `DOCTOR_SIMULATE`), `make scale-workers N=` (TC-007: 2→4→1→2 verified, `N=1` parks the static worker-2 pair behind a Compose profile), every n8n container now `read_only` with a measured tmpfs set (/tmp, ~/.cache, ~/.npm — `docker diff` after a real workload), `docs/operations/rhel-hosts.md`, weekly `bootstrap-matrix.yml`. Hand-authored in the main loop (no agent fan-out) within one session window. `bootstrap-matrix` on GitHub Actions: 6/6 PASS (run 37643339809) after adding pull retries.
 - 2026-10-07 · **S2 compose core shipped**: `compose/` (docker-compose.yml, compose.dev.yml, versions.env, Caddyfile + snippets, .env.example, scripts: lib/init/render/pin/preflight/status/dev-ca/trust-ca/lint, Makefile, README), `scripts/bootstrap-host.sh`, `tests/bootstrap/test-in-container.sh`, root `make bootstrap-test`. Verified on the VM: `make init DOMAIN=n8n.localtest.me HTTP_PORT=8080 HTTPS_PORT=8443` → `make up` → 10/10 healthy in 2m28s; 308 redirect keeps the port; every path routes to the right upstream (`X-Kit-Upstream`); owner setup + API key + workflow publish via REST/public API; 3 webhook POSTs → 200 via the pool, executions success on workers, Code node ran in the runners sidecar; dev CA trusted by curl via `make trust-ca`. TC-001, TC-003, TC-004, TC-005 (manual) pass. Bootstrap matrix (`make bootstrap-test`): 6/6 PASS — Ubuntu 24.04/26.04, Debian 13, Rocky 9/10, Alma 9 → docker-ce 29.8.2 + compose 5.6.0, second run idempotent ≤ 1 s. Method: fact sweep (6 agents) → contract → files written by agents and by hand; the two agent authoring runs died on the 5-hour session limit, the main loop finished the make-ops group.
 - 2026-10-07 · S1 repo bootstrap: public repo `nhhandevops/n8n-prod-kit` created, commit 7964709 pushed, CI lint green (run 37583413865), Dependabot alerts on, topics set. Personal details scrubbed from HANDOFF/bug log before the first push (`<vm-ip>`, `<vm-user>`).
@@ -50,7 +51,7 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 _(nothing — everything is committed and pushed. The dev stack on the build VM is DOWN with its volumes and `.env` kept; `make -C compose up` restores it in ~2 min.)_
 
 ### ⏭️ Next up (ordered — details per session in `n8n-kit-BUILD-PLAN.md` §15; S0–S3 are done)
-1. **S4 (≈ 4 h) — smoke suite + CI** (TC-003…006, plan §12):
+1. ~~**S4**~~ done 2026-10-08 (see Done). Original S4 notes kept below for reference:
    - `tests/smoke/run.sh` + `lib.sh` (`req`, `wait_for`, `assert_eq`; state in `compose/.smoke/`, gitignored) and `01-health.sh` … `06-metrics.sh`; `make -C compose smoke [ONLY=04,05]`.
    - Recipe already proven by hand on 2026-10-07 (S2 entry in Done): `POST /rest/owner/setup` → `POST /rest/login` (cookie) → `GET /rest/api-keys/scopes` → `POST /rest/api-keys {label, scopes, expiresAt:null}` → `data.rawApiKey` → `POST /api/v1/workflows` (Webhook + Code node) → `POST /api/v1/workflows/{id}/activate` → `POST /webhook/<path>` must answer 200 with `X-Kit-Upstream: n8n-webhook-N:5678` → `GET /api/v1/executions?workflowId=` status success. The Code node must stay pure JS (`process` is blocked in the runner sandbox).
    - `ci.yml` smoke job on ubuntu-24.04: `/etc/hosts` entry for `n8n.localtest.me` + `kuma.`, `make -C compose init DOMAIN=n8n.localtest.me CI=1`, `make up`, `make smoke`, logs artifact on failure. Docker Hub pull quota: `docker login` (repo secret) or switch `N8N_IMAGE`/`RUNNERS_IMAGE` to `ghcr.io/n8n-io/*` in CI.
@@ -130,15 +131,17 @@ Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — de
 
 ## 5. Known issues / tech debt
 - Shared `/home/node/.n8n` volume: `crash.journal` is shared too, so a process starting while another runs logs "Last session crashed" once; evaluate per-role volumes vs community-node sharing (open; harmless so far).
-- Postgres logged `invalid input syntax for type integer: "NaN"` twice during API-key/workflow creation via the public API — reproduce and report upstream if it recurs (S4 smoke will tell).
-- Runners sidecars are on the internal (no-egress) network only; whether a Code node that makes HTTP calls needs egress is unverified (add a smoke case in S4; HTTP Request nodes run on the workers, which do have egress).
-- Docker Hub anonymous pull quota (100/h per IP) bites shared hosts and CI: `pin.sh` has a Hub-API fallback; CI should `docker login` or use ghcr.io/n8n-io/* (S4).
+- Postgres logs `invalid input syntax for type integer: "NaN"` twice per smoke run (VM and GitHub runner alike) from an n8n-internal paginated executions query around webhook executions; NOT from any public API call (bisected). Harmless — smoke 04 warns; report upstream with the statement (bug log 2026-10-08).
+- Code nodes run in a network-less sandbox without `fetch`; `this.helpers.httpRequest` works (executed by the worker) — verified by smoke 05. Template authors must use the helper or an HTTP Request node (S5+ templates).
+- Docker Hub anonymous pull quota (100/h per IP) bites shared hosts: `pin.sh` has a Hub-API fallback; CI pulls from ghcr.io / public.ecr.aws mirrors with the same digests (`tests/ci/up.sh`). Users on shared IPs may need `docker login`.
 - `make lint` runs `caddy validate` 12× in a container (~15 s); fine locally, keep an eye on CI time.
 - `make doctor` cannot check certificate expiry in `TLS_MODE=internal` (12 h leaf certs are normal there) — it reports the mode instead; ACME modes are checked.
+- n8n allows 5 `/rest/login` attempts per window per IP (429 + Retry-After, not configurable); scripts must reuse sessions/API keys (the smoke suite does).
 - Build-process lesson: a 20-agent workflow cannot survive the 5-hour session limit; author with ≤ 6 agents per run or by hand, and keep each run resumable.
 
 ## 6. Weekly notes (3 lines max per week)
 - **Week of 2026-10-06:** Plan done. Decide start date relative to SoBan progress; the kit's Compose base can be built alongside SoBan's Phase A infra.
+- **2026-10-08:** S4 shipped: smoke suite + CI smoke job green on GitHub; found and closed a public `/metrics` exposure. Next: S5 backups (needs R2 + Telegram from An).
 - **2026-10-07:** S0–S3 shipped in one day (repo public, compose core running, doctor/scale/read-only, bootstrap matrix green on GitHub). Lesson: hand-author in the main loop; big agent fan-outs die on the 5-hour session limit. Next: S4 smoke suite + CI.
 
 ## 7. Questions for An (AI agents: add here instead of guessing)

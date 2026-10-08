@@ -107,3 +107,43 @@ Each line: symptom you would have seen → root cause → fix. Verified on n8n 2
 - **Root cause:** the default bridge `docker0` on the long-lived VM was link-DOWN with no IPv4 address (only fe80::), so containers on the default network had no gateway. User-defined bridges (`n8nkit_proxy`, compose networks) were unaffected.
 - **Verify:** `ip -4 -br addr show docker0` (empty = broken); `docker run --rm ubuntu:24.04 bash -c "</dev/tcp/1.1.1.1/443"` → "No route to host".
 - **Fix:** `sudo ip addr add 172.17.0.1/16 dev docker0 && sudo ip link set docker0 up` (no daemon restart, other projects untouched); the test harness now creates its own network (`--network <prefix>-net`) so it never depends on docker0.
+
+## 2026-10-08 · SECURITY: n8n's Prometheus metrics were public at https://DOMAIN/metrics
+
+- **Symptom:** `curl https://<domain>/metrics` answered HTTP 200 with ~180 `n8n_*` series (workflow counts, queue depth, process info) to anyone on the Internet.
+- **Root cause:** `N8N_METRICS=true` makes n8n-main serve `/metrics`; Caddy's catch-all `handle` proxies every path not matched earlier to n8n-main, so the endpoint was published.
+- **Verify:** `curl -s -o /dev/null -w '%{http_code}' https://<domain>/metrics` → must be 404.
+- **Fix:** `handle /metrics* { respond 404 }` in the Caddyfile before the catch-all; Prometheus (S6) scrapes over the internal network. Smoke 06 asserts the 404 on every run. Shipped in 9f88b4c.
+
+## 2026-10-08 · Smoke: login fails with HTTP 429 after a few runs
+
+- **Symptom:** `make smoke` twice in a row → 03 fails at "API key available"; `POST /rest/login` answers 429 `Retry-After: 17`.
+- **Root cause:** n8n rate-limits `/rest/login` to **5 attempts per window per client IP** (`x-ratelimit-limit: 5`); not configurable by env. Each run logged in several times.
+- **Fix:** the suite reuses a valid session cookie (`GET /rest/login` with the cookie) and the saved API key, makes exactly two login attempts per run (one wrong, one right), and waits out a 429 using `Retry-After`.
+
+## 2026-10-08 · Smoke: random "no worker log mentions execution N"
+
+- **Symptom:** 05 sometimes reports that no worker logged the execution, although the line is in the logs.
+- **Root cause:** `compose logs … | grep -q …` under `set -o pipefail`: grep exits on the first match, `docker compose logs` gets SIGPIPE, and pipefail reports the pipeline as failed.
+- **Fix:** capture the output first (`logs="$(compose logs …)"`), then `grep -q … <<<"${logs}"`. Rule for the suite: never pipe into an early-exiting reader (`grep -q`, `head`, `awk … exit`) under pipefail.
+
+## 2026-10-08 · Smoke: queue counter "did not increase" on fast runs
+
+- **Symptom:** `n8n_scaling_mode_queue_jobs_completed` unchanged right after the executions finished.
+- **Root cause:** main refreshes its queue gauges every `N8N_METRICS_QUEUE_METRICS_INTERVAL` seconds (20 in the kit).
+- **Fix:** the check waits up to 45 s for the next refresh.
+
+## 2026-10-08 · n8n 2.x API facts the smoke suite relies on
+
+- Deleting a workflow via the public API: `POST /api/v1/workflows/{id}/deactivate` first (DELETE on an active one → 409; retry once more if it still answers 409 right after deactivation).
+- Repeating owner setup → 400 "Instance owner already setup"; `/rest/settings` → `data.userManagement.showSetupOnFirstLoad` tells whether an owner exists.
+- API key labels must be unique per user (duplicate → 500 "There is already an entry with this name"); the suite replaces its own `kit-smoke` key.
+- Code nodes run in the runner sandbox **without network and without `fetch`** ("fetch is not defined"); `this.helpers.httpRequest(...)` works because the worker executes it (worker has egress + the dev CA). Document for template authors.
+- Worker log line per job: `Worker finished execution <id> (job <n>)` (JSON, level info).
+
+## 2026-10-08 · Postgres "invalid input syntax for type integer: NaN" (upstream, harmless)
+
+- **Symptom:** 2 errors per smoke run in the Postgres log, statement `SELECT DISTINCT "distinctAlias"."ExecutionEntity_id" … FROM (SELECT "ExecutionEntity"…`.
+- **What it is NOT:** none of the public API calls (`/api/v1/executions` with/without `workflowId`, `limit`, `status`; `/api/v1/workflows/{id}`) trigger it, with or without existing executions (bisected on the VM).
+- **What it is:** an n8n-internal paginated executions query issued around webhook-triggered executions; n8n handles the error (executions succeed, nothing logged on the n8n side).
+- **Action:** smoke 04 counts new occurrences and warns; report upstream with the statement when convenient.
