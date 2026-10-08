@@ -57,8 +57,11 @@ jobs:
 
       - name: Open an issue
         if: failure()
+        env:
+          VERSION: ${{ steps.n8n.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh label create n8n-upstream --color B60205 --description "Change in n8n upstream affects the kit" --force
-          gh issue create --label n8n-upstream \
-            --title "n8n ${{ steps.n8n.outputs.version }} fails the kit's smoke suite" \
-            --body "The weekly run against the latest stable n8n failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (logs attached to the run as an artifact). Pinned version in compose/versions.env is unchanged; investigate before running make pin N8N_VERSION=${{ steps.n8n.outputs.version }}."
+          body="The weekly run against the latest stable n8n failed: ${RUN_URL} (logs are attached to the run)."
+          body="${body} The pin in compose/versions.env is unchanged; investigate before make pin N8N_VERSION=${VERSION}."
+          gh issue create --label n8n-upstream --title "n8n ${VERSION} fails the kit's smoke suite" --body "${body}"

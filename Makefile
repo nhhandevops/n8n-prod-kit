@@ -1,9 +1,12 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
-SH_FILES    := $(shell git ls-files '*.sh' 2>/dev/null)
-DOCKERFILES := $(shell git ls-files '*Dockerfile*' 2>/dev/null)
-YAML_FILES  := $(shell git ls-files '*.yml' '*.yaml' '.yamllint' 2>/dev/null)
+# Tracked AND new-but-not-ignored files: a file that is not committed yet must be linted before the commit, not
+# discovered by CI afterwards (happened 2026-10-08 with a new workflow file).
+LS_FILES    := git ls-files --cached --others --exclude-standard
+SH_FILES    := $(shell $(LS_FILES) '*.sh' 2>/dev/null)
+DOCKERFILES := $(shell $(LS_FILES) '*Dockerfile*' 2>/dev/null)
+YAML_FILES  := $(shell $(LS_FILES) '*.yml' '*.yaml' '.yamllint' 2>/dev/null)
 
 .PHONY: help lint bootstrap-test
 
