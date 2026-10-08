@@ -36,7 +36,7 @@ $(foreach v,$(PASS_VARS),$(if $(value $(v)),$(eval export $(v))))
 
 SINCE ?= 10m
 
-.PHONY: help init pin render preflight config up down restart pull ps logs status doctor scale-workers dev-ca trust-ca lint version env-keys clean
+.PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers dev-ca trust-ca lint version env-keys clean
 
 help: ## Show this help
 	@printf 'n8n Production Kit — compose/ targets (run from anywhere: make -C compose <target>)\n\n'
@@ -87,6 +87,9 @@ logs: ## Follow logs: make logs [SERVICE=n8n-main] [SINCE=10m]
 
 status: ## Health table of every service, login URL; exit 1 if anything is unhealthy
 	@$(KIT_DIR)/scripts/status.sh
+
+smoke: ## End-to-end smoke suite against the running stack: make smoke [ONLY=04,05] [SMOKE_KEEP=1]
+	@ONLY="$(ONLY)" "$(KIT_DIR)/../tests/smoke/run.sh"
 
 doctor: ## Diagnose common problems with fixes (DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy to test it)
 	@$(KIT_DIR)/scripts/doctor.sh

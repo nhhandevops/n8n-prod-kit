@@ -38,6 +38,7 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make restart SERVICE=n8n-main` | restart one service |
 | `make down` / `make up` | stop / start (volumes and `.env` are kept) |
 | `make preflight` | re-check host, ports, DNS, disk, clock |
+| `make smoke [ONLY=04,05]` | end-to-end check of the running stack: health, TLS and headers, owner/login/API key, webhook routing through the pool, execution on a worker (incl. a Code node), metrics — ~30 s, idempotent; state in `compose/.smoke/` |
 | `make doctor` | diagnose: versions, health + last logs of unhealthy services, certificate, disk, Postgres/Valkey state, dangerous settings — every FAIL comes with its fix |
 | `make scale-workers N=4` | 1–16 workers (each with its runner sidecar); `N=1` parks worker 2 |
 | `make pin N8N_VERSION=2.42.5` | move the n8n pin (and the runners sidecar with it); then `make up` |
@@ -52,6 +53,8 @@ Scaling: `make scale-workers N=<1..16>` writes `WORKER_REPLICAS`, regenerates `c
 - `TLS_MODE`: `acme` (Let's Encrypt, default) · `acme-staging` (rehearsals, no rate limits) · `internal` (local CA, set automatically for dev domains).
 - `UI_PROTECT=on` + `UI_ALLOW_CIDR` / `UI_BASIC_AUTH_USER` / `UI_BASIC_AUTH_HASH`: IP allow-list and basic auth in front of the editor only; webhooks, forms and MCP stay open. The hash comes from `caddy hash-password` and **must be single-quoted** in `.env`.
 - `RUNNERS_LANGS="javascript python"` enables the Python Code node in the sidecars.
+- Code nodes run in a network-less sandbox: make HTTP calls with `this.helpers.httpRequest(...)` (executed by the worker) or an HTTP Request node — `fetch` is not available inside the sandbox.
+- `/metrics` is never served through Caddy (404); Prometheus scrapes the processes over the internal network.
 - Binary data is stored in Postgres (`N8N_DEFAULT_BINARY_DATA_MODE=database`): filesystem mode is unsupported in queue mode; S3/Azure need an n8n licence.
 
 ## Known limits in this version

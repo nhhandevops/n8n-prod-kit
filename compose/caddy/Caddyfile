@@ -160,6 +160,7 @@
 #      /webhook/*  /webhook-waiting/*  /webhook-waiting-slack*
 #      /webhook-waiting-telegram*  /form/*  /form-waiting/*  /mcp/*
 #                                       -> webhook pool (production triggers)
+#      /metrics*                        -> 404 (internal only, never public)
 #      /grafana/*                       -> grafana:3000  (S6; 502 until then)
 #      everything else (/, /rest/*, /webhook-test/*, /form-test/*,
 #      /mcp-test/*, /chat, /push, ...)  -> n8n-main
@@ -253,6 +254,15 @@
 		reverse_proxy {$WEBHOOK_UPSTREAMS:n8n-webhook-1:5678 n8n-webhook-2:5678} {
 			import pool_health
 		}
+	}
+
+	# n8n-main serves Prometheus metrics on /metrics (N8N_METRICS=true). Without
+	# this block the catch-all below would publish them to the Internet
+	# (verified 2026-10-08: HTTP 200, ~180 n8n_* series incl. workflow counts).
+	# Prometheus (S6) scrapes every n8n process directly over the backend
+	# network, so nothing legitimate needs /metrics through the edge.
+	handle /metrics* {
+		respond 404
 	}
 
 	# Grafana (S6 monitoring profile, served under a sub-path). Until that

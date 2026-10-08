@@ -1,0 +1,23 @@
+{
+  "name": "kit-smoke-http-template",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "__PATH__", "responseMode": "lastNode", "options": {} },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const helper = await this.helpers.httpRequest({ url: '__URL__', json: true });\nreturn [{ json: { helper } }];"
+      },
+      "name": "Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": { "Webhook": { "main": [[{ "node": "Code", "type": "main", "index": 0 }]] } },
+  "settings": { "executionOrder": "v1" }
+}

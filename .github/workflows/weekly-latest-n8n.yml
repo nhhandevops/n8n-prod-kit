@@ -1,0 +1,64 @@
+name: weekly-latest-n8n
+
+# Early warning for upstream changes: every Monday, pin the newest STABLE n8n release (from the GitHub Releases API —
+# never the floating `latest` image tag, so n8n and its runners image stay on the same version) and run the full
+# smoke suite against it. A failure opens an issue labelled n8n-upstream. Run it by hand with "Run workflow".
+on:
+  schedule:
+    - cron: "0 2 * * 1"   # Mondays 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: weekly-latest-n8n
+  cancel-in-progress: false
+
+jobs:
+  latest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the latest stable n8n
+        id: n8n
+        run: |
+          tag="$(gh api repos/n8n-io/n8n/releases/latest --jq .tag_name)"   # e.g. n8n@2.42.4
+          version="${tag#n8n@}"
+          pinned="$(grep -E '^N8N_VERSION=' compose/versions.env | cut -d= -f2 | sed 's/ *#.*//')"
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+          echo "Latest stable n8n: ${version} (kit pins ${pinned})" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Pin it (n8n + runners digests)
+        run: make -C compose pin N8N_VERSION=${{ steps.n8n.outputs.version }}
+
+      - name: Bring the stack up (init, up, doctor)
+        run: tests/ci/up.sh
+
+      - name: make smoke
+        run: make -C compose smoke
+
+      - name: Collect logs
+        if: failure()
+        run: tests/ci/collect-logs.sh artifacts
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: latest-n8n-logs
+          path: artifacts/
+          retention-days: 14
+
+      - name: Open an issue
+        if: failure()
+        run: |
+          gh label create n8n-upstream --color B60205 --description "Change in n8n upstream affects the kit" --force
+          gh issue create --label n8n-upstream \
+            --title "n8n ${{ steps.n8n.outputs.version }} fails the kit's smoke suite" \
+            --body "The weekly run against the latest stable n8n failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (logs attached to the run as an artifact). Pinned version in compose/versions.env is unchanged; investigate before running make pin N8N_VERSION=${{ steps.n8n.outputs.version }}."

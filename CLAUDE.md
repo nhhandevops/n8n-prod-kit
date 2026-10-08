@@ -34,7 +34,9 @@ Instructions for AI coding agents (Claude Code, Cursor, …) and a cheat-sheet f
 | `make lint` | shellcheck + hadolint + yamllint over tracked files, then `compose/` lint (compose config, caddy validate x12) |
 | `make bootstrap-test` | run `scripts/bootstrap-host.sh` inside Ubuntu/Debian/Rocky/Alma containers (~5–15 min) |
 
-The Compose kit's targets live in `compose/Makefile` — `make -C compose help`. Available now: `init`, `pin`, `render`, `preflight`, `config`, `up`, `down`, `restart`, `pull`, `ps`, `logs`, `status`, `doctor`, `scale-workers`, `dev-ca`, `trust-ca`, `lint`, `version`, `env-keys`, `clean`. Coming: `smoke` (S4), `backup-now`/`restore` (S5), `upgrade`/`rollback` (S7), `loadtest`/`chaos` (S8).
+The Compose kit's targets live in `compose/Makefile` — `make -C compose help`. Available now: `init`, `pin`, `render`, `preflight`, `config`, `up`, `down`, `restart`, `pull`, `ps`, `logs`, `status`, `smoke`, `doctor`, `scale-workers`, `dev-ca`, `trust-ca`, `lint`, `version`, `env-keys`, `clean`. Coming: `backup-now`/`restore` (S5), `upgrade`/`rollback` (S7), `loadtest`/`chaos` (S8).
+
+Smoke suite rules: `tests/smoke/NN-*.sh` share `tests/smoke/lib.sh`; never pipe into an early-exiting reader (`| grep -q`, `| head`) under pipefail — capture first; n8n allows only 5 logins per window, so reuse the session/API key in `compose/.smoke/`.
 
 Remote shell tip (learned the hard way): `docker compose up` and `make up` read stdin — never feed a multi-step script to a remote host through `ssh host 'bash -s' <<EOF`; copy it to a file and run `bash file </dev/null`.
 

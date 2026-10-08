@@ -1,0 +1,23 @@
+{
+  "name": "kit-smoke-template",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "__PATH__", "responseMode": "lastNode", "options": {} },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nreturn [{ json: { pong: body.ping, exec: $execution.id } }];"
+      },
+      "name": "Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": { "Webhook": { "main": [[{ "node": "Code", "type": "main", "index": 0 }]] } },
+  "settings": { "executionOrder": "v1" }
+}
