@@ -34,4 +34,9 @@ make doctor                     # reports SELinux mode and the firewalld service
 - **Library container images are stale or missing** for Rocky: `rockylinux:9` on Docker Hub is a 2023 build and `rockylinux:10` does not exist. The kit's test matrix uses `quay.io/rockylinux/rockylinux:9|10` and `public.ecr.aws/docker/library/almalinux:9` (same digests as Hub, no pull quota).
 - **`ID_LIKE` is not a reliable family key**: Oracle Linux and RHEL set only `fedora`. The script matches `ID` (rhel, centos, rocky, almalinux, ol) or `PLATFORM_ID=platform:el9|el10`.
 - **EPEL** (only needed for dev tools such as `age` and ShellCheck, never for running the kit): `dnf install epel-release` on Rocky/Alma/CentOS Stream 9 and 10; on RHEL proper install the EPEL rpm by URL.
+- **SELinux and the monitoring profile**: the kit's own bind mounts carry `:z` (relabelled for containers), but three
+  monitoring services read HOST paths that must never be relabelled — Alloy (`/var/run/docker.sock`), node-exporter
+  (`/` as `/host`) and cAdvisor (`/`, `/sys`, `/var/lib/docker`). They run with `security_opt: label:disable` instead,
+  i.e. without SELinux separation (still read-only, `cap_drop: ALL`, no-new-privileges). Without it, enforcing SELinux
+  denies the socket and the cgroup files and those three stay empty.
 - **Verified so far**: the install path in containers for Rocky 9/10 and Alma 9 (weekly `bootstrap-matrix` workflow). A full run on a real EL host with SELinux enforcing and firewalld active is tracked in `n8n-kit-HANDOFF.md` §7 — treat EL support as "install path verified, host firewall path pending" until that box is ticked.

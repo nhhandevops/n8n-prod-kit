@@ -277,14 +277,10 @@ size_mb() {
   n="${BASH_REMATCH[1]}"
   unit="${BASH_REMATCH[2]}"
   case "${unit}" in
-    g) printf '%s
-' "$(( n * 1024 ))" ;;
-    m) printf '%s
-' "${n}" ;;
-    k) printf '%s
-' "$(( n / 1024 ))" ;;
-    *) printf '%s
-' "$(( n / 1048576 ))" ;;
+    g) printf '%s\n' "$(( n * 1024 ))" ;;
+    m) printf '%s\n' "${n}" ;;
+    k) printf '%s\n' "$(( n / 1024 ))" ;;
+    *) printf '%s\n' "$(( n / 1048576 ))" ;;
   esac
 }
 
@@ -298,15 +294,13 @@ size_mb() {
 backup_path_problem() {
   local p="${1}" real entry base home_real
   if [[ ! -d "${p}" ]]; then
-    printf 'does not exist (mount the external disk / NAS first)
-'
+    printf 'does not exist (mount the external disk / NAS first)\n'
     return 0
   fi
   real="$(cd "${p}" && pwd -P)"
   case "${real}" in
     / | /home | /mnt | /media | /srv | /opt | /var | /tmp | /var/tmp | /root | /data | /backup | /backups |       /bin | /bin/* | /boot | /boot/* | /dev | /dev/* | /etc | /etc/* | /lib | /lib/* | /lib32 | /lib32/* |       /lib64 | /lib64/* | /proc | /proc/* | /run | /run/* | /sbin | /sbin/* | /sys | /sys/* | /usr | /usr/* |       /var/lib | /var/lib/* | /var/log | /var/log/*)
-      printf 'is a system directory (%s) — use a dedicated sub-directory, e.g. /mnt/usb/n8n-backups
-' "${real}"
+      printf 'is a system directory (%s) — use a dedicated sub-directory, e.g. /mnt/usb/n8n-backups\n' "${real}"
       return 0
       ;;
     *) ;;
@@ -316,8 +310,7 @@ backup_path_problem() {
     home_real="$(cd "${HOME}" && pwd -P)" || home_real=''
   fi
   if [[ "${real}" == "${home_real}" || "${KIT_DIR}/" == "${real}/"* ]]; then
-    printf 'is your home directory or contains the kit (%s) — use a dedicated sub-directory
-' "${real}"
+    printf 'is your home directory or contains the kit (%s) — use a dedicated sub-directory\n' "${real}"
     return 0
   fi
   for entry in "${real}"/* "${real}"/.[!.]*; do
@@ -326,8 +319,7 @@ backup_path_problem() {
     case "${base}" in
       daily | monthly | manual | pre-upgrade | pre-restore | lost+found) ;;
       *)
-        printf 'already holds other files (%s) — the kit changes its owner; use an empty sub-directory, e.g. %s/n8n-backups
-' "${base}" "${real}"
+        printf 'already holds other files (%s) — the kit changes its owner; use an empty sub-directory, e.g. %s/n8n-backups\n' "${base}" "${real}"
         return 0
         ;;
     esac

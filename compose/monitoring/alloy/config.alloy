@@ -1,0 +1,64 @@
+// compose/monitoring/alloy/config.alloy — ship the kit's container logs to Loki (monitoring profile, S6).
+//
+// Only containers of THIS Compose project (KIT_PROJECT = COMPOSE_PROJECT_NAME) are read: other projects on the same
+// host stay out of Loki. Labels are kept low-cardinality: service, container, project and — for the JSON loggers (n8n
+// with N8N_LOG_FORMAT=json, Caddy) — level. Grafana Alloy replaces Promtail (end of life 2026-03-02).
+
+discovery.docker "kit" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("KIT_PROJECT")]
+  }
+}
+
+discovery.relabel "kit" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+}
+
+loki.source.docker "kit" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.kit.targets
+  relabel_rules = discovery.relabel.kit.rules
+  forward_to    = [loki.process.kit.receiver]
+}
+
+loki.process "kit" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.match {
+    selector = "{service=~\"n8n-.*|caddy\"}"
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

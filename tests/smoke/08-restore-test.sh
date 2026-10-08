@@ -25,7 +25,8 @@ report="$(compose run --rm -T backup cat /state/restore-test.json 2>/dev/null ||
 check "report names the tested backup" test "$(jq -r '.backup // empty' <<<"${report}")" = "${name}"
 check "report says ok" test "$(jq -r '.ok // empty' <<<"${report}")" = "true"
 remote_count="$(wc -w <<<"$(env_get BACKUP_REMOTES)")"
-check "every remote's newest bundle verified ($(jq -r '.remotes_verified // "?"' <<<"${report}") of ${remote_count})"   test "$(jq -r '.remotes_verified // 0' <<<"${report}")" -eq "${remote_count}"
+check "every remote's newest bundle verified ($(jq -r '.remotes_verified // "?"' <<<"${report}") of ${remote_count})" \
+  test "$(jq -r '.remotes_verified // 0' <<<"${report}")" -eq "${remote_count}"
 check "restored workflows >= 1 ($(jq -r '.workflow_count // "?"' <<<"${report}"))" \
   bash -c '(( ${1:-0} >= 1 ))' _ "$(jq -r '.workflow_count // 0' <<<"${report}")"
 check "a credential decrypted with the bundle key ($(jq -r '.credential_decrypt // "?"' <<<"${report}"))" \

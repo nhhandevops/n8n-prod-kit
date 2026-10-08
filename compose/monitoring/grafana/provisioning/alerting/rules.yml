@@ -1,0 +1,447 @@
+# compose/monitoring/grafana/provisioning/alerting/rules.yml — Grafana-managed alert rules of the kit (S6).
+# Evaluated every 30 s in the folder "n8n-kit"; notifications go to the Telegram contact point that render.sh writes into
+# notifications.yml when ALERT_TELEGRAM_BOT_TOKEN + ALERT_TELEGRAM_CHAT_ID are set (otherwise they only show in
+# Grafana -> Alerting). Grafana expands $VAR / ${VAR} from its environment in this file: ${KIT_PROJECT} below is meant,
+# every literal dollar of an alert template is written $$ ($$values.A).
+# Shape of every rule: A = an instant PromQL query that returns ONE value, C = a threshold on A.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: n8n-kit
+    folder: n8n-kit
+    interval: 30s
+    rules:
+      - uid: kit-n8n-ui-down
+        title: N8nUIDown
+        condition: C
+        for: 2m
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: 'n8n-main (editor, API, triggers) is down'
+          description: >-
+            Prometheus has not reached n8n-main for 2 minutes: the UI, the API and every schedule/poll trigger are
+            stopped. make status; make logs SERVICE=n8n-main SINCE=15m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'max(up{job="n8n-main"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+      - uid: kit-webhook-pool-down
+        title: WebhookPoolDown
+        condition: C
+        for: 1m
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: 'No webhook processor is up - production webhooks fail'
+          description: >-
+            Both n8n-webhook processes are unreachable: production webhooks, forms and MCP calls get 502. make status;
+            make logs SERVICE=n8n-webhook-1
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'sum(up{job="n8n-webhook"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+      - uid: kit-worker-missing
+        title: WorkerMissing
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $$values.A }} n8n worker(s) down for 5 minutes'
+          description: >-
+            Executions still run on the remaining workers, but capacity is reduced. make status; make logs
+            SERVICE=n8n-worker-1
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'count(up{job="n8n-worker"} == 0) or vector(0)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+      - uid: kit-queue-backlog
+        title: QueueBacklog
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $$values.A }} executions waiting in the queue'
+          description: >-
+            More than 500 jobs have been waiting for 5 minutes: too few workers, or stuck ones. make scale-workers N=...;
+            check the worker logs and Valkey memory (make doctor)
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'max(n8n_scaling_mode_queue_jobs_waiting)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [500]
+      - uid: kit-execution-failure-rate
+        title: ExecutionFailureRate
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 10 % of executions failed in the last 15 minutes'
+          description: >-
+            Failed / all executions over 15 minutes (only when at least 5 ran). n8n UI: Executions, filter by status Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                (sum(increase(n8n_workflow_execution_duration_seconds_count{status!="success"}[15m])) /
+                clamp_min(sum(increase(n8n_workflow_execution_duration_seconds_count[15m])), 1)) and on()
+                (sum(increase(n8n_workflow_execution_duration_seconds_count[15m])) >= 5)
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.1]
+      - uid: kit-backup-missing
+        title: BackupMissing
+        condition: C
+        for: 5m
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: 'No successful backup for {{ $$values.A }} hours on at least one target'
+          description: >-
+            The oldest last-success over BACKUP_REMOTES is older than 26 h (or no backup metric exists at all). make logs
+            SERVICE=backup SINCE=48h; make backup-now; make doctor
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: '(time() - min(backup_last_success_timestamp_seconds)) / 3600'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [26]
+      - uid: kit-backup-attempt-failed
+        title: BackupLastAttemptFailed
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The last backup attempt failed on at least one target'
+          description: >-
+            The backup service alerts directly too; this fires until the next successful backup. make logs SERVICE=backup;
+            make backup-now
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'min(backup_last_status)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+      - uid: kit-restore-test-failed
+        title: RestoreTestFailed
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The last restore test FAILED'
+          description: >-
+            A backup that does not restore is not a backup. make restore-test shows why (report: /state/restore-test.json
+            in the backup service)
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'min(restore_test_last_status)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+      - uid: kit-restore-test-stale
+        title: RestoreTestStale
+        condition: C
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Last passing restore test was {{ $$values.A }} days ago'
+          description: >-
+            The weekly restore test (RESTORE_TEST_SCHEDULE) has not passed for more than 8 days. make restore-test
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: '(time() - max(restore_test_last_success_timestamp_seconds)) / 86400'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [8]
+      - uid: kit-disk-high
+        title: DiskHigh
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Root disk {{ humanizePercentage $$values.A }} full'
+          description: >-
+            Above 80 %: Docker logs, the database and local backups all live there. docker system df; prune executions
+            (EXECUTIONS_DATA_MAX_AGE); keep backups off-host
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                max(1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} /
+                node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.8]
+      - uid: kit-cert-expiring
+        title: CertExpiring
+        condition: C
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'TLS certificate expires in {{ $$values.A }} days'
+          description: >-
+            Caddy renews 30 days ahead, so renewal keeps failing: make logs SERVICE=caddy SINCE=24h (DNS, port 80, ACME
+            rate limits)
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: '(min(cert_expiry_timestamp_seconds) - time()) / 86400'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [14]
+      - uid: kit-container-restarting
+        title: ContainerRestarting
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A container restarted more than twice in 15 minutes'
+          description: >-
+            Crash loop: make status shows which one; make logs SERVICE=<name> SINCE=15m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                max(changes(container_start_time_seconds{container_label_com_docker_compose_project="${KIT_PROJECT}"}[15m]))
+                or vector(0)
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+      - uid: kit-monitoring-target-down
+        title: MonitoringTargetDown
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $$values.A }} monitoring target(s) down'
+          description: >-
+            Caddy metrics, node-exporter, cAdvisor, Loki or Alloy cannot be scraped: dashboards and alerts that depend on
+            them go blind. make status
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'count(up{job=~"caddy|node|cadvisor|loki|alloy"} == 0) or vector(0)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]

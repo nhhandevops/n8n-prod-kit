@@ -57,7 +57,8 @@ else
 fi
 if [[ -f secrets/age-recovery-key.txt ]]; then
   key_age_days=$(( ( $(date +%s) - $(stat -c %Y secrets/age-recovery-key.txt) ) / 86400 ))
-  recovery_pub="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint age-keygen     -v "${KIT_DIR}/secrets/age-recovery-key.txt:/k.txt:ro,z" n8nkit/backup:local -y /k.txt 2>/dev/null || true)"
+  recovery_pub="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint age-keygen \
+    -v "${KIT_DIR}/secrets/age-recovery-key.txt:/k.txt:ro,z" n8nkit/backup:local -y /k.txt 2>/dev/null || true)"
   if [[ -n "${recovery_pub}" && "${recovery_pub}" != "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" ]]; then
     flag_fail "BACKUP_AGE_RECOVERY_PUBLIC_KEY in .env is not the public key of secrets/age-recovery-key.txt — new backups are encrypted to a key you may not have; set it to: ${recovery_pub}"
   fi
@@ -289,6 +290,48 @@ else
     else
       ok "restore test passed ${rt_days} day(s) ago"
     fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------------------------------------------------
+section "monitoring"
+profiles=",$(env_get COMPOSE_PROFILES | tr -d ' '),"
+if [[ "${profiles}" != *",monitoring,"* ]]; then
+  ok "monitoring profile off — COMPOSE_PROFILES=monitoring adds Prometheus, Grafana, Loki and alerts (docs/operations/monitoring.md)"
+elif [[ "$(service_health prometheus)" != "healthy" ]]; then
+  flag_fail "prometheus is $(service_health prometheus) — make logs SERVICE=prometheus"
+else
+  targets="$(compose exec -T prometheus wget -qO- 'http://127.0.0.1:9090/api/v1/targets?state=active' 2>/dev/null || true)"
+  down="$(jq -r '.data.activeTargets[]? | select(.health != "up") | "\(.labels.job) \(.labels.instance): \(.lastError)"' <<<"${targets}" 2>/dev/null || true)"
+  total="$(jq -r '.data.activeTargets | length' <<<"${targets}" 2>/dev/null || echo 0)"
+  if [[ -z "${targets}" ]]; then
+    flag_warn "could not read the Prometheus targets"
+  elif [[ -n "${down}" ]]; then
+    while IFS= read -r line; do
+      flag_fail "scrape target down: ${line}"
+    done <<<"${down}"
+  else
+    ok "prometheus: all ${total} scrape targets up"
+  fi
+  if grep -q 'type: telegram' monitoring/grafana/provisioning/alerting/notifications.yml 2>/dev/null; then
+    ok "alerts are sent to Telegram"
+  else
+    flag_warn "alerts are NOT sent anywhere (ALERT_TELEGRAM_BOT_TOKEN / ALERT_TELEGRAM_CHAT_ID empty) — they only show in Grafana → Alerting"
+  fi
+  if [[ "$(service_health grafana)" == "healthy" ]]; then
+    auth="$(printf '%s:%s' "$(env_get GRAFANA_ADMIN_USER)" "$(env_get GRAFANA_ADMIN_PASSWORD)" | base64 | tr -d '\n')"
+    alerts="$(compose exec -T grafana wget -qO- --header "Authorization: Basic ${auth}" \
+      'http://127.0.0.1:3000/grafana/api/prometheus/grafana/api/v1/alerts' 2>/dev/null || true)"
+    firing="$(jq -r '.data.alerts[]? | select(.state == "Alerting" or .state == "firing") | .labels.alertname' <<<"${alerts}" 2>/dev/null | sort -u || true)"
+    if [[ -z "${alerts}" ]]; then
+      flag_warn "could not read Grafana's alerts (GRAFANA_ADMIN_PASSWORD changed after Grafana's first start?)"
+    elif [[ -n "${firing}" ]]; then
+      flag_warn "alerts firing now: $(tr '\n' ' ' <<<"${firing}")— Grafana → Alerting → Alert rules"
+    else
+      ok "grafana: no alert firing"
+    fi
+  else
+    flag_fail "grafana is $(service_health grafana) — make logs SERVICE=grafana"
   fi
 fi
 

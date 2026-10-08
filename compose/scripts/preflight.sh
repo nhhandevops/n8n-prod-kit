@@ -138,6 +138,33 @@ if [[ "$(env_get BACKUP_ENABLED)" != "false" && -z "${backup_remotes}" ]]; then
   warn "BACKUP_REMOTES is empty — nothing will be backed up; set an off-host target (e.g. r2:n8n-backups/prod) before going live"
 fi
 
+# --- monitoring profile -------------------------------------------------------------------------------------------
+profiles=",$(env_get COMPOSE_PROFILES | tr -d ' '),"
+monitoring_on=0
+if [[ "${profiles}" == *",monitoring,"* ]]; then
+  monitoring_on=1
+fi
+kuma_profile=0
+if [[ "${profiles}" == *",kuma,"* ]]; then
+  kuma_profile=1
+fi
+kuma_enabled="$(env_get KUMA_ENABLED)"
+if (( kuma_profile )) && [[ "${kuma_enabled}" != "on" ]]; then
+  flag_fail "COMPOSE_PROFILES has 'kuma' but KUMA_ENABLED is '${kuma_enabled:-off}' — Caddy would not publish it; set KUMA_ENABLED=on (or drop the profile)"
+elif (( ! kuma_profile )) && [[ "${kuma_enabled}" == "on" ]]; then
+  flag_fail "KUMA_ENABLED=on but COMPOSE_PROFILES has no 'kuma' — kuma.DOMAIN would answer 502; set COMPOSE_PROFILES=monitoring,kuma (or KUMA_ENABLED=off)"
+fi
+if (( monitoring_on )); then
+  if [[ -z "$(env_get GRAFANA_ADMIN_PASSWORD)" ]]; then
+    flag_fail "GRAFANA_ADMIN_PASSWORD is empty — set one (make init generates it) before enabling the monitoring profile"
+  else
+    ok "monitoring profile: Grafana at $(env_get PUBLIC_URL)grafana/"
+  fi
+  if [[ -z "$(env_get ALERT_TELEGRAM_BOT_TOKEN)" || -z "$(env_get ALERT_TELEGRAM_CHAT_ID)" ]]; then
+    warn "ALERT_TELEGRAM_BOT_TOKEN / ALERT_TELEGRAM_CHAT_ID are not set — alerts are only shown in Grafana, nobody is notified"
+  fi
+fi
+
 # --- ports -----------------------------------------------------------------------------------------------------------
 # A port held by THIS stack's caddy (make up on a running stack) is fine; anything else must be named.
 project="$(_kit_project_name)"
@@ -164,6 +191,9 @@ else
   flag_fail "disk: only ${free_gb} GB free under ${docker_root} (need >= 10) — prune images (docker system prune) or add space"
 fi
 ram_mb="$(awk '/^MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)"
+if (( monitoring_on )) && (( ram_mb < 5000 )); then
+  warn "RAM: ${ram_mb} MB — the monitoring profile adds ~1 GB to the core stack; 6 GB+ is comfortable"
+fi
 if (( ram_mb >= 3500 )); then
   ok "RAM: ${ram_mb} MB"
 else

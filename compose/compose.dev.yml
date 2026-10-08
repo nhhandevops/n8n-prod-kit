@@ -39,3 +39,5 @@ services:
   n8n-webhook-2: *dev-trust
   n8n-worker-1: *dev-trust
   n8n-worker-2: *dev-trust
+  # Uptime Kuma (profile kuma) checks https://DOMAIN/… from inside the stack: same name mapping + CA trust (it is a Node.js app)
+  uptime-kuma: *dev-trust

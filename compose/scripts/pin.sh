@@ -58,8 +58,10 @@ if [[ ! -f "${versions_file}" ]]; then
   die "${versions_file} not found — the kit checkout is incomplete"
 fi
 
-# The five pinned images: KEY -> <IMAGE var> <VERSION var>. RUNNERS has no version of its own.
-pin_keys=(N8N RUNNERS CADDY POSTGRES VALKEY)
+# The pinned images: KEY -> <IMAGE var> <VERSION var>. RUNNERS has no version of its own. The second line is the
+# monitoring profile (pinned even when the profile is off: compose interpolates every service's image).
+pin_keys=(N8N RUNNERS CADDY POSTGRES VALKEY
+  PROMETHEUS GRAFANA LOKI ALLOY NODE_EXPORTER CADVISOR KUMA)
 version_var_of() {
   local key="${1}"
   if [[ "${key}" == "RUNNERS" ]]; then

@@ -1,0 +1,50 @@
+# compose/monitoring/loki/loki.yml — single-binary Loki for the monitoring profile (S6). Alloy pushes the stack's
+# container logs here; Grafana queries them. Started with -config.expand-env=true, so ${LOKI_RETENTION} comes from .env.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: "2026-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: ${LOKI_RETENTION:-336h}
+  # one small host: refuse floods instead of eating the disk
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_query_lookback: ${LOKI_RETENTION:-336h}
+  allow_structured_metadata: true
+  volume_enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+ruler:
+  enable_api: false
+
+analytics:
+  reporting_enabled: false

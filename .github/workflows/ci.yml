@@ -15,6 +15,10 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-24.04
+    env:
+      # lint.sh validates the monitoring configs inside these images; same digests as Docker Hub, no anonymous pull quota
+      LOKI_IMAGE: mirror.gcr.io/grafana/loki
+      ALLOY_IMAGE: mirror.gcr.io/grafana/alloy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

@@ -47,7 +47,8 @@ https_port="$(env_get HTTPS_PORT)"
 # what the operator re-applies on the new host: the same backup targets — plus what a fresh init on THIS machine would
 # not reproduce (CI image mirrors, a drill project name)
 install -m 600 .env "${vault}/old.env"
-mapfile -t keep < <(grep -oE '^([A-Z0-9_]+_IMAGE|COMPOSE_PROJECT_NAME|BACKUP_REMOTES|BACKUP_LOCAL_PATH)=' .env | tr -d = | sort -u)
+mapfile -t keep < <(grep -oE '^([A-Z0-9_]+_IMAGE|COMPOSE_PROJECT_NAME|COMPOSE_PROFILES|KUMA_ENABLED|BACKUP_REMOTES|BACKUP_LOCAL_PATH)=' .env |
+  tr -d = | sort -u)
 
 step "3. the old host is gone"
 make -s clean YES=1 >/dev/null

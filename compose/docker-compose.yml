@@ -616,6 +616,9 @@ services:
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY (make init)}
       N8N_VERSION: ${N8N_VERSION}
       DOMAIN: ${DOMAIN:?set DOMAIN}
+      # cert-check.sh (hourly): the certificate Caddy serves for DOMAIN on caddy:HTTPS_PORT -> cert_expiry_timestamp_seconds
+      TLS_MODE: ${TLS_MODE:-acme}
+      HTTPS_PORT: ${HTTPS_PORT:-443}
       TZ: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
       BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
       BACKUP_REMOTES: ${BACKUP_REMOTES:-}
@@ -677,6 +680,263 @@ services:
         limits:
           memory: ${MEM_LIMIT_BACKUP:-1536m}
 
+  # ======================================================================================================================================
+  # Monitoring profile (S6): COMPOSE_PROFILES=monitoring (+ ,kuma together with KUMA_ENABLED=on). Prometheus scrapes, Grafana shows and
+  # alerts (Telegram), Loki stores the stack's logs, Alloy ships them, node-exporter + cAdvisor describe the host and the containers.
+  # Network rule: the n8n workers execute user workflows that can make HTTP requests to anything on their networks, so Loki (all logs),
+  # Alloy and the exporters live ONLY on the `monitoring` network; Prometheus also joins `internal` to scrape n8n and Caddy, Grafana
+  # sits on `proxy` (behind Caddy at /grafana/, with its own login).
+  # ======================================================================================================================================
+  prometheus:
+    image: ${PROMETHEUS_IMAGE}:${PROMETHEUS_VERSION}@${PROMETHEUS_DIGEST:?run make pin}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    # the image runs as nobody (65534) and owns /prometheus, which a new named volume inherits
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROM_RETENTION:-15d}
+      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-2GB}
+      - --web.listen-address=:9090
+    volumes:
+      - prometheus_data:/prometheus
+      # prometheus.yml + targets/n8n.json (written by render.sh; file_sd re-reads it)
+      - ./monitoring/prometheus:/etc/prometheus:ro,z
+    networks:
+      - internal
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_PROMETHEUS:-512m}
+
+  grafana:
+    image: ${GRAFANA_IMAGE}:${GRAFANA_VERSION}@${GRAFANA_DIGEST:?run make pin}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      # served by Caddy under /grafana/ of the n8n domain (PUBLIC_URL always ends with "/")
+      GF_SERVER_ROOT_URL: ${PUBLIC_URL:?set PUBLIC_URL (make init)}grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # applied when Grafana creates its database (first start); to change it later: grafana cli admin reset-admin-password
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD (make init)}
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # no phoning home and no plugin downloads at start (nothing here needs a plugin)
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_LOG_MODE: console
+      GF_LOG_CONSOLE_FORMAT: json
+      # expanded by Grafana inside the provisioning files (alerting/notifications.yml, alerting/rules.yml)
+      ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
+      KIT_PROJECT: ${COMPOSE_PROJECT_NAME:-n8nkit}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro,z
+      - ./monitoring/grafana/dashboards:/var/lib/grafana-dashboards:ro,z
+    # proxy: Caddy -> grafana:3000 and egress to Telegram; monitoring: Prometheus + Loki
+    networks:
+      - proxy
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/grafana/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_GRAFANA:-512m}
+
+  loki:
+    image: ${LOKI_IMAGE}:${LOKI_VERSION}@${LOKI_DIGEST:?run make pin}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["-config.file=/etc/loki/loki.yml", "-config.expand-env=true"]
+    environment:
+      LOKI_RETENTION: ${LOKI_RETENTION:-336h}
+    volumes:
+      - loki_data:/loki
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro,z
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_LOKI:-512m}
+
+  alloy:
+    image: ${ALLOY_IMAGE}:${ALLOY_VERSION}@${ALLOY_DIGEST:?run make pin}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    # root (the image default) for the Docker socket — root-equivalent even when mounted read-only; Alloy only reads the container
+    # logs of THIS project (config.alloy filters on the compose label). label:disable: SELinux would deny the socket otherwise.
+    security_opt:
+      - no-new-privileges:true
+      - label:disable
+    cap_drop:
+      - ALL
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    environment:
+      KIT_PROJECT: ${COMPOSE_PROJECT_NAME:-n8nkit}
+    volumes:
+      # read positions survive restarts (no duplicated or lost log lines)
+      - alloy_data:/var/lib/alloy/data
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro,z
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring
+    depends_on:
+      loki:
+        condition: service_healthy
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_ALLOY:-256m}
+
+  node-exporter:
+    image: ${NODE_EXPORTER_IMAGE}:${NODE_EXPORTER_VERSION}@${NODE_EXPORTER_DIGEST:?run make pin}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    read_only: true
+    pid: host
+    security_opt:
+      - no-new-privileges:true
+      - label:disable
+    cap_drop:
+      - ALL
+    command:
+      - --path.rootfs=/host
+      # the backup sidecar's metrics (backup_*, restore_test_*, cert_*): /state/metrics.prom of the backup_state volume
+      - --collector.textfile.directory=/textfile
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/.+)($|/)
+    volumes:
+      # never :z on / (it would relabel the whole host); rslave so mounts made later (a USB disk) are seen too
+      - /:/host:ro,rslave
+      - backup_state:/textfile:ro
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9100/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_NODE_EXPORTER:-128m}
+
+  cadvisor:
+    image: ${CADVISOR_IMAGE}:${CADVISOR_VERSION}@${CADVISOR_DIGEST:?run make pin}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+      - label:disable
+    cap_drop:
+      - ALL
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      # only the two compose labels become metric labels (all labels would multiply the series)
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
+      - --disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_CADVISOR:-256m}
+
+  # Uptime Kuma: the outside view (https://DOMAIN/healthz …) on kuma.DOMAIN. Profile "kuma" goes into COMPOSE_PROFILES together with
+  # KUMA_ENABLED=on (preflight checks that the two agree). Monitors + notifications are set up in its UI (docs/operations/monitoring.md).
+  uptime-kuma:
+    image: ${KUMA_IMAGE}:${KUMA_VERSION}@${KUMA_DIGEST:?run make pin}
+    profiles: ["kuma"]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - kuma_data:/app/data
+    # proxy: egress for its checks and notifications; Caddy reaches it as uptime-kuma:3001
+    networks:
+      - proxy
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_KUMA:-384m}
+
 networks:
   # backend network: every service; `internal: true` = no route to the outside world (see the header). postgres, valkey and the runners
   # sidecars live ONLY here.
@@ -684,6 +944,10 @@ networks:
     internal: true
   # routable network: caddy (edge) + main, webhook pool and workers (outbound HTTP for nodes). Nothing here publishes a port except caddy.
   proxy: {}
+  # monitoring profile only: Prometheus, Grafana, Loki, Alloy, node-exporter, cAdvisor — NOT reachable from the n8n workers (whose
+  # workflows can call any address on their networks), because Loki holds every log line and nothing here needs a login.
+  monitoring:
+    internal: true
 
 volumes:
   caddy_data: {}
@@ -694,3 +958,8 @@ volumes:
   n8n_files: {}
   backup_state: {}
   backup_work: {}
+  prometheus_data: {}
+  grafana_data: {}
+  loki_data: {}
+  alloy_data: {}
+  kuma_data: {}

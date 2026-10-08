@@ -70,6 +70,12 @@ if (( bad > 0 )); then
 fi
 ok "all ${#services[@]} services running and healthy"
 log "  n8n:  ${public_url}"
+if [[ " ${services[*]} " == *" grafana "* ]]; then
+  log "  grafana: ${public_url}grafana/   (user $(env_get GRAFANA_ADMIN_USER), password GRAFANA_ADMIN_PASSWORD in .env)"
+fi
+if [[ " ${services[*]} " == *" uptime-kuma "* ]]; then
+  log "  uptime kuma: ${public_url/:\/\//://kuma.}   (first visit creates the admin account)"
+fi
 if [[ "$(env_get TLS_MODE)" == "internal" ]]; then
   log "  dev TLS: the certificate is signed by the kit's local CA — run 'make trust-ca' once so browsers and curl trust it"
 fi

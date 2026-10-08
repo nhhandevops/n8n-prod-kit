@@ -3,8 +3,9 @@
 # /opt/backup/backup.sh --kind manual`). Without: render the crontab and run supercronic in the foreground.
 #   BACKUP_SCHEDULE        nightly backup            (default "0 2 * * *", in TZ)
 #   RESTORE_TEST_SCHEDULE  weekly restore test       (default "0 3 * * 0")
-# When BACKUP_ENABLED is not "true" or BACKUP_REMOTES is empty, no job is scheduled (a heartbeat keeps the service
-# healthy) and the reason is logged — `make doctor` reports the same thing.
+#   cert-check             hourly at :17, always   (cert_expiry_timestamp_seconds for the monitoring profile)
+# When BACKUP_ENABLED is not "true" or BACKUP_REMOTES is empty, no backup job is scheduled and the reason is logged —
+# `make doctor` reports the same thing.
 # shellcheck disable=SC2310,SC2311,SC2312
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -20,9 +21,9 @@ crontab=/tmp/crontab
   if [[ "${BACKUP_ENABLED:-false}" == "true" && -n "${BACKUP_REMOTES:-}" ]]; then
     printf '%s /opt/backup/backup.sh --kind daily\n' "${BACKUP_SCHEDULE:-0 2 * * *}"
     printf '%s /opt/backup/restore-test.sh\n' "${RESTORE_TEST_SCHEDULE:-0 3 * * 0}"
-  else
-    printf '@hourly true\n'
   fi
+  # certificate expiry for the monitoring profile's CertExpiring alert (cheap; independent of BACKUP_ENABLED)
+  printf '17 * * * * /opt/backup/cert-check.sh\n'
 } >"${crontab}"
 
 if [[ "${BACKUP_ENABLED:-false}" != "true" ]]; then

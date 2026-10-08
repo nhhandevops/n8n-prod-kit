@@ -1,0 +1,61 @@
+# compose/monitoring/prometheus/prometheus.yml — scrape configuration of the monitoring profile (S6).
+#
+# Everything is scraped over the backend network by service name; nothing here is published. Alert rules are NOT in
+# Prometheus: Grafana evaluates them (monitoring/grafana/provisioning/alerting) and sends them to Telegram, so there is
+# no Alertmanager to run. Retention comes from the command line (PROM_RETENTION / PROM_RETENTION_SIZE in .env).
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # n8n: /metrics on every process (N8N_METRICS=true). main also publishes the Bull queue gauges/counters
+  # (n8n_scaling_mode_queue_jobs_*), webhooks the execution-duration histogram of the executions they wait for.
+  - job_name: n8n-main
+    static_configs:
+      - targets: ["n8n-main:5678"]
+    relabel_configs: &service_from_address
+      - source_labels: [__address__]
+        regex: "([^:]+):.*"
+        target_label: service
+  - job_name: n8n-webhook
+    static_configs:
+      - targets: ["n8n-webhook-1:5678", "n8n-webhook-2:5678"]
+    relabel_configs: *service_from_address
+  # Workers come and go with `make scale-workers`: render.sh rewrites targets/n8n.json (file_sd re-reads it within
+  # a minute — no docker socket needed). A parked or removed worker simply disappears from the list.
+  - job_name: n8n-worker
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/n8n.json"]
+        refresh_interval: 1m
+    relabel_configs: *service_from_address
+
+  # Caddy: request counters and durations per code/handler, from the internal-only listener :2020 (Caddyfile).
+  - job_name: caddy
+    static_configs:
+      - targets: ["caddy:2020"]
+
+  # Host: node-exporter also exports the backup sidecar's textfile metrics (backup_*, restore_test_*, cert_*).
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+  - job_name: cadvisor
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # The monitoring stack itself (so a dead Loki or Alloy shows up as a down target, not as silence).
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+  - job_name: grafana
+    metrics_path: /grafana/metrics
+    static_configs:
+      - targets: ["grafana:3000"]

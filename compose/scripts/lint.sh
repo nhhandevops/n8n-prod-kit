@@ -7,6 +7,7 @@
 #      from .env.example plus dummy secrets, so the check works on a fresh clone and in CI
 #   4. caddy validate inside the pinned Caddy image for EVERY TLS_MODE x UI_PROTECT x KUMA_ENABLED
 #      combination (the snippet files are only loaded by the combination that names them)
+#   5. the monitoring profile: yamllint + dashboards JSON + promtool / loki -verify-config / alloy fmt in their images
 # Exit 1 on the first failing group; prints what it ran so a CI log is self-explanatory.
 # shellcheck disable=SC2312,SC2016
 set -euo pipefail
@@ -16,7 +17,7 @@ KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 source "${KIT_DIR}/scripts/lib.sh"
 cd "${KIT_DIR}"
 
-need_cmd docker shellcheck yamllint grep awk mktemp
+need_cmd docker shellcheck yamllint grep awk mktemp jq
 
 status=0
 tmp_env=''
@@ -106,6 +107,55 @@ done
 if (( caddy_failures > 0 )); then
   status=1
 fi
+
+# --- 5. monitoring profile configuration ---------------------------------------------------------------------------
+# Each config is checked by its own tool inside the pinned image. *_IMAGE from the environment overrides versions.env
+# (CI uses Docker Hub mirrors). Grafana's provisioning has no offline validator: smoke 09 checks it on a live stack.
+image_of() {   # image_of KEY -> <image>:<version>
+  local img
+  img="$(printenv "${1}_IMAGE" || true)"
+  printf '%s:%s\n' "${img:-$(env_get "${1}_IMAGE" versions.env)}" "$(env_get "${1}_VERSION" versions.env)"
+}
+lint_run() {   # lint_run WHAT docker-run-args... — run, print the tool output only on failure
+  local what="${1}" out
+  shift
+  if out="$(docker run --rm "${@}" 2>&1)"; then
+    ok "${what}"
+  else
+    fail "${what}"
+    printf '%s\n' "${out}" | tail -8 >&2
+    status=1
+  fi
+}
+info "monitoring: yamllint, dashboards JSON, promtool, loki -verify-config, alloy fmt"
+mapfile -t monitoring_yaml < <(find monitoring -name '*.yml' -not -path '*/targets/*' | sort)
+if yamllint "${yamllint_args[@]}" "${monitoring_yaml[@]}"; then
+  ok "yamllint monitoring/ (${#monitoring_yaml[@]} files)"
+else
+  fail "yamllint monitoring/"
+  status=1
+fi
+for dashboard in monitoring/grafana/dashboards/*.json; do
+  if jq -e '.uid and .title and (.panels | length > 0)' "${dashboard}" >/dev/null; then
+    ok "dashboard ${dashboard##*/}"
+  else
+    fail "dashboard ${dashboard##*/} is not valid dashboard JSON (uid, title, panels)"
+    status=1
+  fi
+done
+# promtool also reads the file_sd target files; a fresh clone has none yet (render.sh writes them), so check a copy
+lint_targets="$(mktemp -d)"
+cp -r monitoring/prometheus/. "${lint_targets}/"
+if [[ ! -f "${lint_targets}/targets/n8n.json" ]]; then
+  printf '[{"targets": ["n8n-worker-1:5678"]}]\n' >"${lint_targets}/targets/n8n.json"
+fi
+chmod -R a+rX "${lint_targets}"
+lint_run "promtool check config" -v "${lint_targets}:/etc/prometheus:ro" --entrypoint promtool \
+  "$(image_of PROMETHEUS)" check config /etc/prometheus/prometheus.yml
+rm -rf "${lint_targets}"
+lint_run "loki -verify-config" -v "${KIT_DIR}/monitoring/loki/loki.yml:/etc/loki/loki.yml:ro" -e LOKI_RETENTION=336h \
+  "$(image_of LOKI)" -config.file=/etc/loki/loki.yml -config.expand-env=true -verify-config
+lint_run "alloy fmt (syntax)" -v "${KIT_DIR}/monitoring/alloy/config.alloy:/c.alloy:ro" "$(image_of ALLOY)" fmt /c.alloy
 
 if (( status == 0 )); then
   ok "lint: all checks passed"

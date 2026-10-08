@@ -53,8 +53,8 @@
 	# empty value is a parse error even in internal TLS mode.
 	email {$ACME_EMAIL}
 
-	# Caddy's own Prometheus metrics (caddy_http_* series), served by the admin
-	# endpoint at http://127.0.0.1:2019/metrics for the S6 monitoring stack.
+	# Caddy's own Prometheus metrics (caddy_http_* series): collected for every
+	# site, exposed to Prometheus by the internal :2020 listener at the end.
 	# This is the GLOBAL option: the nested `servers { metrics }` form is
 	# deprecated in 2.11 and logs a warning at every start.
 	metrics
@@ -265,9 +265,16 @@
 		respond 404
 	}
 
-	# Grafana (S6 monitoring profile, served under a sub-path). Until that
-	# service exists Caddy answers 502 here -- by design, not a misconfig.
+	# Grafana (monitoring profile, served under the sub-path /grafana/ --
+	# GF_SERVER_SERVE_FROM_SUB_PATH). Without the profile Caddy answers 502
+	# here, by design. Behind the same optional UI protection as the editor;
+	# Grafana's own /metrics stays internal (Prometheus scrapes grafana:3000).
+	redir /grafana /grafana/ 308
+	handle /grafana/metrics* {
+		respond 404
+	}
 	handle /grafana/* {
+		import /etc/caddy/ui-protect-{$UI_PROTECT:off}.caddy
 		reverse_proxy grafana:3000
 	}
 
@@ -284,6 +291,15 @@
 			header_down +X-Kit-Upstream {upstream_hostport}
 		}
 	}
+}
+
+# -----------------------------------------------------------------------------
+#  Internal metrics listener for Prometheus (monitoring profile): Caddy's
+#  caddy_http_* series on plain HTTP :2020. The port is NOT published -- only
+#  containers on the stack's networks reach it (prometheus scrapes caddy:2020).
+# -----------------------------------------------------------------------------
+:2020 {
+	metrics
 }
 
 # -----------------------------------------------------------------------------

@@ -1,0 +1,16 @@
+# The kit's dashboards (monitoring/grafana/dashboards/*.json) in the folder "n8n-kit". They are files in the repo:
+# edits made in the UI are not saved (allowUiUpdates false) — export a changed dashboard and commit the JSON instead.
+apiVersion: 1
+
+providers:
+  - name: n8n-kit
+    orgId: 1
+    folder: n8n-kit
+    folderUid: n8n-kit
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana-dashboards
+      foldersFromFilesStructure: false
