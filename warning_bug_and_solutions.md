@@ -173,3 +173,9 @@ Each line: symptom you would have seen → root cause → fix. Verified on n8n 2
 ## 2026-10-08 · Docker build: `| head` under pipefail fails the RUN
 
 - Same SIGPIPE trap as the smoke suite (S4): `rclone version | head -1` in a `SHELL ["/bin/ash","-eo","pipefail","-c"]` RUN → rclone exits 141 → build fails. Use `| sed -n 1p` (reads everything).
+
+## 2026-10-08 · CI: `make up` fails with "toomanyrequests: Rate exceeded" from public.ecr.aws
+
+- **Symptom:** the smoke job fails in "Bring the stack up" while pulling; a docs-only commit turned CI red.
+- **Root cause:** the AWS public registry throttles anonymous bursts; `compose pull` fetches every image in parallel. (Docker Hub has its own 100 pulls/h limit, which is why CI uses the mirrors.)
+- **Fix:** `make up` / `make pull` retry the pull (and the backup image build) three times with 20 s / 40 s pauses (`with_retry` in compose/Makefile); `make pull` also skips the locally built backup image (`--ignore-buildable`).

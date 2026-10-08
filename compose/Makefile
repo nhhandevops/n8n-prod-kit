@@ -37,6 +37,10 @@ $(foreach v,$(PASS_VARS),$(if $(value $(v)),$(eval export $(v))))
 
 SINCE ?= 10m
 
+# with_retry COMMAND,WHAT — registries throttle anonymous clients (Docker Hub: 100 pulls/h per IP; public.ecr.aws:
+# "toomanyrequests: Rate exceeded" on bursts, seen in CI 2026-10-08). Three attempts, 20 s and 40 s apart.
+with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
+
 .PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers \
         backup-now backups restore restore-test detach-recovery-key dev-ca trust-ca lint version env-keys clean
 
@@ -66,8 +70,8 @@ config: ## Print the fully resolved compose configuration
 up: ## preflight → render → pull → build backup image → (dev: export CA) → compose up --wait → status
 	@$(KIT_DIR)/scripts/preflight.sh
 	@$(KIT_DIR)/scripts/render.sh
-	@$(COMPOSE) pull --quiet --ignore-buildable
-	@$(COMPOSE) build --quiet backup
+	@$(call with_retry,$(COMPOSE) pull --quiet --ignore-buildable,image pull)
+	@$(call with_retry,$(COMPOSE) build --quiet backup,backup image build)
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
 	@$(COMPOSE) up -d --wait --wait-timeout 240
@@ -80,8 +84,8 @@ restart: ## Restart one service: make restart SERVICE=n8n-worker-1
 	@[[ -n "$(SERVICE)" ]] || { echo 'usage: make restart SERVICE=<service>' >&2; exit 2; }
 	@$(COMPOSE) restart $(SERVICE)
 
-pull: ## Pull the pinned images
-	@$(COMPOSE) pull
+pull: ## Pull the pinned images (the backup image is built locally, not pulled)
+	@$(call with_retry,$(COMPOSE) pull --ignore-buildable,image pull)
 
 ps: ## docker compose ps
 	@$(COMPOSE) ps
