@@ -65,6 +65,10 @@ jobs:
       - name: make smoke again (idempotency, reused owner + API key)
         run: make -C compose smoke
 
+      # TC-018: both webhook processors down -> WebhookPoolDown fires in < 3 min and is routed to Telegram (dummy bot).
+      - name: Alert drill (webhook pool down -> Grafana alert)
+        run: tests/ci/alert-drill.sh
+
       # TC-012 for real: replace the live database with the newest backup, then prove the stack still routes and
       # executes (owner + API key come back from the restored database).
       - name: make restore BACKUP=latest, then smoke 04+05 against the restored database
