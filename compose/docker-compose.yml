@@ -813,6 +813,8 @@ services:
     # root for the Docker socket (root:docker 0660; the image's own user "alloy" can neither read it nor write the new data volume —
     # verified in CI 2026-10-08). The socket is root-equivalent even mounted read-only; Alloy only reads the container logs of THIS
     # project (config.alloy filters on the compose label). label:disable: SELinux would deny the socket otherwise.
+    # Paths outside /var/lib/alloy and /etc/alloy (owned by the image user): root with cap_drop ALL has no CAP_DAC_OVERRIDE, so it
+    # cannot enter them ("mkdir /var/lib/alloy/data: permission denied", CI 2026-10-08).
     user: "0:0"
     security_opt:
       - no-new-privileges:true
@@ -822,15 +824,15 @@ services:
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
-      - --storage.path=/var/lib/alloy/data
+      - --storage.path=/alloy-data
       - --disable-reporting
-      - /etc/alloy/config.alloy
+      - /config.alloy
     environment:
       KIT_PROJECT: ${COMPOSE_PROJECT_NAME:-n8nkit}
     volumes:
       # read positions survive restarts (no duplicated or lost log lines)
-      - alloy_data:/var/lib/alloy/data
-      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro,z
+      - alloy_data:/alloy-data
+      - ./monitoring/alloy/config.alloy:/config.alloy:ro,z
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - monitoring
