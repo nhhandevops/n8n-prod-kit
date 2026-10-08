@@ -1,8 +1,8 @@
 # compose/monitoring/grafana/provisioning/alerting/rules.yml — Grafana-managed alert rules of the kit (S6).
 # Evaluated every 30 s in the folder "n8n-kit"; notifications go to the Telegram contact point that render.sh writes into
 # notifications.yml when ALERT_TELEGRAM_BOT_TOKEN + ALERT_TELEGRAM_CHAT_ID are set (otherwise they only show in
-# Grafana -> Alerting). Grafana expands $VAR / ${VAR} from its environment in this file: ${KIT_PROJECT} below is meant,
-# every literal dollar of an alert template is written $$ ($$values.A).
+# Grafana -> Alerting). Grafana expands ${VAR} from its environment inside the query models (${KIT_PROJECT} below) but
+# NOT in annotations, so alert templates use plain $values (verified in CI 2026-10-08: "$$values" broke the templates).
 # Shape of every rule: A = an instant PromQL query that returns ONE value, C = a threshold on A.
 apiVersion: 1
 
@@ -87,7 +87,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: '{{ $$values.A }} n8n worker(s) down for 5 minutes'
+          summary: '{{ printf "%.1f" $values.A.Value }} n8n worker(s) down for 5 minutes'
           description: >-
             Executions still run on the remaining workers, but capacity is reduced. make status; make logs
             SERVICE=n8n-worker-1
@@ -120,7 +120,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: '{{ $$values.A }} executions waiting in the queue'
+          summary: '{{ printf "%.1f" $values.A.Value }} executions waiting in the queue'
           description: >-
             More than 500 jobs have been waiting for 5 minutes: too few workers, or stuck ones. make scale-workers N=...;
             check the worker logs and Valkey memory (make doctor)
@@ -188,7 +188,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: 'No successful backup for {{ $$values.A }} hours on at least one target'
+          summary: 'No successful backup for {{ printf "%.1f" $values.A.Value }} hours on at least one target'
           description: >-
             The oldest last-success over BACKUP_REMOTES is older than 26 h (or no backup metric exists at all). make logs
             SERVICE=backup SINCE=48h; make backup-now; make doctor
@@ -287,7 +287,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'Last passing restore test was {{ $$values.A }} days ago'
+          summary: 'Last passing restore test was {{ printf "%.1f" $values.A.Value }} days ago'
           description: >-
             The weekly restore test (RESTORE_TEST_SCHEDULE) has not passed for more than 8 days. make restore-test
         data:
@@ -319,7 +319,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'Root disk {{ humanizePercentage $$values.A }} full'
+          summary: 'Root disk {{ humanizePercentage $values.A.Value }} full'
           description: >-
             Above 80 %: Docker logs, the database and local backups all live there. docker system df; prune executions
             (EXECUTIONS_DATA_MAX_AGE); keep backups off-host
@@ -354,7 +354,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'TLS certificate expires in {{ $$values.A }} days'
+          summary: 'TLS certificate expires in {{ printf "%.1f" $values.A.Value }} days'
           description: >-
             Caddy renews 30 days ahead, so renewal keeps failing: make logs SERVICE=caddy SINCE=24h (DNS, port 80, ACME
             rate limits)
@@ -421,7 +421,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: '{{ $$values.A }} monitoring target(s) down'
+          summary: '{{ printf "%.1f" $values.A.Value }} monitoring target(s) down'
           description: >-
             Caddy metrics, node-exporter, cAdvisor, Loki or Alloy cannot be scraped: dashboards and alerts that depend on
             them go blind. make status

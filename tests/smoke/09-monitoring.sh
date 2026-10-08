@@ -63,6 +63,9 @@ done
 req GET /grafana/api/v1/provisioning/alert-rules -u "${gf_auth}"
 rule_count="$(jq -r 'length' <<<"$(req_body)" 2>/dev/null || echo 0)"
 check "alert rules provisioned (${rule_count})" test "${rule_count}" -ge 13
+restart_expr="$(jq -r '.[] | select(.uid == "kit-container-restarting") | .data[0].model.expr' <<<"$(req_body)" 2>/dev/null || true)"
+check "Grafana expanded \${KIT_PROJECT} in the ContainerRestarting query" \
+  bash -c '[[ "$1" == *"=\"$2\""* && "$1" != *KIT_PROJECT* ]]' _ "${restart_expr}" "${project}"
 rules_ok() {
   req GET /grafana/api/prometheus/grafana/api/v1/rules -u "${gf_auth}"
   [[ "${REQ_STATUS}" == 200 ]] && jq -e '[.data.groups[].rules[]] | length >= 13 and all(.health != "error")' <<<"$(req_body)" >/dev/null

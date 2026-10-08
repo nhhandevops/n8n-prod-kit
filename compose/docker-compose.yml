@@ -795,12 +795,8 @@ services:
       - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro,z
     networks:
       - monitoring
-    healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3100/ready"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+    # No container healthcheck: the image has no shell tools (no wget/curl; verified in CI 2026-10-08). Prometheus scrapes
+    # loki:3100 and the MonitoringTargetDown alert fires when it is down.
     logging: *logging
     deploy:
       resources:
@@ -836,9 +832,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - monitoring
+    # Loki has no healthcheck (see above); loki.write retries with backoff until Loki is ready
     depends_on:
       loki:
-        condition: service_healthy
+        condition: service_started
     logging: *logging
     deploy:
       resources:
