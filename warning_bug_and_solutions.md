@@ -239,3 +239,30 @@ Regression test for the worst ones: `tests/ci/dr-drill.sh` (CI runs it on every 
 - **Root cause:** POSIX regex repetition counts are capped at RE_DUP_MAX = 255; `[[ x =~ ^…{16,256}$ ]]` is a compile error, and `[[ ]]` returns 2 (false) without stopping a script.
 - **Verify:** `[[ abc =~ ^a{1,256}$ ]]` → `invalid repetition count(s)`.
 - **Fix:** `{16,255}`. Found only because the drill runs the real procedure — exactly why it is in CI now.
+
+## 2026-10-08 · S6 monitoring: five facts that only a real start showed (CI, 6 rounds while the VM was offline)
+
+### Grafana does not expand environment variables in alert RULE files
+- **Symptom:** alert annotations with `{{ $$values.A }}` failed to parse ("error parsing template"); a smoke check showed `${KIT_PROJECT}` stayed literal inside a rule's PromQL.
+- **Root cause:** Grafana's file provisioning expands `$VAR` in data sources, dashboards providers and contact points, but not in alert rule groups (neither queries nor annotations), and it does not turn `$$` into `$` there.
+- **Verify:** `GET /api/v1/provisioning/alert-rules` returns the expression exactly as written.
+- **Fix:** rules use no environment at all (plain `$values` / `$labels` in templates; ContainerRestarting alerts per Compose project instead of filtering on the project name). The Telegram contact point DOES expand `$ALERT_TELEGRAM_BOT_TOKEN` — smoke 09 proves it through the decrypted export (`/api/v1/provisioning/contact-points/export?decrypt=true`).
+
+### The Loki image has no shell tools
+- **Symptom:** `dependency failed to start: container n8nkit-loki-1 is unhealthy`, Loki itself running fine.
+- **Root cause:** the healthcheck `wget … /ready` cannot run — the image ships no wget/curl.
+- **Fix:** no container healthcheck for Loki (Prometheus scrapes it; MonitoringTargetDown alerts); Alloy depends on `service_started`.
+
+### Alloy as root with cap_drop ALL cannot enter the image's own directories
+- **Symptom:** Alloy restart loop: `mkdir /var/lib/alloy/data: permission denied` — first as the image user (cannot read the Docker socket either), then even as root.
+- **Root cause:** `/var/lib/alloy` and `/etc/alloy` belong to the image user `alloy`; root without CAP_DAC_OVERRIDE (cap_drop ALL) is checked like any other user.
+- **Fix:** `user: "0:0"` (socket) and data/config at root-owned paths (`/alloy-data`, `/config.alloy`) instead of re-adding capabilities.
+
+### `make doctor` right after `make up` saw a stale scrape error
+- **Symptom:** "scrape target down: n8n-worker-1:5678 … connection refused" although the workers were healthy (the worker server binds `::`, verified in n8n's source).
+- **Root cause:** Prometheus starts first; its last scrape (15 s interval) predated the workers' start.
+- **Fix:** doctor re-reads the targets once after 20 s before reporting.
+
+### Windows git: new scripts committed without the executable bit; empty dirs vanish in `git stash -u`
+- **Symptom:** CI step `tests/ci/dr-drill.sh: Permission denied`; a freshly created empty `dashboards/` directory was gone after a stash round trip.
+- **Fix:** `git update-index --chmod=+x <file>` for every new script committed from Windows (check with `git ls-files -s`); create directories right before writing into them. Also: in this Bash tool `\\` inside heredocs collapses to `\` — patch scripts are written as files (memory note).
