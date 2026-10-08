@@ -301,8 +301,16 @@ if [[ "${profiles}" != *",monitoring,"* ]]; then
 elif [[ "$(service_health prometheus)" != "healthy" ]]; then
   flag_fail "prometheus is $(service_health prometheus) — make logs SERVICE=prometheus"
 else
-  targets="$(compose exec -T prometheus wget -qO- 'http://127.0.0.1:9090/api/v1/targets?state=active' 2>/dev/null || true)"
-  down="$(jq -r '.data.activeTargets[]? | select(.health != "up") | "\(.labels.job) \(.labels.instance): \(.lastError)"' <<<"${targets}" 2>/dev/null || true)"
+  targets_json() { compose exec -T prometheus wget -qO- 'http://127.0.0.1:9090/api/v1/targets?state=active' 2>/dev/null || true; }
+  down_of() { jq -r '.data.activeTargets[]? | select(.health != "up") | "\(.labels.job) \(.labels.instance): \(.lastError)"' <<<"${1}" 2>/dev/null || true; }
+  targets="$(targets_json)"
+  down="$(down_of "${targets}")"
+  if [[ -n "${down}" ]]; then
+    # right after `make up` the last scrape may predate a service's start (15 s interval): look again once
+    sleep 20
+    targets="$(targets_json)"
+    down="$(down_of "${targets}")"
+  fi
   total="$(jq -r '.data.activeTargets | length' <<<"${targets}" 2>/dev/null || echo 0)"
   if [[ -z "${targets}" ]]; then
     flag_warn "could not read the Prometheus targets"
