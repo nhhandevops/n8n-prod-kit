@@ -810,8 +810,10 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    # root (the image default) for the Docker socket — root-equivalent even when mounted read-only; Alloy only reads the container
-    # logs of THIS project (config.alloy filters on the compose label). label:disable: SELinux would deny the socket otherwise.
+    # root for the Docker socket (root:docker 0660; the image's own user "alloy" can neither read it nor write the new data volume —
+    # verified in CI 2026-10-08). The socket is root-equivalent even mounted read-only; Alloy only reads the container logs of THIS
+    # project (config.alloy filters on the compose label). label:disable: SELinux would deny the socket otherwise.
+    user: "0:0"
     security_opt:
       - no-new-privileges:true
       - label:disable
