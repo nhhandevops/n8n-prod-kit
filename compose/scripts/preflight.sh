@@ -86,6 +86,26 @@ else
   flag_fail "versions.env has unpinned images — run: make pin"
 fi
 
+# --- backups ---------------------------------------------------------------------------------------------------------
+# The backup service bind-mounts secrets/age-key.txt: if the file is missing Docker would create a DIRECTORY there.
+if [[ -d secrets/age-key.txt ]]; then
+  flag_fail "secrets/age-key.txt is a directory (Docker created it when the key was missing) — remove it and re-run make init FORCE=1"
+elif [[ ! -s secrets/age-key.txt ]]; then
+  flag_fail "secrets/age-key.txt is missing — the backup service cannot start; run make init (it generates the age keys)"
+else
+  ok "age backup key present"
+fi
+if [[ -z "$(env_get BACKUP_AGE_PUBLIC_KEY)" ]]; then
+  flag_fail "BACKUP_AGE_PUBLIC_KEY is empty in .env — re-run make init FORCE=1 (keeps the existing age keys)"
+fi
+backup_local_path="$(env_get BACKUP_LOCAL_PATH)"
+if [[ -n "${backup_local_path}" && ! -d "${backup_local_path}" ]]; then
+  flag_fail "BACKUP_LOCAL_PATH=${backup_local_path} does not exist — mount the external disk / NAS first (backups to /backups/external would land on the root disk)"
+fi
+if [[ "$(env_get BACKUP_ENABLED)" == "true" && -z "$(env_get BACKUP_REMOTES)" ]]; then
+  warn "BACKUP_REMOTES is empty — nothing will be backed up; set an off-host target (e.g. r2:n8n-backups/prod) before going live"
+fi
+
 # --- ports -----------------------------------------------------------------------------------------------------------
 # A port held by THIS stack's caddy (make up on a running stack) is fine; anything else must be named.
 project="$(_kit_project_name)"

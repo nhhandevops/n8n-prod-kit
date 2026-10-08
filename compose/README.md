@@ -41,6 +41,11 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make smoke [ONLY=04,05]` | end-to-end check of the running stack: health, TLS and headers, owner/login/API key, webhook routing through the pool, execution on a worker (incl. a Code node), metrics — ~30 s, idempotent; state in `compose/.smoke/` |
 | `make doctor` | diagnose: versions, health + last logs of unhealthy services, certificate, disk, Postgres/Valkey state, dangerous settings — every FAIL comes with its fix |
 | `make scale-workers N=4` | 1–16 workers (each with its runner sidecar); `N=1` parks worker 2 |
+| `make backup-now [NAME=x]` | encrypted backup (DB + encryption key) to every `BACKUP_REMOTES` target now; nightly from cron |
+| `make backups` | list the backups on every target |
+| `make restore BACKUP=latest` | replace the database with a backup (safety backup first, key check, queue flush) |
+| `make restore-test` | restore the newest backup into a scratch Postgres and verify it; weekly from cron |
+| `make detach-recovery-key` | move the offline recovery key into your password manager (prints once, then shreds) |
 | `make pin N8N_VERSION=2.42.5` | move the n8n pin (and the runners sidecar with it); then `make up` |
 | `make lint` | shellcheck + yamllint + compose config + `caddy validate` for every mode |
 | `make env-keys` | key names of `.env` for bug reports (never paste values) |
@@ -59,6 +64,7 @@ Scaling: `make scale-workers N=<1..16>` writes `WORKER_REPLICAS`, regenerates `c
 
 ## Known limits in this version
 
-- Backups (`make backup-now` / `restore`), monitoring (`--profile monitoring`), `make upgrade` / `rollback` / `chaos` arrive in the next sessions (see `n8n-kit-HANDOFF.md`).
+- Backups: see `docs/operations/backup-restore.md` (targets, restore, disaster recovery with the recovery key). Set an off-host target (`BACKUP_REMOTES="r2:…"`) before going live — dev hosts back up to `compose/backups` only.
+- Monitoring (`--profile monitoring`), `make upgrade` / `rollback` / `chaos` arrive in the next sessions (see `n8n-kit-HANDOFF.md`).
 - RHEL-family hosts: see `docs/operations/rhel-hosts.md` (install path verified in containers; a real SELinux + firewalld host run is still pending).
 - All n8n processes share one `/home/node/.n8n` volume (community nodes must be visible to every worker); a worker starting while another process was writing may log "Last session crashed" once — harmless.

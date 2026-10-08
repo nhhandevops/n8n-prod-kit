@@ -86,8 +86,8 @@ IFS= read -r -d '' worker_template <<'YAML' || true
     read_only: true
     tmpfs:
       - /tmp
-      - /home/node/.cache
-      - /home/node/.npm
+      - /home/node/.cache:uid=1000,gid=1000,mode=0700
+      - /home/node/.npm:uid=1000,gid=1000,mode=0700
     logging:
       driver: json-file
       options:

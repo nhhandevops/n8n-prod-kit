@@ -6,9 +6,6 @@ updates:
       interval: weekly
     labels: ["ci", "dependencies"]
 
-  # Backup sidecar base image (compose service images are pinned via `make pin`, not here)
-  - package-ecosystem: docker
-    directory: /compose/backup
-    schedule:
-      interval: weekly
-    labels: ["compose", "dependencies"]
+# Container images are NOT managed here: every image (including the backup sidecar's base, which compose passes in
+# as a build argument) is pinned by digest in compose/versions.env and moved with `make pin`. The weekly
+# weekly-latest-n8n workflow is the early warning for n8n itself.

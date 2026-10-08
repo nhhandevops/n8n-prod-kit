@@ -31,16 +31,18 @@ COMPOSE := docker compose --project-directory $(KIT_DIR) --env-file $(KIT_DIR)/v
 
 # Variables given on the command line (make init DOMAIN=…) are passed to the scripts as environment — but only when
 # set, so a script's `${VAR:-default}` still sees them as unset otherwise.
-PASS_VARS := DOMAIN ACME_EMAIL HTTP_PORT HTTPS_PORT FORCE CI YES N8N_VERSION WORKER_REPLICAS SERVICE SINCE NO_COLOR
+PASS_VARS := DOMAIN ACME_EMAIL HTTP_PORT HTTPS_PORT FORCE CI YES N8N_VERSION WORKER_REPLICAS SERVICE SINCE NO_COLOR \
+             BACKUP FROM ADOPT_KEY AGE_KEY SKIP_SAFETY_BACKUP
 $(foreach v,$(PASS_VARS),$(if $(value $(v)),$(eval export $(v))))
 
 SINCE ?= 10m
 
-.PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers dev-ca trust-ca lint version env-keys clean
+.PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers \
+        backup-now backups restore restore-test detach-recovery-key dev-ca trust-ca lint version env-keys clean
 
 help: ## Show this help
 	@printf 'n8n Production Kit — compose/ targets (run from anywhere: make -C compose <target>)\n\n'
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-12s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-20s %s\n", $$1, $$2}'
 	@printf '\nTypical first run:  make init DOMAIN=n8n.example.com ACME_EMAIL=you@example.com && make preflight && make up\n'
 	@printf 'Local dev (VM/WSL): make init DOMAIN=n8n.localtest.me HTTP_PORT=8080 HTTPS_PORT=8443 && make up && make trust-ca\n'
 
@@ -61,10 +63,12 @@ preflight: ## Check host, .env, ports, DNS, disk, RAM, clock before `up` (exit 1
 config: ## Print the fully resolved compose configuration
 	@$(COMPOSE) config
 
-up: ## preflight → render → pull → (dev: export CA) → compose up --wait → status
+up: ## preflight → render → pull → build backup image → (dev: export CA) → compose up --wait → status
 	@$(KIT_DIR)/scripts/preflight.sh
 	@$(KIT_DIR)/scripts/render.sh
-	@$(COMPOSE) pull --quiet
+	@$(COMPOSE) pull --quiet --ignore-buildable
+	@$(COMPOSE) build --quiet backup
+	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
 	@$(COMPOSE) up -d --wait --wait-timeout 240
 	@$(KIT_DIR)/scripts/status.sh
@@ -93,6 +97,25 @@ smoke: ## End-to-end smoke suite against the running stack: make smoke [ONLY=04,
 
 doctor: ## Diagnose common problems with fixes (DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy to test it)
 	@$(KIT_DIR)/scripts/doctor.sh
+
+# --- backups -----------------------------------------------------------------------------------------------------------
+
+backup-now: ## Encrypted backup to every BACKUP_REMOTES target now: make backup-now [NAME=label]
+	@$(KIT_DIR)/scripts/backup-perms.sh
+	@$(COMPOSE) run --rm -T backup /opt/backup/backup.sh --kind manual $(if $(NAME),--name $(NAME),)
+
+backups: ## List the backups on every remote (newest first): make backups [FROM=remote]
+	@$(COMPOSE) run --rm -T backup /opt/backup/restore.sh list $(if $(FROM),--from $(FROM),)
+
+restore: ## Replace the DB with a backup: make restore BACKUP=latest|<name> [FROM=…] [AGE_KEY=file] [ADOPT_KEY=1] [YES=1]
+	@$(KIT_DIR)/scripts/restore.sh
+
+restore-test: ## Restore the newest backup into a scratch Postgres and verify it (weekly from cron)
+	@$(KIT_DIR)/scripts/backup-perms.sh
+	@$(COMPOSE) run --rm -T backup /opt/backup/restore-test.sh $(BACKUP)
+
+detach-recovery-key: ## Print the offline recovery key once, then shred it from this host
+	@$(KIT_DIR)/scripts/detach-recovery-key.sh
 
 scale-workers: ## Set the worker count: make scale-workers N=4  (1..16; N=1 parks worker 2)
 	@[[ -n "$(N)" ]] || { echo 'usage: make scale-workers N=<1..16>' >&2; exit 2; }

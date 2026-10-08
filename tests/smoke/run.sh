@@ -20,6 +20,11 @@ fi
 cleanup() {
   if [[ "${SMOKE_KEEP:-}" != "1" && -s "${STATE_DIR}/api-key" ]]; then
     delete_smoke_workflows || true
+    cred="$(state_get CRED_ID)"
+    if [[ -n "${cred}" ]]; then
+      api DELETE "/api/v1/credentials/${cred}" || true
+      state_set CRED_ID ""
+    fi
   fi
 }
 trap cleanup EXIT

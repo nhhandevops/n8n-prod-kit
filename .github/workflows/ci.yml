@@ -61,6 +61,13 @@ jobs:
       - name: make smoke again (idempotency, reused owner + API key)
         run: make -C compose smoke
 
+      # TC-012 for real: replace the live database with the newest backup, then prove the stack still routes and
+      # executes (owner + API key come back from the restored database).
+      - name: make restore BACKUP=latest, then smoke 04+05 against the restored database
+        run: |
+          make -C compose restore BACKUP=latest YES=1
+          make -C compose smoke ONLY=01,04,05
+
       - name: Collect logs
         if: failure()
         run: tests/ci/collect-logs.sh artifacts

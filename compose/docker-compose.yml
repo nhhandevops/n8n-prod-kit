@@ -65,11 +65,14 @@ x-n8n-base: &n8n-base
   # read-only rootfs; the three tmpfs mounts are the measured write set (see the header). Node's /tmp usage includes the
   # data-table upload staging dir; ~/.cache holds the editor bundle main compiles at start; ~/.npm is npm's cache for
   # community-node installs (the packages themselves land in the n8n_data volume under nodes/).
+  # uid/gid/mode are REQUIRED on the two dirs that do not exist in the image: Docker mounts such a tmpfs 1777 on the
+  # first start but root:root 0755 after a container RESTART (verified on Docker 29.5) — n8n-main then dies with
+  # "EACCES mkdir /home/node/.cache/n8n" on every restart, reboot or `make restore`.
   read_only: true
   tmpfs:
     - /tmp
-    - /home/node/.cache
-    - /home/node/.npm
+    - /home/node/.cache:uid=1000,gid=1000,mode=0700
+    - /home/node/.npm:uid=1000,gid=1000,mode=0700
   logging: *logging
   networks:
     - internal
@@ -575,6 +578,98 @@ services:
       n8n-worker-2:
         condition: service_healthy
 
+  # ======================================================================================================================================
+  # backup — nightly encrypted backups to every BACKUP_REMOTES target + weekly restore test (compose/backup/, S5)
+  # ======================================================================================================================================
+  backup:
+    # built locally from the SAME Postgres image as the database (pg_dump/pg_restore always match the server)
+    image: n8nkit/backup:local
+    build:
+      context: ./backup
+      args:
+        BASE_IMAGE: ${POSTGRES_IMAGE}:${POSTGRES_VERSION}@${POSTGRES_DIGEST:?run make pin}
+    # uid 70 = postgres: the restore test runs a scratch Postgres, which refuses root. scripts/backup-perms.sh (run by
+    # `make up`) makes secrets/age-key.txt and backups/ usable by this uid without locking the operator out.
+    user: "70:70"
+    read_only: true
+    tmpfs:
+      # dumps, encrypted bundles and the restore-test scratch cluster are built here; size it to ~2x the database
+      - /tmp:size=${BACKUP_TMPFS_SIZE:-2g}
+    restart: unless-stopped
+    # supercronic waits for a running backup on SIGTERM; give a large pg_dump time to finish
+    stop_grace_period: 120s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: n8n
+      PGDATABASE: n8n
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (make init)}
+      # written into every bundle: a restored database is useless without the key that encrypted its credentials
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY (make init)}
+      N8N_VERSION: ${N8N_VERSION}
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      TZ: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
+      BACKUP_REMOTES: ${BACKUP_REMOTES:-}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+      RESTORE_TEST_SCHEDULE: ${RESTORE_TEST_SCHEDULE:-0 3 * * 0}
+      BACKUP_RETENTION_DAILY_DAYS: ${BACKUP_RETENTION_DAILY_DAYS:-30}
+      BACKUP_RETENTION_MONTHLY_DAYS: ${BACKUP_RETENTION_MONTHLY_DAYS:-365}
+      BACKUP_NOTIFY_SUCCESS: ${BACKUP_NOTIFY_SUCCESS:-false}
+      BACKUP_AGE_PUBLIC_KEY: ${BACKUP_AGE_PUBLIC_KEY:-}
+      BACKUP_AGE_RECOVERY_PUBLIC_KEY: ${BACKUP_AGE_RECOVERY_PUBLIC_KEY:-}
+      ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
+      # rclone remotes "r2:" and "s3:" (BACKUP_REMOTES="r2:bucket/path s3:bucket/path"); any other rclone remote can be
+      # added in a compose.override.yml with its RCLONE_CONFIG_<NAME>_* variables.
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${RCLONE_CONFIG_R2_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${RCLONE_CONFIG_R2_SECRET_ACCESS_KEY:-}
+      RCLONE_CONFIG_R2_ENDPOINT: ${RCLONE_CONFIG_R2_ENDPOINT:-}
+      RCLONE_CONFIG_R2_ACL: private
+      # a bucket-scoped R2 token may not list or create buckets
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
+      RCLONE_CONFIG_S3_TYPE: s3
+      RCLONE_CONFIG_S3_PROVIDER: AWS
+      RCLONE_CONFIG_S3_REGION: ${RCLONE_CONFIG_S3_REGION:-ap-southeast-1}
+      RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${RCLONE_CONFIG_S3_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${RCLONE_CONFIG_S3_SECRET_ACCESS_KEY:-}
+      RCLONE_CONFIG_S3_ACL: private
+      RCLONE_CONFIG_S3_NO_CHECK_BUCKET: "true"
+    volumes:
+      # metrics + restore-test report (survive restarts; node-exporter reads metrics.prom in S6)
+      - backup_state:/state
+      # a fetched, decrypted bundle waiting to be restored (make restore), emptied afterwards
+      - backup_work:/work
+      - ./secrets/age-key.txt:/run/secrets/age-key.txt:ro,z
+      # BACKUP_REMOTES path "/backups/local" = compose/backups on the host; "/backups/external" = BACKUP_LOCAL_PATH
+      # (an external disk / NAS mount; defaults to the same directory when unset)
+      - ./backups:/backups/local:z
+      - ${BACKUP_LOCAL_PATH:-./backups}:/backups/external:z
+    # proxy = egress for R2/S3/Telegram; internal = postgres
+    networks:
+      - proxy
+      - internal
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "supercronic"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_BACKUP:-1g}
+
 networks:
   # backend network: every service; `internal: true` = no route to the outside world (see the header). postgres, valkey and the runners
   # sidecars live ONLY here.
@@ -590,3 +685,5 @@ volumes:
   valkey_data: {}
   n8n_data: {}
   n8n_files: {}
+  backup_state: {}
+  backup_work: {}

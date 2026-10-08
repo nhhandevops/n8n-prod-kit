@@ -58,10 +58,17 @@ fi
 if [[ -f secrets/age-recovery-key.txt ]]; then
   key_age_days=$(( ( $(date +%s) - $(stat -c %Y secrets/age-recovery-key.txt) ) / 86400 ))
   if (( key_age_days > 7 )); then
-    flag_warn "secrets/age-recovery-key.txt has been on this host for ${key_age_days} days — copy it to your password manager and remove it here (make detach-recovery-key, from S5); a backup that can be decrypted from the same host it protects is not a recovery plan"
+    flag_warn "secrets/age-recovery-key.txt has been on this host for ${key_age_days} days — store it in your password manager and run make detach-recovery-key; a backup that can be decrypted from the same host it protects is not a recovery plan"
   else
-    ok "recovery key on host for ${key_age_days} day(s) (move it off-host within 7 days)"
+    ok "recovery key on host for ${key_age_days} day(s) — move it off-host within 7 days (make detach-recovery-key)"
   fi
+elif [[ -n "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" ]]; then
+  ok "recovery key detached (private half off-host; backups are still encrypted to it)"
+else
+  flag_warn "no recovery key: BACKUP_AGE_RECOVERY_PUBLIC_KEY is empty — backups can only be opened with this host's key"
+fi
+if [[ "$(env_get BACKUP_ENABLED)" == "true" && ! -s secrets/age-key.txt ]]; then
+  flag_fail "secrets/age-key.txt is missing — backups cannot be encrypted or restore-tested (re-run make init FORCE=1 only if you also restore the old key)"
 fi
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -227,10 +234,48 @@ fi
 
 # ---------------------------------------------------------------------------------------------------------------------
 section "backups"
-if [[ "$(env_get BACKUP_ENABLED)" == "true" ]]; then
-  info "backup checks (last backup age per remote, last restore test) arrive with the backup sidecar in S5"
+backup_remotes="$(env_get BACKUP_REMOTES)"
+if [[ "$(env_get BACKUP_ENABLED)" != "true" ]]; then
+  flag_warn "BACKUP_ENABLED is not true — no scheduled backups protect the database (make backup-now works manually)"
+elif [[ -z "${backup_remotes}" ]]; then
+  flag_fail "BACKUP_REMOTES is empty — nothing is backed up; set e.g. BACKUP_REMOTES=\"r2:n8n-backups/prod\" (+ RCLONE_CONFIG_R2_*) and make up"
+elif [[ "$(service_health backup)" != "healthy" ]]; then
+  flag_fail "backup service is $(service_health backup) — make logs SERVICE=backup"
 else
-  flag_warn "BACKUP_ENABLED is not true — nothing protects the database yet (backups arrive in S5; until then: make a manual pg_dump)"
+  metrics="$(compose exec -T backup cat /state/metrics.prom 2>/dev/null || true)"
+  now="$(date +%s)"
+  for remote in ${backup_remotes}; do
+    remote="${remote%/}"
+    last="$(awk -v r="backup_last_success_timestamp_seconds{remote=\"${remote}\"}" '$1 == r { print $2 }' <<<"${metrics}")"
+    status="$(awk -v r="backup_last_status{remote=\"${remote}\"}" '$1 == r { print $2 }' <<<"${metrics}")"
+    if [[ -z "${last}" ]]; then
+      schedule="$(env_get BACKUP_SCHEDULE)"
+      flag_warn "no successful backup to ${remote} yet — run make backup-now (the nightly job runs on cron '${schedule:-0 2 * * *}')"
+    else
+      age_h=$(( (now - ${last%.*}) / 3600 ))
+      if (( age_h >= 26 )); then
+        flag_fail "last successful backup to ${remote} was ${age_h} h ago — make logs SERVICE=backup SINCE=48h; make backup-now"
+      elif [[ "${status}" == "0" ]]; then
+        flag_warn "the LAST attempt to ${remote} failed (previous success ${age_h} h ago) — make logs SERVICE=backup"
+      else
+        ok "backup to ${remote}: last success ${age_h} h ago"
+      fi
+    fi
+  done
+  rt_success="$(awk '$1 == "restore_test_last_success_timestamp_seconds" { print $2 }' <<<"${metrics}")"
+  rt_status="$(awk '$1 == "restore_test_last_status" { print $2 }' <<<"${metrics}")"
+  if [[ "${rt_status}" == "0" ]]; then
+    flag_fail "the last restore test FAILED — make restore-test shows why; a backup that does not restore is not a backup"
+  elif [[ -z "${rt_success}" ]]; then
+    flag_warn "no restore test has run yet — make restore-test (weekly from cron)"
+  else
+    rt_days=$(( (now - ${rt_success%.*}) / 86400 ))
+    if (( rt_days > 8 )); then
+      flag_warn "last successful restore test was ${rt_days} days ago (expected weekly)"
+    else
+      ok "restore test passed ${rt_days} day(s) ago"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------------------------------------------------

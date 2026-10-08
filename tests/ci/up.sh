@@ -13,6 +13,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 cd "${REPO_DIR}"
 
 echo "127.0.0.1 n8n.localtest.me kuma.n8n.localtest.me" | sudo tee -a /etc/hosts >/dev/null
+# age for `make init` (the init script falls back to the backup image's age when the host has none; CI uses the
+# distribution package to exercise the common path)
+sudo apt-get install -y -qq age >/dev/null
 # Valkey wants overcommit (preflight only warns without it); bootstrap-host.sh sets the same on real hosts.
 sudo sysctl -q -w vm.overcommit_memory=1
 

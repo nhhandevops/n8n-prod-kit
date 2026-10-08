@@ -148,6 +148,9 @@ if [[ -e "${KIT_DIR}/.env" ]]; then
   if ! confirm "Overwrite .env and generate new secrets?"; then
     die "aborted — .env untouched"
   fi
+  # the recovery key's private half may already be detached (make detach-recovery-key): keep its PUBLIC half, or a
+  # regenerated .env would silently switch new backups to a fresh recovery key nobody has stored
+  previous_recovery_pub="$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)"
   ts="$(date +%Y%m%d-%H%M%S)"
   cp -p "${KIT_DIR}/.env" "${KIT_DIR}/.env.bak.${ts}"
   chmod 600 "${KIT_DIR}/.env.bak.${ts}"
@@ -194,27 +197,53 @@ chmod 700 "${KIT_DIR}/secrets"
 # --- 4. age keys (backups are S5, but the keys are generated now so the recovery key can be stored
 #        off-host from day one). Existing keys are NEVER replaced: that would orphan old backups. ---
 age_keys_done=0
-if command -v age-keygen >/dev/null 2>&1; then
-  for key_file in age-key.txt age-recovery-key.txt; do
-    if [[ -s "${KIT_DIR}/secrets/${key_file}" ]]; then
-      info "secrets/${key_file} already exists — kept (public key re-read from it)"
-    else
-      age-keygen -o "${KIT_DIR}/secrets/${key_file}" 2>/dev/null
-      ok "secrets/${key_file} generated"
-    fi
-  done
-  age_pub="$(age-keygen -y "${KIT_DIR}/secrets/age-key.txt")"
-  age_recovery_pub="$(age-keygen -y "${KIT_DIR}/secrets/age-recovery-key.txt")"
-  env_set BACKUP_AGE_PUBLIC_KEY "${age_pub}"
-  env_set BACKUP_AGE_RECOVERY_PUBLIC_KEY "${age_recovery_pub}"
-  age_keys_done=1
+# age-keygen from the host, or — when the host has no age — from the kit's backup image (built on demand). The image
+# runs as the caller's uid so the key file belongs to the operator; `make up` then hands it to the backup container.
+age_keygen() {   # age_keygen [-o FILE | -y FILE]
+  if command -v age-keygen >/dev/null 2>&1; then
+    age-keygen "${@}"
+    return
+  fi
+  if ! docker image inspect n8nkit/backup:local >/dev/null 2>&1; then
+    info "age-keygen not installed — building the backup image to use its age"
+    compose build --quiet backup >&2
+  fi
+  local mode="${1}" file="${2}"
+  docker run --rm --user "${my_uid}:${my_gid}" --entrypoint age-keygen -v "${KIT_DIR}/secrets:/k:z" n8nkit/backup:local \
+    "${mode}" "/k/${file##*/}"
+}
+my_uid="$(id -u)"
+my_gid="$(id -g)"
+recovery_file="${KIT_DIR}/secrets/age-recovery-key.txt"
+if [[ -s "${KIT_DIR}/secrets/age-key.txt" ]]; then
+  info "secrets/age-key.txt already exists — kept (public key re-read from it)"
 else
-  warn "age-keygen not found — skipping the backup keys (BACKUP_AGE_* stay empty; install age and re-run before enabling backups in S5)"
+  age_keygen -o "${KIT_DIR}/secrets/age-key.txt" 2>/dev/null
+  ok "secrets/age-key.txt generated"
 fi
+age_pub="$(age_keygen -y "${KIT_DIR}/secrets/age-key.txt")"
+if [[ -s "${recovery_file}" ]]; then
+  info "secrets/age-recovery-key.txt already exists — kept"
+  age_recovery_pub="$(age_keygen -y "${recovery_file}")"
+elif [[ -n "${previous_recovery_pub:-}" ]]; then
+  info "recovery key is detached (private half off-host) — keeping its public key from the previous .env"
+  age_recovery_pub="${previous_recovery_pub}"
+else
+  age_keygen -o "${recovery_file}" 2>/dev/null
+  ok "secrets/age-recovery-key.txt generated — move it off this host: make detach-recovery-key"
+  age_recovery_pub="$(age_keygen -y "${recovery_file}")"
+fi
+if [[ -z "${age_pub}" || -z "${age_recovery_pub}" ]]; then
+  die "could not derive the age public keys (is Docker running? is age installed?)"
+fi
+env_set BACKUP_AGE_PUBLIC_KEY "${age_pub}"
+env_set BACKUP_AGE_RECOVERY_PUBLIC_KEY "${age_recovery_pub}"
+age_keys_done=1
 
 # --- 5b. permissions, render ----------------------------------------------------------------------------
 chmod 600 "${KIT_DIR}/.env"
-find "${KIT_DIR}/secrets" -maxdepth 1 -type f -exec chmod 600 {} +
+# only files this user owns: after `make up`, secrets/age-key.txt belongs to the backup container's uid (0440)
+find "${KIT_DIR}/secrets" -maxdepth 1 -type f -user "${my_uid}" -exec chmod 600 {} +
 bash "${KIT_DIR}/scripts/render.sh"
 
 # --- 6. self-check (TC-001) ----------------------------------------------------------------------------
