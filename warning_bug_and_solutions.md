@@ -147,3 +147,29 @@ Each line: symptom you would have seen → root cause → fix. Verified on n8n 2
 - **What it is NOT:** none of the public API calls (`/api/v1/executions` with/without `workflowId`, `limit`, `status`; `/api/v1/workflows/{id}`) trigger it, with or without existing executions (bisected on the VM).
 - **What it is:** an n8n-internal paginated executions query issued around webhook-triggered executions; n8n handles the error (executions succeed, nothing logged on the n8n side).
 - **Action:** smoke 04 counts new occurrences and warns; report upstream with the statement when convenient.
+
+## 2026-10-08 · n8n-main crashes after every container RESTART: EACCES mkdir /home/node/.cache/n8n
+
+- **Symptom:** after `docker compose restart`, a host reboot or `make restore` (stop + start), n8n-main loops: `EACCES: permission denied, mkdir '/home/node/.cache/n8n'`; webhooks and workers never start (they wait for main). Fresh `make up` was always fine — so S2–S4 tests never saw it.
+- **Root cause:** Docker mounts a tmpfs on a directory that does NOT exist in the image as root:root **1777 on the first start but 0755 after a restart** (verified on Docker 29.5 with alpine and the n8n image). `/tmp` is unaffected (exists in the image). The S3 read-only change put `~/.cache` and `~/.npm` on such tmpfs mounts.
+- **Verify:** `docker run -d --name t --read-only --tmpfs /data alpine sleep 600; docker exec t stat -c %a /data; docker restart t; docker exec t stat -c %a /data` → 1777 then 755.
+- **Fix:** explicit options `- /home/node/.cache:uid=1000,gid=1000,mode=0700` (same for `.npm`, also in render.sh's template). Regression check: a full `docker compose restart` is now part of the S5 verification. Shipped in f4980b4.
+
+## 2026-10-08 · Docker build fails: rclone "Invalid value when setting --version from environment variable RCLONE_VERSION"
+
+- **Symptom:** the backup image build dies right after all sha256 checks passed.
+- **Root cause:** rclone maps EVERY `RCLONE_<FLAG>` environment variable to a flag. The Dockerfile build arg `RCLONE_VERSION=v1.75.1` is visible as an environment variable to `RUN`, so `rclone version` saw `--version=v1.75.1`.
+- **Fix:** download build args are named `PKG_*` (`PKG_RCLONE_VERSION`, …). Never name any variable `RCLONE_<something>` unless it is meant as an rclone flag/config.
+
+## 2026-10-08 · Backup container cannot write /state ("mkdir /state/metrics.d: Permission denied")
+
+- **Root cause:** a named volume mounted on a path that does not exist in the image is created root-owned; the backup container runs as uid 70.
+- **Fix:** the image creates `/state` and `/work` owned by 70 (Docker copies that into NEW volumes); `scripts/backup-perms.sh` chowns volumes that already exist. Note: a chown through `compose run` fails — the service has `cap_drop: [ALL]`, and root without CAP_CHOWN cannot chown; the fix uses a plain `docker run` one-shot.
+
+## 2026-10-08 · Backup container (uid 70) cannot read secrets/age-key.txt (0600, owned by the operator)
+
+- **Fix:** `scripts/backup-perms.sh` (run by `make up`, backup-now, restore, restore-test) sets the key to `70:<operator group> 0440` and `backups/` to `70:<operator group> 2775` through a root one-shot of the backup image — no sudo, and the operator can still read the key and manage the files. `init.sh` therefore only chmods files the caller owns, and derives public keys via the group read.
+
+## 2026-10-08 · Docker build: `| head` under pipefail fails the RUN
+
+- Same SIGPIPE trap as the smoke suite (S4): `rclone version | head -1` in a `SHELL ["/bin/ash","-eo","pipefail","-c"]` RUN → rclone exits 141 → build fails. Use `| sed -n 1p` (reads everything).

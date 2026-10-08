@@ -3,9 +3,9 @@
 > **Read this first on every machine, every session. Update it last, then `git push`.**
 > If it is not in git, it does not exist. This file is the only shared memory between computers and between AI coding sessions.
 
-**Last updated:** 2026-10-08 (S4 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** see `git log -1` (the hand-off commit "docs(handoff): …") · **Project start date (T):** 2026-10-07 (day of the first public push)
+**Last updated:** 2026-10-08 (S5 done) · **By:** Claude with An · **Machine:** laptop + VM `server1` · **Branch:** `main` · **Last commit:** see `git log -1` (the hand-off commit "docs(handoff): …") · **Project start date (T):** 2026-10-07 (day of the first public push)
 
-> **Picking this up on another computer?** `git pull` → read §2 "Next up" (S5 is next) → §4 "How to resume" (generic steps for any Linux / WSL2 / VM host) → `n8n-kit-BUILD-PLAN.md` §13 + §15 for the S5 details. Nothing is in progress and nothing is uncommitted.
+> **Picking this up on another computer?** `git pull` → read §2 "Next up" (S6 is next) → §4 "How to resume" (generic steps for any Linux / WSL2 / VM host) → `n8n-kit-BUILD-PLAN.md` §14 + §15 for the S6 details. Nothing is in progress and nothing is uncommitted.
 
 ---
 
@@ -21,14 +21,14 @@
 
 | Milestone | Target | State |
 |---|---|---|
-| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S4 of S10 done (compose core, doctor/scale/read-only, smoke suite + CI smoke); S5–S10 pending |
+| M0 · Compose kit (fresh VPS ≤ 15 min) | T + 2 weeks | 🔄 S5 of S10 done (compose core, doctor/scale/read-only, smoke + CI, encrypted backups + restore); S6–S10 pending |
 | M1 · Batteries (backups, monitoring, runbooks, 5 templates) | T + 5 weeks | ⬜ |
 | M2 · Terraform AWS | T + 8 weeks | ⬜ |
 | M2.5 · Kubernetes Helm chart (Target C) | T + 10 weeks | ⬜ |
 | M3 · Public launch (docs site, posts) | T + 3 months | ⬜ |
 | M4 · Business (setups + retainers) | T + 6 months | ⬜ |
 
-**Health:** S0–S4 complete 2026-10-08 — `make smoke` green on the VM and on GitHub Actions (every PR now boots the stack and runs the suite twice) — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.4 (+ `n8nio/runners:2.42.4`, digests in `compose/versions.env`) — check for a newer 2.x stable at the start of S4 (`gh api repos/n8n-io/n8n/releases/latest --jq .tag_name`; then `make -C compose pin N8N_VERSION=x`)
+**Health:** S0–S5 complete 2026-10-08 — `make smoke` (01–08) green on the VM and on GitHub Actions; every PR boots the stack, runs the suite twice, restores the newest backup into the live DB and re-checks — `compose/` runs: 10 services healthy on the build VM, webhook→worker→runner round-trip verified, `make lint` green · **Demo VPS:** _none_ · **Pinned n8n version:** 2.42.4 (+ `n8nio/runners:2.42.4`, digests in `compose/versions.env`) — check for a newer 2.x stable at the start of S4 (`gh api repos/n8n-io/n8n/releases/latest --jq .tag_name`; then `make -C compose pin N8N_VERSION=x`)
 
 **Hand-off test run (2026-10-07, HEAD cf388ca, build VM): 18/18 PASS** — `make lint`; `make up` (96 s, 10/10 healthy); `make status`; `make doctor` (0 FAIL, 1 expected warn: backups not configured yet); `DOCTOR_SIMULATE` exits non-zero with injected FAILs; http→https redirect keeps the dev port; UI/API/`*-test` paths → n8n-main and production paths → webhook pool (`X-Kit-Upstream`); security headers present, `Server` removed; webhook → queue → worker → runner Code-node round trip; `scale-workers N=3` (generated worker-3 read-only) and back to 2; every container read-only, zero EROFS/EACCES in logs; `make down`; GitHub `ci` and `bootstrap-matrix` (6/6 distros) green.
 
@@ -37,6 +37,7 @@
 ## 2. Work log
 
 ### ✅ Done
+- 2026-10-08 · **S5 backups shipped** (f4980b4): backup sidecar (`compose/backup/`: image FROM the stack's Postgres + sha256-pinned age/rclone/supercronic, amd64+arm64), `backup.sh` (pg_dump + key bundle + manifest → age to host + recovery key → every `BACKUP_REMOTES` target, retention, metrics, Telegram), `restore-test.sh` (weekly; scratch Postgres, counts, openssl credential decrypt, key check), `make backup-now / backups / restore / restore-test / detach-recovery-key`, safety backup before every restore, key-mismatch stop before the drop, `ADOPT_KEY=1` + `AGE_KEY=file` for disaster recovery on a new host, doctor/preflight backup checks, smoke 07/08, CI restore round trip (run 37733318324: smoke job 282 s, 8/8 twice + restore + 01/04/05). Verified on the VM: backup, list, restore test, real restore, full-stack restart, simulated new-host DR restore (credentials decrypt after ADOPT_KEY). Fixed a latent S3 bug: n8n-main crashed after every container restart (Docker tmpfs 0755 on restart → uid/gid/mode options). `docs/operations/backup-restore.md`.
 - 2026-10-08 · **S4 smoke suite + CI shipped** (9f88b4c, 7b0bc5a): `tests/smoke/` (run.sh, lib.sh, 01-health, 02-tls, 03-owner, 04-webhook-routing, 05-execution-on-worker, 06-metrics, fixtures) → `make smoke [ONLY=04,05]`, ~30 s on the VM, idempotent; `ci.yml` smoke job (`tests/ci/up.sh`: init + up + doctor on the runner with quota-free registry mirrors, smoke ×2, `tests/ci/collect-logs.sh` artifact on failure) — first run green: lint 32 s, smoke 171 s on ubuntu-24.04 with ports 80/443 and Docker 28 / Compose 2.38 (run 37724038543); `weekly-latest-n8n.yml` (manual run: green — resolved n8n 2.42.4, pinned, smoke 6/6, no issue opened (run 37724372755)); `docs/compat.md`. **Security fix:** n8n-main's Prometheus endpoint was public at `https://DOMAIN/metrics` through Caddy's catch-all → now 404 (smoke 06 asserts it). TC-003…006 automated.
 - 2026-10-07 · **S3 operability + RHEL path shipped**: `make doctor` (TC-026 with `DOCTOR_SIMULATE`), `make scale-workers N=` (TC-007: 2→4→1→2 verified, `N=1` parks the static worker-2 pair behind a Compose profile), every n8n container now `read_only` with a measured tmpfs set (/tmp, ~/.cache, ~/.npm — `docker diff` after a real workload), `docs/operations/rhel-hosts.md`, weekly `bootstrap-matrix.yml`. Hand-authored in the main loop (no agent fan-out) within one session window. `bootstrap-matrix` on GitHub Actions: 6/6 PASS (run 37643339809) after adding pull retries.
 - 2026-10-07 · **S2 compose core shipped**: `compose/` (docker-compose.yml, compose.dev.yml, versions.env, Caddyfile + snippets, .env.example, scripts: lib/init/render/pin/preflight/status/dev-ca/trust-ca/lint, Makefile, README), `scripts/bootstrap-host.sh`, `tests/bootstrap/test-in-container.sh`, root `make bootstrap-test`. Verified on the VM: `make init DOMAIN=n8n.localtest.me HTTP_PORT=8080 HTTPS_PORT=8443` → `make up` → 10/10 healthy in 2m28s; 308 redirect keeps the port; every path routes to the right upstream (`X-Kit-Upstream`); owner setup + API key + workflow publish via REST/public API; 3 webhook POSTs → 200 via the pool, executions success on workers, Code node ran in the runners sidecar; dev CA trusted by curl via `make trust-ca`. TC-001, TC-003, TC-004, TC-005 (manual) pass. Bootstrap matrix (`make bootstrap-test`): 6/6 PASS — Ubuntu 24.04/26.04, Debian 13, Rocky 9/10, Alma 9 → docker-ce 29.8.2 + compose 5.6.0, second run idempotent ≤ 1 s. Method: fact sweep (6 agents) → contract → files written by agents and by hand; the two agent authoring runs died on the 5-hour session limit, the main loop finished the make-ops group.
@@ -51,13 +52,13 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 _(nothing — everything is committed and pushed. The dev stack on the build VM is DOWN with its volumes and `.env` kept; `make -C compose up` restores it in ~2 min.)_
 
 ### ⏭️ Next up (ordered — details per session in `n8n-kit-BUILD-PLAN.md` §15; S0–S3 are done)
-1. ~~**S4**~~ done 2026-10-08 (see Done). Original S4 notes kept below for reference:
+1. ~~**S4**~~ ~~**S5**~~ done 2026-10-08 (see Done). **S6 (≈ 4 h) — monitoring profile** is next (item 3 below). Original S4 notes kept for reference:
    - `tests/smoke/run.sh` + `lib.sh` (`req`, `wait_for`, `assert_eq`; state in `compose/.smoke/`, gitignored) and `01-health.sh` … `06-metrics.sh`; `make -C compose smoke [ONLY=04,05]`.
    - Recipe already proven by hand on 2026-10-07 (S2 entry in Done): `POST /rest/owner/setup` → `POST /rest/login` (cookie) → `GET /rest/api-keys/scopes` → `POST /rest/api-keys {label, scopes, expiresAt:null}` → `data.rawApiKey` → `POST /api/v1/workflows` (Webhook + Code node) → `POST /api/v1/workflows/{id}/activate` → `POST /webhook/<path>` must answer 200 with `X-Kit-Upstream: n8n-webhook-N:5678` → `GET /api/v1/executions?workflowId=` status success. The Code node must stay pure JS (`process` is blocked in the runner sandbox).
    - `ci.yml` smoke job on ubuntu-24.04: `/etc/hosts` entry for `n8n.localtest.me` + `kuma.`, `make -C compose init DOMAIN=n8n.localtest.me CI=1`, `make up`, `make smoke`, logs artifact on failure. Docker Hub pull quota: `docker login` (repo secret) or switch `N8N_IMAGE`/`RUNNERS_IMAGE` to `ghcr.io/n8n-io/*` in CI.
    - `weekly-latest-n8n.yml` (latest stable from the GitHub Releases API → `make pin N8N_VERSION=` → smoke → `gh issue create --label n8n-upstream` on failure); `docs/compat.md` first row (0.1.0-dev × n8n 2.42.4 × 2026-10-07).
    - Watch for: the Postgres `NaN` error (§5) — does the smoke reproduce it?
-2. **S5 (≈ 4 h) — backups**: `compose/backup/` sidecar (`FROM postgres:18-alpine` + age + rclone + supercronic), `backup.sh` / `restore.sh` / `restore-test.sh`, `make backup-now / restore / restore-test`, smoke 07/08, R2 bucket + token (and S3 if the AWS account exists). TC-011…013. Needs from An: Cloudflare R2 bucket + API token, Telegram bot token + chat id.
+2. ~~**S5 — backups**~~ done 2026-10-08. Still open from it: the off-host targets are untested until An provides the R2 bucket/token (and S3 if wanted) — set `BACKUP_REMOTES="r2:n8n-backups/prod /backups/local"` + `RCLONE_CONFIG_R2_*`, then `make backup-now && make backups`. Original S5 notes: `compose/backup/` sidecar (`FROM postgres:18-alpine` + age + rclone + supercronic), `backup.sh` / `restore.sh` / `restore-test.sh`, `make backup-now / restore / restore-test`, smoke 07/08, R2 bucket + token (and S3 if the AWS account exists). TC-011…013. Needs from An: Cloudflare R2 bucket + API token, Telegram bot token + chat id.
 3. **S6 (≈ 4 h) — monitoring profile**: Prometheus 3.5, Grafana 13 at `/grafana/`, Loki 3.7 + Alloy, node-exporter, cAdvisor, Uptime Kuma (`KUMA_ENABLED=on`), 3 dashboards, alert rules → Telegram. TC-017/018. On the build VM stop heavy neighbour containers first (RAM).
 4. **S7 (≈ 3 h)** `make upgrade` / `make rollback` (TC-014/015). **S8 (≈ 3 h)** `make loadtest` + `make chaos` (TC-008…010). **S9 (≈ 4 h)** MkDocs site + Pages + timed fresh-VPS quickstart, recruit 3 testers (TC-025). **S10 (≈ 2 h)** M0 gate: CHANGELOG 0.1.0, `docs/compat.md`, tag `v0.1.0`, GitHub Release.
 5. Later milestones: M1 rest (5 templates, TC-021/022) → M2 Terraform AWS (TC-023/024) → M2.5 Helm chart → M3 launch posts → M4 business.
@@ -136,11 +137,16 @@ Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — de
 - Docker Hub anonymous pull quota (100/h per IP) bites shared hosts: `pin.sh` has a Hub-API fallback; CI pulls from ghcr.io / public.ecr.aws mirrors with the same digests (`tests/ci/up.sh`). Users on shared IPs may need `docker login`.
 - `make lint` runs `caddy validate` 12× in a container (~15 s); fine locally, keep an eye on CI time.
 - `make doctor` cannot check certificate expiry in `TLS_MODE=internal` (12 h leaf certs are normal there) — it reports the mode instead; ACME modes are checked.
+- Off-host backup targets (R2, S3) are configured but untested: no credentials yet (HANDOFF §7). Local and external-disk targets are tested.
+- `make restore BACKUP=latest` picks the newest bundle of ANY kind — right after a restore that is the `pre-restore` safety copy (i.e. it would undo the restore). Documented; `make backups` to choose.
+- Backup image is ~600 MB (it is the Postgres image + tools). Acceptable; a slimmer base would break the pg_dump = server version guarantee.
+- The dev VM's original recovery key was lost during S2 (only the host key survived); regenerated on 2026-10-08 and detached. Older dev bundles open with the host key only — dev data, no impact.
 - n8n allows 5 `/rest/login` attempts per window per IP (429 + Retry-After, not configurable); scripts must reuse sessions/API keys (the smoke suite does).
 - Build-process lesson: a 20-agent workflow cannot survive the 5-hour session limit; author with ≤ 6 agents per run or by hand, and keep each run resumable.
 
 ## 6. Weekly notes (3 lines max per week)
 - **Week of 2026-10-06:** Plan done. Decide start date relative to SoBan progress; the kit's Compose base can be built alongside SoBan's Phase A infra.
+- **2026-10-08:** S5 shipped: encrypted multi-target backups, restore incl. disaster recovery, weekly restore test, CI restore round trip. Found the n8n restart crash (tmpfs). Next: S6 monitoring.
 - **2026-10-08:** S4 shipped: smoke suite + CI smoke job green on GitHub; found and closed a public `/metrics` exposure. Next: S5 backups (needs R2 + Telegram from An).
 - **2026-10-07:** S0–S3 shipped in one day (repo public, compose core running, doctor/scale/read-only, bootstrap matrix green on GitHub). Lesson: hand-author in the main loop; big agent fan-outs die on the 5-hour session limit. Next: S4 smoke suite + CI.
 
