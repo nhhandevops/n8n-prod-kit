@@ -69,6 +69,8 @@ one, edit it in Grafana, *Export → Save to file*, and commit the JSON.
 | DiskHigh | warning | any real filesystem of the host more than 80 % full (one alert per mount point) | 10 m |
 | CertExpiring | warning | the certificate Caddy serves expires within 14 days (ACME modes) | 1 h |
 | CertCheckFailing | warning | the hourly certificate check failed three times in a row (CertExpiring would be blind) | 2 h 30 m |
+| ContainerMemoryPressure | warning | a kit container spends more than 10 % of its time waiting for memory (Linux PSI: it presses against its MEM_LIMIT_* and reclaims or swaps) | 10 m |
+| ContainerOOMKilled | warning | the kernel OOM-killed a process of a kit container | — |
 | ContainerRestarting | warning | a container of this kit restarted more than twice in 15 min | — |
 | MonitoringTargetDown | warning | Caddy metrics, node-exporter, cAdvisor, Loki, Alloy or Grafana cannot be scraped | 5 m |
 
@@ -157,4 +159,4 @@ laid out so that nothing sensitive is on those networks (smoke 09 checks it from
 | alerts show in Grafana but no Telegram message | `ALERT_TELEGRAM_*` empty or wrong (`make doctor`); Grafana → Alerting → Contact points → *Test* |
 | BackupMissing | `make logs SERVICE=backup SINCE=48h`; `make backup-now`. It starts counting when backups were switched on, so a fresh install has 26 h before the first nightly backup is due |
 | `make doctor`: Uptime Kuma has no admin account yet | `make kuma-setup` (uses `KUMA_ADMIN_USER` / `KUMA_ADMIN_PASSWORD` from `.env`) |
-| a container sits near 100 % on "Memory per container (% of its limit)" | raise its `MEM_LIMIT_*` in `.env`, then `make up` |
+| ContainerMemoryPressure, or a container near 100 % on "Memory per container (% of its limit)" | raise its `MEM_LIMIT_*` in `.env`, then `make up` — but first look for what grows: Grafana once sat at its limit because it gzipped every response itself (fixed: Caddy compresses, `GOMEMLIMIT=400MiB` in Go units, unused plugins off) |

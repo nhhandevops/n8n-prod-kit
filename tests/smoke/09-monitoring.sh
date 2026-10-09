@@ -51,6 +51,18 @@ check "/grafana redirects to /grafana/ (HTTP ${REQ_STATUS})" status_is 308
 req GET /grafana/metrics
 check "Grafana's /metrics is NOT public (HTTP ${REQ_STATUS})" status_is 404
 
+# Grafana's memory fixes (2026-10-09): Caddy compresses Grafana's responses (zstd) — gzip here would mean Grafana does it
+# itself again, which ballooned its heap to ~1 GiB; and only the two used data-source plugins run as processes (a Grafana
+# bump that bundles another backend plugin shows up here instead of silently costing memory).
+req GET /grafana/login
+asset="$(grep -oE 'public/build/[A-Za-z0-9._/-]+\.(js|css)' "${STATE_DIR}/last.body" | head -1 || true)"
+req GET "/grafana/${asset}" -H 'Accept-Encoding: zstd, gzip'
+check "Grafana assets are compressed by Caddy, not by Grafana (${asset:-no asset}: $(header_of content-encoding))" \
+  test "$(header_of content-encoding)" = "zstd"
+plugins="$(compose top grafana 2>/dev/null | grep -oE 'gpx_[A-Za-z0-9_-]+' | sort -u | tr '\n' ' ' || true)"
+check "Grafana runs only the prometheus + loki plugin processes (${plugins:-none})" \
+  test "$(wc -w <<<"${plugins}")" -eq 2
+
 for uid in prometheus loki; do
   req GET "/grafana/api/datasources/uid/${uid}/health" -u "${gf_auth}"
   check "data source ${uid} is healthy (HTTP ${REQ_STATUS}: $(jq -r '.message // .status // empty' <<<"$(req_body)" | head -c 80))" \
@@ -62,7 +74,7 @@ for uid in kit-n8n-overview kit-host kit-backups; do
 done
 req GET /grafana/api/v1/provisioning/alert-rules -u "${gf_auth}"
 rule_count="$(jq -r 'length' <<<"$(req_body)" 2>/dev/null || echo 0)"
-check "alert rules provisioned (${rule_count})" test "${rule_count}" -ge 17
+check "alert rules provisioned (${rule_count})" test "${rule_count}" -ge 19
 if grep -q 'type: telegram' "${KIT_DIR}/monitoring/grafana/provisioning/alerting/notifications.yml" 2>/dev/null; then
   # the contact point references $ALERT_TELEGRAM_BOT_TOKEN: prove Grafana expanded it (decrypted export, admin only)
   req GET '/grafana/api/v1/provisioning/contact-points/export?decrypt=true&format=json' -u "${gf_auth}"
@@ -75,7 +87,7 @@ if grep -q 'type: telegram' "${KIT_DIR}/monitoring/grafana/provisioning/alerting
 fi
 rules_ok() {
   req GET /grafana/api/prometheus/grafana/api/v1/rules -u "${gf_auth}"
-  [[ "${REQ_STATUS}" == 200 ]] && jq -e '[.data.groups[].rules[]] | length >= 17 and all(.health != "error")' <<<"$(req_body)" >/dev/null
+  [[ "${REQ_STATUS}" == 200 ]] && jq -e '[.data.groups[].rules[]] | length >= 19 and all(.health != "error")' <<<"$(req_body)" >/dev/null
 }
 check "every alert rule evaluates without error (<= 90 s)" wait_for 90 "rule health" rules_ok
 if ! rules_ok; then

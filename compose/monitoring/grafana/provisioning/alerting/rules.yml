@@ -539,6 +539,83 @@ groups:
                 - evaluator:
                     type: lt
                     params: [1]
+      - uid: kit-container-memory-pressure
+        title: ContainerMemoryPressure
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            {{ $labels.container_label_com_docker_compose_service }} is stalled waiting for memory {{ with $values.A }}{{
+            humanizePercentage .Value }}{{ end }} of the time
+          description: >-
+            The container presses against its memory limit and reclaims or swaps (Linux PSI). Grafana did this at its
+            limit before the 2026-10-09 fix. make status; raise its MEM_LIMIT_* in .env or find what grows (Host
+            dashboard)
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                max by (container_label_com_docker_compose_service)
+                (rate(container_pressure_memory_waiting_seconds_total{container_label_com_docker_compose_project!=""}[5m]) and
+                on(container_label_com_docker_compose_project) count by (container_label_com_docker_compose_project)
+                (container_health_state{container_label_com_docker_compose_service="n8n-main"}))
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.1]
+      - uid: kit-container-oom-killed
+        title: ContainerOOMKilled
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.container_label_com_docker_compose_service }} was OOM-killed'
+          description: >-
+            The kernel killed a process of this container at its memory limit; Docker restarts it. Raise its MEM_LIMIT_*
+            in .env or find what grows: make logs SERVICE=NAME SINCE=1h
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                max by (container_label_com_docker_compose_service)
+                (increase(container_oom_events_total{container_label_com_docker_compose_project!=""}[15m]) and
+                on(container_label_com_docker_compose_project) count by (container_label_com_docker_compose_project)
+                (container_health_state{container_label_com_docker_compose_service="n8n-main"}))
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
       - uid: kit-container-restarting
         title: ContainerRestarting
         condition: C

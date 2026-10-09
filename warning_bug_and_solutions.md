@@ -307,3 +307,17 @@ re-checked every rule, panel and isolation claim against the live stack. Every f
 ### Tooling (this session)
 - The heredoc backslash collapse (memory note) struck twice more — once silently (`printf` formats with literal newlines in `size_mb`), once caught by an assertion. Patches are now written as files.
 - The VM sync helper diffed only UNSTAGED changes, so a file whose executable bit had been staged (`git update-index --chmod=+x`) was skipped; it now diffs against HEAD and cleans untracked files under compose/ tests/ docs/ .github/ (ignored files such as .env are never touched).
+
+### Grafana at its memory limit: its own gzip, not a leak (measured in 4 throwaway Grafanas)
+- **Symptom:** live Grafana pinned at 767.6 of 768 MiB, 65-98 % CPU, swapping 315 MiB; its own scrape timed out; rule evaluations hit "context deadline exceeded" (retries succeeded).
+- **Root cause:** Grafana 13 gzips every response itself (`enable_gzip = true`), allocating ~5 MiB of pgzip buffers per response — even for a 101-byte /api/health. Loading the UI (449 JS chunks) and refreshing dashboards ballooned the Go heap to 0.8-1.1 GiB (OOM-killed twice at 1 GiB). After a forced GC only 76 MiB stayed live: garbage, not a leak.
+- **Fix:** `GF_SERVER_ENABLE_GZIP=false` (Caddy's `encode zstd gzip` compresses instead — verified zstd on the wire), `GOMEMLIMIT=400MiB`, `GF_PLUGINS_DISABLE_PLUGINS` for the 11 bundled data sources the kit does not use (13 plugin processes → 2). Live after the fix: 244-263 MiB, 0 limit hits. Smoke 09 asserts zstd on a Grafana asset and exactly 2 plugin processes. New alerts ContainerMemoryPressure (Linux PSI) and ContainerOOMKilled, because no rule had noticed the thrash.
+- **Gotcha:** `GOMEMLIMIT` uses Go units (`400MiB`). Docker's `400m` (the style of the neighbouring MEM_LIMIT_* lines) makes Grafana exit with "malformed GOMEMLIMIT" — and Grafana is the only alert evaluator. Hence hard-coded in compose, no .env knob.
+
+### `make up` kept OLD alert rules running after an update
+- **Root cause:** Grafana reads alert rules, contact points and data sources only at start; compose recreates Grafana only when its own config changes, not when a mounted provisioning file does (17 of 19 rules after a pull).
+- **Fix:** `make up` ends with `scripts/grafana-reload.sh` (Grafana's admin provisioning-reload API, credentials on stdin).
+
+### Smoke checks that could not fail (or failed for the wrong reason)
+- "No API key in Loki" matched its own previous query (Caddy logs the query URL, which contained the search term). A `| json` field filter was the next idea — and a synthetic Loki line with a real header proved it would never match: LogQL's json parser skips array values, and Caddy logs headers as arrays. Final check: the literal JSON key `"X-N8n-Api-Key":[` (a logged URL carries it percent-encoded), proven against the synthetic line.
+- "Loki holds n8n-main's logs" looked at 15 minutes; an idle n8n-main logs nothing for longer. Now any n8n process over the last hour.

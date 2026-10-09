@@ -757,18 +757,19 @@ services:
       # Grafana is served from the n8n origin (/grafana/): a plugin installed from the catalogue would run its scripts there,
       # next to n8n's session cookie — no catalogue installs, no external snapshots, no public dashboards
       GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      GF_PUBLIC_DASHBOARDS_ENABLED: "false"
       # Memory (measured 2026-10-09 in throwaway Grafanas; live, Grafana sat at its 768 MiB limit and swapped): Grafana
       # gzips every response itself with ~5 MiB of buffers each, which ballooned the heap to 0.8-1.1 GiB while dashboards
-      # loaded (OOM-killed at 1 GiB). Caddy's `encode zstd gzip` compresses instead. GOMEMLIMIT keeps the Go GC target
-      # below the container limit (about half of MEM_LIMIT_GRAFANA), and the 11 bundled data-source plugins the kit does
-      # not use stop running as separate processes. All three together: peak 400 MiB under the worst load at 768m.
+      # loaded (OOM-killed at 1 GiB). Caddy's `encode zstd gzip` compresses instead (smoke 09 checks zstd). GOMEMLIMIT
+      # keeps the Go GC target below the container limit — about half of MEM_LIMIT_GRAFANA; Go units (MiB), never Docker's
+      # "m": "400m" makes Grafana exit with "malformed GOMEMLIMIT", hence no .env knob. The 11 bundled data-source plugins
+      # the kit does not use stop running as separate processes. All three together: peak 400 MiB under the worst load.
       GF_SERVER_ENABLE_GZIP: "false"
-      GOMEMLIMIT: ${GRAFANA_GOMEMLIMIT:-400MiB}
+      GOMEMLIMIT: "400MiB"
       # (a trailing backslash inside double quotes joins the lines without a space)
       GF_PLUGINS_DISABLE_PLUGINS: "elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,\
         jaeger,mssql,mysql,opentsdb,stackdriver,tempo,zipkin"
-      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
-      GF_PUBLIC_DASHBOARDS_ENABLED: "false"
       # encrypts the secrets Grafana stores (the Telegram token of the contact point). make init generates one for new
       # installs; the fallback is Grafana's built-in default, so an older .env keeps decrypting what it already stored
       GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:-SW2YcwTIb9zpOOhoPsMm}

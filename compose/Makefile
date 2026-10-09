@@ -76,6 +76,7 @@ up: ## preflight → render → pull → build backup image → (dev: export CA)
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
 	@$(COMPOSE) up -d --wait --wait-timeout 480
 	@$(KIT_DIR)/scripts/kuma-setup.sh
+	@$(KIT_DIR)/scripts/grafana-reload.sh
 	@$(KIT_DIR)/scripts/status.sh
 
 down: ## Stop and remove the containers (volumes and .env are kept)
