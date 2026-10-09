@@ -321,3 +321,45 @@ re-checked every rule, panel and isolation claim against the live stack. Every f
 ### Smoke checks that could not fail (or failed for the wrong reason)
 - "No API key in Loki" matched its own previous query (Caddy logs the query URL, which contained the search term). A `| json` field filter was the next idea — and a synthetic Loki line with a real header proved it would never match: LogQL's json parser skips array values, and Caddy logs headers as arrays. Final check: the literal JSON key `"X-N8n-Api-Key":[` (a logged URL carries it percent-encoded), proven against the synthetic line.
 - "Loki holds n8n-main's logs" looked at 15 minutes; an idle n8n-main logs nothing for longer. Now any n8n process over the last hour.
+
+## 2026-10-09 · S7 make upgrade / make rollback: fact sweep (4 agents), build, CI + VM drills, an 8-agent review (41 confirmed findings)
+
+### `make up` applied a new n8n pin by itself — and an older n8n starts silently on a newer database
+- **Symptom:** after `git pull` (or `make pin N8N_VERSION=x`), `make up` recreated every n8n container on the new image: no backup, every process type migrating at once. The other way round (`git checkout` of an older versions.env) an old n8n started on a schema migrated by a newer one, without a word.
+- **Root cause:** nothing compared versions.env with what runs. n8n itself does not either: TypeORM only runs migrations the code knows and ignores the rest (MigrationExecutor, no newer-schema check; verified at 2.41.7 and 2.42.4); every process type (main, webhook, worker) migrates on start.
+- **Verify:** tests/ci/upgrade-drill.sh step 2 (`make up` with a newer pin must refuse); `make doctor` version-lock section.
+- **Fix:** version guard (lib.sh `version_guard`, scripts/version-guard.sh) in `make up` / `restart` (n8n services, pending check) / `scale-workers` / `restore`: running = n8n-main's image label, or n8n's own `instance_version_history` when the stack is down; refuses (fails closed when the database cannot be read). `make upgrade` is the only way to move the pin forward on a running install.
+
+### A version on the make command line leaked into every Compose call
+- **Symptom:** `make up N8N_VERSION=9.9.9` started `n8n:9.9.9@<old digest>` (the tag lies, the digest wins); the backup sidecar wrote 9.9.9 into manifests.
+- **Root cause:** GNU make exports command-line variables to recipes (and re-imports them from MAKEFLAGS in sub-makes); Compose's interpolation prefers the shell over --env-file.
+- **Fix:** `unexport N8N_VERSION N8N_DIGEST RUNNERS_DIGEST`; only `pin` and `upgrade` receive N8N_VERSION, explicitly and only when it came from the command line; upgrade.sh / rollback.sh unset it and MAKEFLAGS.
+
+### A webhook sent to a starting n8n got HTTP 200 and never ran
+- **Root cause:** n8n's HTTP server listens before it is connected and migrated; until then `/healthz` answers 200 and every other path answers 200 "n8n is starting up" (abstract-server). Caddy's active health check used `/healthz`.
+- **Fix:** `health_uri /healthz/readiness` for the webhook pool and n8n-main. Smoke 04's round robin now waits up to 30 s for every pool member (a member is admitted ≤ 10 s after it is ready).
+
+### Fresh `make up` failed on a busy host: n8n-main "unhealthy" while it was still starting
+- **Symptom:** on the build VM at load 12, a new install (2.41.7, 275 migrations) took 6.5 min until n8n-main was ready (3m51s until Node listened, 2m41s of migrations); `compose up --wait` gave up at ~170 s (start_period 120 s + 5 × 10 s). At load 24 the first Code-node execution after a restart took > 60 s (the runner sidecar starts after its worker is healthy, then launches its JS runner on the first task).
+- **Fix:** start_period 600 s (main) / 300 s (webhooks, workers) with `start_interval: 5s` (free when start is fast: the first passing check makes it healthy); `make up --wait-timeout 900`, restore/scale 600; smoke 04's first-execution budget 180 s. make upgrade does not depend on Compose's health verdict: it watches n8n-main itself (`UPGRADE_TIMEOUT`).
+
+### pin.sh could not resolve ghcr.io images through its registry fallback
+- **Root cause:** ghcr.io answers HEAD `/v2/` with 405 and no `WWW-Authenticate`; registry-1.docker.io answers 401 with the challenge, so it went unnoticed.
+- **Fix:** GET for the challenge. Also: docker.n8n.io is a proxy in front of Docker Hub (answered 429 from a shared IP), not a redirect.
+
+### Review: 42 findings, 41 confirmed (6 reviewers + 2 verifiers on 09ac072) — the ones that mattered
+- **A closed SSH session left n8n stopped:** writes to a hung-up terminal fail with EIO; under `set -e` the first `warn` in the exit handler ended it before it started the old version again (proven locally with stderr on /dev/full). Fix: log helpers `|| true`; SIGHUP ignored for the whole run; output through `tee` (ignores INT/HUP, `-p`) into compose/.upgrade/<time>-*.log; exit handlers `set +e`. VM: SIGHUP during the stop → the upgrade finished.
+- **An aborted new attempt deleted the last rollback point:** the done state went to history before any step that can fail. Fix: parked in .upgrade/previous.env, given back on any abort before the version switch. Drill: an upgrade to a version no registry has keeps `make rollback` working.
+- **make rollback could strand the stack:** it stopped n8n before fetching the bundle, fetched from one recorded remote only (FROM was unset), and a failed fetch left PHASE=rolling-back with every command refusing. Fix: restore.sh RESTORE_STAGE=fetch|apply — fetched + verified while n8n serves; FROM= honoured; fallback to every target; `make rollback ABORT=1`; the decision is recorded only with PHASE=rolling-back (a stale ROLLBACK_MODE once let a later run restore without any confirm).
+- **ROLLBACK_CONFIRM only at PHASE=done** although a failed verify leaves the new version serving: now whenever data would be lost (executions by createdAt, workflow/credential changes, count differences against the bundle).
+- **The swap oracle used the migration mark** (useless for a forced restore): now the database oid (the rename swap gives `n8n` a new oid). The queue is emptied on every path before the switch (leftover jobs name execution ids the restored database hands out again — a worker would run the wrong execution).
+- **Bundles carried versions.env's version, not the database's:** a pre-restore safety bundle of a 2.42 database could be labelled 2.41 and later pass the exit-5 check. Fix: backup.sh reads n8n's `instance_version_history`; restore checks the bundle against the version that will run on it (RESTORE_RUN_VERSION).
+- **Autovacuum counted as an n8n session** (stop_n8n's zero-session check): `backend_type = 'client backend'`.
+- **`DB_POSTGRESDB_STATEMENT_TIMEOUT` was documented but never reached n8n** (no env_file; .env is interpolation only): now in x-n8n-env, the worker template and .env.example.
+- Also: the guard failed open when postgres could not be started; a state survived `make clean`; `--no-recreate` before the confirm (postgres/valkey were recreated under live traffic); pulls only missing images (rollback works offline); the pulled images' version labels are checked before the downtime; non-numeric timeouts made bash skip arithmetic silently; RESUME did not start postgres/valkey or redo an interrupted version switch; monitoring health could fail an n8n upgrade (now core-only; smoke 09 only warns).
+- **Refuted (1):** "UPGRADE_TIMEOUT outlasts the CI job timeout" — measured timings leave room; the job sets UPGRADE_TIMEOUT=900 anyway.
+
+### Test tooling (this session)
+- The drill's `comm` failed on the VM ("not in sorted order"): n8n's ids mix case and en_US.UTF-8 collation differs between sort and comm → `LC_ALL=C` for both (CI's C.UTF-8 never showed it).
+- `docker compose config --images SERVICE` also prints the service's dependencies' images (Valkey came first): the label check matches images by their pinned digest.
+- The test checkout's sync reset its locally pinned versions.env (2.41.7) to the repository's 2.42.4 — and `make up` refused: the version guard caught exactly the case it exists for.
