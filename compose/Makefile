@@ -74,7 +74,7 @@ up: ## preflight → render → pull → build backup image → (dev: export CA)
 	@$(call with_retry,$(COMPOSE) build --quiet backup,backup image build)
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
-	@$(COMPOSE) up -d --wait --wait-timeout 240
+	@$(COMPOSE) up -d --wait --wait-timeout 480
 	@$(KIT_DIR)/scripts/status.sh
 
 down: ## Stop and remove the containers (volumes and .env are kept)

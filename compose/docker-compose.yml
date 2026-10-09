@@ -768,12 +768,14 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 40s
+      # the FIRST start runs ~700 database migrations and provisions the alert rules before the HTTP port opens: ~40 s on a
+      # CI runner, ~10 min on the 4-vCPU build VM while it was saturated (2026-10-09); later starts take seconds
+      start_period: 300s
     logging: *logging
     deploy:
       resources:
         limits:
-          memory: ${MEM_LIMIT_GRAFANA:-512m}
+          memory: ${MEM_LIMIT_GRAFANA:-768m}
 
   loki:
     image: ${LOKI_IMAGE}:${LOKI_VERSION}@${LOKI_DIGEST:?run make pin}
@@ -843,7 +845,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${MEM_LIMIT_ALLOY:-256m}
+          memory: ${MEM_LIMIT_ALLOY:-384m}
 
   node-exporter:
     image: ${NODE_EXPORTER_IMAGE}:${NODE_EXPORTER_VERSION}@${NODE_EXPORTER_DIGEST:?run make pin}
@@ -897,7 +899,9 @@ services:
       # only the two compose labels become metric labels (all labels would multiply the series)
       - --store_container_labels=false
       - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
-      - --disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp
+      # disk + diskIO OFF: per-container filesystem usage walks every container's layers each cycle — on the build VM (40
+      # containers) that alone was 60 % CPU and pushed the load to 44; off = 0.5 % CPU, 25 MiB (2026-10-09). No panel uses them.
+      - --disable_metrics=advtcp,cpu_topology,cpuset,disk,diskIO,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
