@@ -87,7 +87,9 @@ n8n_ver="$(image_version_of n8n-main)"; runners_ver="$(image_version_of n8n-work
 n8n_dig="$(image_digest_of n8n-main)"; runners_dig="$(image_digest_of n8n-worker-1-runners)"
 pinned="$(env_get N8N_VERSION versions.env)"
 pinned_dig="$(env_get N8N_DIGEST versions.env)"; pinned_runners_dig="$(env_get RUNNERS_DIGEST versions.env)"
-if [[ -z "${n8n_ver}" ]]; then
+if upgrade_pending; then
+  info "a make upgrade / make rollback is unfinished — the versions are whatever it left; see the upgrade section below"
+elif [[ -z "${n8n_ver}" ]]; then
   flag_warn "n8n-main has no container — version lock checked from versions.env only (N8N_VERSION=${pinned})"
 elif [[ "${n8n_ver}" == "${runners_ver}" && "${n8n_ver}" == "${pinned}" && "${n8n_dig}" == "${pinned_dig}" &&
   "${runners_dig}" == "${pinned_runners_dig}" ]]; then
@@ -109,14 +111,25 @@ up_desc="$(env_get FROM_VERSION "${UPGRADE_STATE}" 2>/dev/null) -> $(env_get TO_
 case "${up_phase}" in
   '') ok "no make upgrade on record" ;;
   done)
-    ok "last upgrade ${up_desc} finished $(env_get FINISHED_AT "${UPGRADE_STATE}") — make rollback can still undo it (pre-upgrade backup $(env_get BACKUP_NAME "${UPGRADE_STATE}"); data written since would be lost)"
+    # what a rollback would do now: the same migration-mark comparison make rollback makes
+    up_mark="$(db_migration_mark)" || up_mark=''
+    if [[ -n "${up_mark}" && "${up_mark}" == "$(env_get MIGRATIONS_BEFORE "${UPGRADE_STATE}")" ]]; then
+      up_effect="it would switch only the images back — no migration ran, no data would be lost"
+    else
+      up_effect="it would restore the pre-upgrade backup $(env_get BACKUP_NAME "${UPGRADE_STATE}") — data written since would be lost"
+    fi
+    ok "last upgrade ${up_desc} finished $(env_get FINISHED_AT "${UPGRADE_STATE}") — make rollback can still undo it: ${up_effect}"
     ;;
   failed)
     flag_fail "the upgrade ${up_desc} FAILED at step $(env_get FAILED_STEP "${UPGRADE_STATE}") — 'make upgrade RESUME=1' tries again, 'make rollback' goes back to $(env_get FROM_VERSION "${UPGRADE_STATE}")"
     ;;
   *)
     if (exec 9>"${UPGRADE_DIR}/lock" && flock -n 9); then
-      flag_fail "the upgrade/rollback ${up_desc} was interrupted (PHASE=${up_phase}) — 'make upgrade RESUME=1' or 'make rollback' continues; make up refuses until then"
+      if [[ "${up_phase}" =~ ^(rolling-back|restored)$ ]]; then
+        flag_fail "the rollback ${up_desc} was interrupted (PHASE=${up_phase}) — 'make rollback' continues it$( [[ "${up_phase}" == "rolling-back" ]] && printf '%s' ", 'make rollback ABORT=1' gives it up while nothing was restored"); make up refuses until then"
+      else
+        flag_fail "the upgrade ${up_desc} was interrupted (PHASE=${up_phase}) — 'make upgrade RESUME=1' continues it, 'make rollback' undoes it; make up refuses until then"
+      fi
     else
       flag_warn "make upgrade / make rollback ${up_desc} is running right now (PHASE=${up_phase})"
     fi

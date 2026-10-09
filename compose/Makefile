@@ -36,9 +36,12 @@ PASS_VARS := DOMAIN ACME_EMAIL HTTP_PORT HTTPS_PORT FORCE CI YES WORKER_REPLICAS
              RESUME SMOKE_FAIL ALLOW_MAJOR ALLOW_PRERELEASE FORCE_VERSION PIN_ONLY ROLLBACK_MODE ROLLBACK_CONFIRM \
              UPGRADE_TIMEOUT UPGRADE_DRAIN_TIMEOUT UPGRADE_START_TIMEOUT
 $(foreach v,$(PASS_VARS),$(if $(value $(v)),$(eval export $(v))))
-# N8N_VERSION is NOT exported: Compose would take it from the environment for every service (n8n tag out of step with
-# the pinned digest, a wrong version in backup manifests). Only `pin` and `upgrade` receive it, explicitly.
-unexport N8N_VERSION
+# N8N_VERSION / N8N_DIGEST / RUNNERS_DIGEST are NOT exported: Compose would take them from the environment for every
+# service (n8n tag out of step with the pinned digest, or another n8n than versions.env pins). Only `pin` and `upgrade`
+# receive N8N_VERSION, explicitly — and only when it was given on the make command line (a stale shell export of it
+# must not retarget an upgrade or rewrite the pin).
+unexport N8N_VERSION N8N_DIGEST RUNNERS_DIGEST
+N8N_VERSION_ARG = $(if $(filter command line,$(origin N8N_VERSION)),$(N8N_VERSION))
 
 SINCE ?= 10m
 
@@ -62,7 +65,7 @@ init: ## Create .env + secrets for DOMAIN=… [ACME_EMAIL=…] [HTTP_PORT=…] [
 	@$(KIT_DIR)/scripts/init.sh
 
 pin: ## Resolve image digests into versions.env [N8N_VERSION=x] [PIN_ONLY="N8N RUNNERS"] (a running n8n: make upgrade)
-	@N8N_VERSION="$(N8N_VERSION)" $(KIT_DIR)/scripts/pin.sh
+	@N8N_VERSION="$(N8N_VERSION_ARG)" $(KIT_DIR)/scripts/pin.sh
 
 render: ## Generate compose.scale.yml (WORKER_REPLICAS>2) and the Prometheus worker targets
 	@$(KIT_DIR)/scripts/render.sh
@@ -91,7 +94,7 @@ down: ## Stop and remove the containers (volumes and .env are kept)
 
 restart: ## Restart one service: make restart SERVICE=n8n-worker-1
 	@[[ -n "$(SERVICE)" ]] || { echo 'usage: make restart SERVICE=<service>' >&2; exit 2; }
-	@$(KIT_DIR)/scripts/version-guard.sh "make restart"
+	@$(KIT_DIR)/scripts/version-guard.sh "make restart" --pending-only "$(SERVICE)"
 	@$(COMPOSE) restart $(SERVICE)
 
 pull: ## Pull the pinned images (the backup image is built locally, not pulled)
@@ -137,7 +140,7 @@ detach-recovery-key: ## Print the offline recovery key once, then shred it from 
 # --- upgrades ----------------------------------------------------------------------------------------------------------
 
 upgrade: ## Upgrade n8n, backup first: make upgrade [N8N_VERSION=x] [YES=1] [RESUME=1] (no version: apply versions.env)
-	@N8N_VERSION="$(N8N_VERSION)" $(KIT_DIR)/scripts/upgrade.sh
+	@N8N_VERSION="$(N8N_VERSION_ARG)" $(KIT_DIR)/scripts/upgrade.sh
 
 rollback: ## Undo the last make upgrade (restores its backup when a migration ran): make rollback [YES=1]
 	@$(KIT_DIR)/scripts/rollback.sh
@@ -177,3 +180,8 @@ clean: ## DESTROY the stack incl. volumes (database, queue, certs); .env and sec
 	    read -r -p 'Type "destroy" to continue: ' answer </dev/tty; [[ "$$answer" == "destroy" ]] || { echo 'aborted' >&2; exit 1; }; \
 	  fi
 	@$(COMPOSE) down -v --remove-orphans
+	@if [[ -f "$(KIT_DIR)/.upgrade/state.env" ]]; then \
+	    mkdir -p "$(KIT_DIR)/.upgrade/history" && \
+	    mv "$(KIT_DIR)/.upgrade/state.env" "$(KIT_DIR)/.upgrade/history/$$(date -u +%Y%m%dT%H%M%SZ)-discarded.env" && \
+	    echo 'make upgrade/rollback state discarded with the volumes (kept in compose/.upgrade/history/)' >&2; \
+	  fi

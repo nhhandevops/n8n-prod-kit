@@ -7,6 +7,11 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib.sh"
 
 mapfile -t services < <(compose config --services)
+# SMOKE_CORE_ONLY=1 (make upgrade / make rollback): judge n8n and what it needs, not the monitoring profile — a slow
+# Grafana must not fail an n8n upgrade (smoke 09 checks monitoring on its own)
+if [[ "${SMOKE_CORE_ONLY:-}" == "1" ]]; then
+  mapfile -t services < <(printf '%s\n' "${services[@]}" | grep -E '^(n8n-.*|caddy|postgres|valkey|backup)$')
+fi
 
 all_healthy() {
   local svc h

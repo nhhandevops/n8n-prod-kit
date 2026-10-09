@@ -8,11 +8,13 @@
 #   3. make upgrade SMOKE_FAIL=1 — upgrades for real (backup, migrations, new images), its verification creates a
 #      workflow under the new version, then fails on purpose: PHASE=failed, the pre-upgrade bundle exists, make up
 #      refuses, doctor reports it
-#   4. make rollback — a migration ran, so it restores the pre-upgrade backup: the old version runs again, every
+#   4. make rollback — a migration ran, so it restores the pre-upgrade backup: without ROLLBACK_CONFIRM it refuses (data
+#      written under the new version would be lost) and changes nothing; with it, the old version runs again, every
 #      workflow from step 1 is there and the one written under the new version is gone, versions.env pins the old
 #      version again, smoke passes
 #   5. make upgrade N8N_VERSION=<pin> (the explicit path) — succeeds with the data intact; a second make upgrade has
-#      nothing to do and keeps the rollback point; ROLLBACK_MODE=images must refuse (a migration ran); smoke + doctor
+#      nothing to do and an attempt that fails before the version switch (an unknown version) both keep the rollback
+#      point; ROLLBACK_MODE=images must refuse (a migration ran); smoke + doctor
 # SMOKE_KEEP=1 everywhere: the smoke suite's cleanup would otherwise delete the very workflows the drill follows.
 # shellcheck disable=SC2310,SC2311,SC2312
 set -euo pipefail
@@ -70,8 +72,12 @@ grep -q "make upgrade" <<<"${out}" || { printf '%s\n' "${out}" >&2; die "make up
 ok "make up refused (${from_v} runs, ${to_v} pinned)"
 
 step "3. make upgrade with a forced verification failure"
+major=()
+if [[ "${to_v%%.*}" != "${from_v%%.*}" ]]; then
+  major=(ALLOW_MAJOR=1)
+fi
 rc=0
-make -s upgrade YES=1 SMOKE_FAIL=1 || rc=$?
+make -s upgrade YES=1 SMOKE_FAIL=1 "${major[@]}" || rc=$?
 (( rc != 0 )) || die "make upgrade SMOKE_FAIL=1 succeeded"
 [[ "$(state PHASE)" == "failed" && "$(state FAILED_STEP)" == "verify" ]] ||
   die "expected PHASE=failed FAILED_STEP=verify, got $(state PHASE) / $(state FAILED_STEP)"
@@ -79,7 +85,8 @@ make -s upgrade YES=1 SMOKE_FAIL=1 || rc=$?
 bundle="$(state BACKUP_NAME)"
 [[ -f "backups/pre-upgrade/${bundle}.tar.age" ]] || die "pre-upgrade bundle ${bundle} not in compose/backups/pre-upgrade/"
 [[ "$(state MIGRATIONS_BEFORE)" != "$(db_migration_mark)" ]] || die "no migration ran between ${from_v} and ${to_v} — this drill needs one"
-written_after="$(comm -13 <(tr ' ' '\n' <<<"${kept}" | sed '/^$/d' | sort) <(workflow_ids | sort) | tr '\n' ' ')"
+# byte order for both: n8n's ids mix upper and lower case, and sort/comm can disagree under en_US.UTF-8 collation
+written_after="$(LC_ALL=C comm -13 <(tr ' ' '\n' <<<"${kept}" | sed '/^$/d' | LC_ALL=C sort) <(workflow_ids | LC_ALL=C sort) | tr '\n' ' ')"
 [[ -n "${written_after// /}" ]] || die "the verification under ${to_v} created no workflow (smoke 04 with SMOKE_KEEP=1 should)"
 out="$(make -s up 2>&1)" && die "make up ran during a failed upgrade"
 grep -q "unfinished" <<<"${out}" || { printf '%s\n' "${out}" >&2; die "make up failed, but not because of the pending upgrade"; }
@@ -88,7 +95,10 @@ grep -q "FAILED at step verify" <<<"${out}" || { printf '%s\n' "${out}" >&2; die
 ok "upgraded to ${to_v}, verification failed on purpose; backup ${bundle}; written under ${to_v}: ${written_after}"
 
 step "4. make rollback restores the pre-upgrade backup"
-make -s rollback YES=1
+out="$(make -s rollback YES=1 2>&1)" && die "a rollback that discards data ran without ROLLBACK_CONFIRM"
+grep -q "ROLLBACK_CONFIRM=${bundle}" <<<"${out}" || { printf '%s\n' "${out}" >&2; die "the rollback refused for another reason"; }
+[[ "$(state PHASE)" == "failed" && "$(image_version_of n8n-main)" == "${to_v}" ]] || die "the refused rollback changed something"
+make -s rollback YES=1 ROLLBACK_CONFIRM="${bundle}"
 [[ "$(image_version_of n8n-main)" == "${from_v}" ]] || die "n8n-main does not run ${from_v} after the rollback"
 [[ "$(env_get N8N_VERSION versions.env)" == "${from_v}" ]] || die "versions.env does not pin ${from_v} after the rollback"
 [[ ! -f "${UPGRADE_STATE}" ]] || die "the rollback left an active state file"
@@ -99,13 +109,19 @@ make -s smoke ONLY=01,02,04,05,06
 ok "n8n ${from_v} again with the pre-upgrade data; smoke passes"
 
 step "5. make upgrade N8N_VERSION=${to_v}"
-make -s upgrade YES=1 N8N_VERSION="${to_v}"
+make -s upgrade YES=1 N8N_VERSION="${to_v}" "${major[@]}"
 [[ "$(state PHASE)" == "done" ]] || die "PHASE=$(state PHASE) after a successful upgrade"
 [[ "$(image_version_of n8n-main)" == "${to_v}" ]] || die "n8n-main does not run ${to_v}"
 all_present "${kept}" || die "a workflow from before the upgrade is missing"
-out="$(make -s upgrade YES=1 2>&1)"
+out="$(make -s upgrade YES=1 2>&1)" || { printf '%s\n' "${out}" >&2; die "the second make upgrade failed instead of reporting nothing to upgrade"; }
 grep -q "nothing to upgrade" <<<"${out}" || { printf '%s\n' "${out}" >&2; die "a second make upgrade did not say 'nothing to upgrade'"; }
 [[ "$(state PHASE)" == "done" ]] || die "a no-op make upgrade threw away the rollback point"
+# an attempt that fails before the version switch (here: a version no registry has) must give the rollback point back
+unknown="${to_v%%.*}.999.0"
+out="$(make -s upgrade YES=1 N8N_VERSION="${unknown}" 2>&1)" && die "make upgrade N8N_VERSION=${unknown} succeeded"
+[[ "$(state PHASE)" == "done" && "$(state TO_VERSION)" == "${to_v}" ]] ||
+  { printf '%s\n' "${out}" >&2; die "a failed attempt (${unknown}) threw away the rollback point of ${from_v} -> ${to_v}"; }
+[[ "$(image_version_of n8n-main)" == "${to_v}" ]] || die "the failed attempt changed the running version"
 out="$(ROLLBACK_MODE=images make -s rollback YES=1 2>&1)" && die "an image-only rollback over migrations was allowed"
 grep -q "must not run on it" <<<"${out}" || { printf '%s\n' "${out}" >&2; die "image-only rollback refused for the wrong reason"; }
 make -s smoke

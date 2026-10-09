@@ -40,8 +40,12 @@ jobs:
           tests/ci/up.sh
           SMOKE_KEEP=1 make -C compose smoke
 
+      # ALLOW_MAJOR=1: a throw-away runner whose job is to find out what breaks — including n8n's next major
       - name: make upgrade to the latest stable n8n
-        run: make -C compose upgrade N8N_VERSION=${{ steps.n8n.outputs.version }} YES=1
+        env:
+          VERSION: ${{ steps.n8n.outputs.version }}
+          UPGRADE_TIMEOUT: "900"
+        run: make -C compose upgrade N8N_VERSION="${VERSION}" YES=1 ALLOW_MAJOR=1
 
       - name: make smoke
         run: make -C compose smoke

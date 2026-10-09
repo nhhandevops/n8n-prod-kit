@@ -100,6 +100,9 @@ x-n8n-env: &n8n-env
   DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (make init)}
   # 4 connections per process (n8n default 2): 5 processes x 4 = 20, up to 16 workers = 76, well under postgres max_connections=150.
   DB_POSTGRESDB_POOL_SIZE: "4"
+  # n8n's per-statement limit inside each migration batch (ms; n8n's default 300000 = 5 min): a backfill on a very large
+  # database can need more — set it in .env before make upgrade (docs/operations/upgrade-rollback.md)
+  DB_POSTGRESDB_STATEMENT_TIMEOUT: ${DB_POSTGRESDB_STATEMENT_TIMEOUT:-300000}
   # --- queue mode: Bull on Valkey is the job broker between main/webhooks (producers) and workers (consumers) ---
   EXECUTIONS_MODE: queue
   QUEUE_BULL_REDIS_HOST: valkey

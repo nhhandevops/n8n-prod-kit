@@ -65,25 +65,27 @@ fi
 #   warn msg   "[warn] msg"
 #   fail msg   "[FAIL] msg"      (does NOT exit — preflight prints many FAIL lines then exits once)
 #   die  msg [code]   fail + exit (default code 1)
+# A message can never fail the caller: after a closed SSH session stderr is a hung-up terminal (EIO),
+# and under `set -e` a failing printf would end a script in the middle of its cleanup (S7 review).
 # ---------------------------------------------------------------------------------------------
 log() {
-  printf '%s\n' "${*}" >&2
+  printf '%s\n' "${*}" >&2 || true
 }
 
 info() {
-  printf '%s[info]%s %s\n' "${__kit_c_blue}" "${__kit_c_reset}" "${*}" >&2
+  printf '%s[info]%s %s\n' "${__kit_c_blue}" "${__kit_c_reset}" "${*}" >&2 || true
 }
 
 ok() {
-  printf '%s[ OK ]%s %s\n' "${__kit_c_green}" "${__kit_c_reset}" "${*}" >&2
+  printf '%s[ OK ]%s %s\n' "${__kit_c_green}" "${__kit_c_reset}" "${*}" >&2 || true
 }
 
 warn() {
-  printf '%s[warn]%s %s\n' "${__kit_c_yellow}" "${__kit_c_reset}" "${*}" >&2
+  printf '%s[warn]%s %s\n' "${__kit_c_yellow}" "${__kit_c_reset}" "${*}" >&2 || true
 }
 
 fail() {
-  printf '%s[FAIL]%s %s\n' "${__kit_c_red}" "${__kit_c_reset}" "${*}" >&2
+  printf '%s[FAIL]%s %s\n' "${__kit_c_red}" "${__kit_c_reset}" "${*}" >&2 || true
 }
 
 die() {
@@ -504,16 +506,26 @@ kit_psql() {
   compose exec -T postgres psql -X -At -v ON_ERROR_STOP=1 -U n8n -d n8n -c "${1}" 2>/dev/null
 }
 
-# db_n8n_version   the n8n version that last started against the database (n8n's own
-# instance_version_history, one row per version change); empty when unknown (postgres down, older n8n).
+# db_n8n_version   the n8n version that last started against the database (n8n's own instance_version_history: a row
+# whenever the running version changes; newest = highest id, not createdAt, so a clock jump cannot reorder it).
+# Prints nothing when the database has no such record (new database, n8n older than the table). Returns 1 when the
+# database cannot be asked (postgres down, query error) — callers must not take that for "no record".
 db_n8n_version() {
-  kit_psql "select major || '.' || minor || '.' || patch from instance_version_history order by \"createdAt\" desc, id desc limit 1" |
-    head -1 || true
+  local exists out
+  exists="$(kit_psql "select to_regclass('public.instance_version_history') is not null")" || return 1
+  [[ "${exists}" == "t" ]] || return 0
+  out="$(kit_psql "select major || '.' || minor || '.' || patch from instance_version_history order by id desc limit 1")" ||
+    return 1
+  printf '%s\n' "${out%%$'\n'*}"
 }
 
 # db_migration_mark   "<count>:<newest timestamp>" of n8n's migrations table — changes exactly when a migration ran.
+# Returns 1 (and prints nothing) when the database cannot be asked.
 db_migration_mark() {
-  kit_psql 'select count(*) || chr(58) || coalesce(max("timestamp"), 0) from migrations' | head -1 || true
+  local out
+  out="$(kit_psql 'select count(*) || chr(58) || coalesce(max("timestamp"), 0) from migrations')" || return 1
+  [[ -n "${out}" ]] || return 1
+  printf '%s\n' "${out%%$'\n'*}"
 }
 
 # upgrade_phase   PHASE of the upgrade/rollback in .upgrade/state.env; empty when there never was one.
@@ -529,38 +541,67 @@ upgrade_pending() {
   [[ -n "${phase}" && ! "${phase}" =~ ^(done|rolled-back|aborted)$ ]]
 }
 
-# version_guard "WHAT"   die before WHAT would start n8n on the wrong version:
-#   * an upgrade or rollback is unfinished — it owns the stack until `make upgrade RESUME=1` / `make rollback`;
-#   * versions.env pins a NEWER n8n than this installation runs — that is an upgrade, and only `make upgrade`
-#     takes the backup and runs the migrations in order;
-#   * versions.env pins an OLDER n8n than the database was last used with — n8n would start on the newer schema
-#     without a word (it ignores migrations it does not know).
-# "Runs" = the version label of n8n-main's container; without one (after make down) the database's own record.
-# Skipped inside make upgrade / make rollback (KIT_UPGRADE_INTERNAL=1); FORCE_VERSION=1 is the expert override.
+# discard_upgrade_state "why"   move .upgrade/state.env to .upgrade/history/<now>-discarded.env (make clean, a state
+# whose database volume no longer exists).
+discard_upgrade_state() {
+  local stamp
+  [[ -f "${UPGRADE_STATE}" ]] || return 0
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "${UPGRADE_DIR}/history"
+  mv "${UPGRADE_STATE}" "${UPGRADE_DIR}/history/${stamp}-discarded.env"
+  warn "the upgrade/rollback state was discarded (${1}) — it is kept in compose/.upgrade/history/"
+}
+
+# version_guard "WHAT" [--restore | --pending-only]   die before WHAT would start n8n on the wrong version:
+#   * an upgrade or rollback is unfinished — it owns the stack until it is finished or undone (a state whose database
+#     volume no longer exists, e.g. after make clean, is discarded instead);
+#   * .env sets N8N_VERSION / N8N_DIGEST / RUNNERS_DIGEST — Compose would run that instead of versions.env;
+#   * versions.env pins a NEWER n8n than this installation runs — that is an upgrade, and only `make upgrade` takes the
+#     backup and runs the migrations in order;
+#   * versions.env pins an OLDER n8n than the database was last used with — n8n would start on the newer schema without
+#     a word (it ignores migrations it does not know).
+# "Runs" = the version label of n8n-main's container; without one (after make down) the database's own record. When the
+# database cannot be asked, the guard refuses (it does not guess). --restore: the database is about to be replaced, so
+# only the first two checks apply (restore.sh checks the bundle's version itself). --pending-only: the first check only
+# (make restart cannot change an image). Skipped inside make upgrade / make rollback (KIT_UPGRADE_INTERNAL=1);
+# FORCE_VERSION=1 skips the version comparison — never a pending upgrade.
 version_guard() {
-  local what="${1:-this command}" pinned running seen project phase
+  local what="${1:-this command}" mode="${2:-}" pinned running seen project phase key
   [[ "${KIT_UPGRADE_INTERNAL:-}" == "1" ]] && return 0
+  project="$(_kit_project_name)"
   if upgrade_pending; then
     phase="$(upgrade_phase)"
-    die "an upgrade is unfinished (PHASE=${phase}; make doctor shows it) — finish it with 'make upgrade RESUME=1' or undo it with 'make rollback' before ${what}"
+    if ! docker volume inspect "${project}_pg_data" >/dev/null 2>&1; then
+      discard_upgrade_state "PHASE=${phase}, but the database volume ${project}_pg_data no longer exists"
+    elif [[ "${phase}" =~ ^(rolling-back|restored)$ ]]; then
+      die "a make rollback is unfinished (PHASE=${phase}; make doctor shows it) — run 'make rollback' again to finish it before ${what}"
+    else
+      die "an upgrade is unfinished (PHASE=${phase}; make doctor shows it) — 'make upgrade RESUME=1' finishes it, 'make rollback' undoes it; then ${what}"
+    fi
+  fi
+  [[ "${mode}" == "--pending-only" ]] && return 0
+  for key in N8N_VERSION N8N_DIGEST RUNNERS_DIGEST; do
+    if grep -qE "^(export[[:space:]]+)?${key}=" "${KIT_DIR}/.env" 2>/dev/null; then
+      die ".env sets ${key} — Compose would run that instead of versions.env's pin; remove it from .env (versions.env holds the n8n pins)"
+    fi
+  done
+  [[ "${mode}" == "--restore" ]] && return 0
+  if [[ "${FORCE_VERSION:-}" == "1" ]]; then
+    warn "FORCE_VERSION=1: the n8n version check is skipped for ${what}"
+    return 0
   fi
   pinned="$(env_get N8N_VERSION "${KIT_DIR}/versions.env")"
   running="$(image_version_of n8n-main)"
   seen="n8n-main runs"
-  if [[ -z "${running}" ]]; then
-    project="$(_kit_project_name)"
-    if docker volume inspect "${project}_pg_data" >/dev/null 2>&1; then
-      # the stack is down but has a database: ask it which n8n used it last
-      compose up -d --wait postgres >/dev/null 2>&1 || true
-      running="$(db_n8n_version)"
-      seen="the database was last used by"
-    fi
+  if [[ -z "${running}" ]] && docker volume inspect "${project}_pg_data" >/dev/null 2>&1; then
+    # the stack is down but has a database: ask it which n8n used it last — and refuse when it cannot be asked
+    compose up -d --wait --wait-timeout 300 --no-recreate postgres >/dev/null 2>&1 ||
+      die "cannot start postgres to check which n8n version last used the database (make logs SERVICE=postgres) — FORCE_VERSION=1 skips the check"
+    running="$(db_n8n_version)" ||
+      die "cannot read which n8n version last used the database (make logs SERVICE=postgres) — FORCE_VERSION=1 skips the check"
+    seen="the database was last used by"
   fi
   if [[ -z "${running}" || "${running}" == "${pinned}" ]]; then
-    return 0
-  fi
-  if [[ "${FORCE_VERSION:-}" == "1" ]]; then
-    warn "FORCE_VERSION=1: versions.env pins n8n ${pinned}, ${seen} ${running} — continuing anyway"
     return 0
   fi
   if version_ge "${pinned}" "${running}"; then

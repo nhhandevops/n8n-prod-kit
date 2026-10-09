@@ -28,8 +28,10 @@ post_ping() {
   req POST "/webhook/${path}" -H 'Content-Type: application/json' --data "{\"ping\":\"${nonce}\"}"
   status_is 200 && [[ "$(req_body | jq -r '.pong // empty' 2>/dev/null)" == "${nonce}" ]]
 }
-# activation reaches the webhook processes asynchronously — the first calls may 404 for a moment
-check "POST /webhook/${path} echoes the nonce (HTTP ${REQ_STATUS})" wait_for 45 "webhook registered on the pool" post_ping
+# activation reaches the webhook processes asynchronously — the first calls may 404 for a moment; and the first execution
+# after a (re)start waits for the runner sidecar (it starts once its worker is healthy) to launch its JS runner process:
+# over 60 s on the build VM at load ~24 (2026-10-09, after make rollback), hence 180 s
+check "POST /webhook/${path} echoes the nonce (<= 180 s)" wait_for 180 "webhook registered on the pool" post_ping
 state_set EXEC_ID "$(req_body | jq -r '.exec // empty')"
 first_upstream="$(header_of X-Kit-Upstream)"
 check "production webhook served by the pool (${first_upstream})" bash -c '[[ "$1" =~ ^n8n-webhook-[0-9]+:5678$ ]]' _ "${first_upstream}"
@@ -39,14 +41,19 @@ declare -A seen=()
 if [[ -n "${first_upstream}" ]]; then
   seen["${first_upstream}"]=1
 fi
-for _ in $(seq 1 $((pool_size * 3))); do
+# Caddy admits a member only once its /healthz/readiness passed (checked every 10 s), so right after a (re)start one
+# member can be missing for a few seconds: keep pinging for up to 30 s until every member answered once
+round_robin_complete() {
+  local upstream
   if post_ping; then
     upstream="$(header_of X-Kit-Upstream)"
     if [[ -n "${upstream}" ]]; then
       seen["${upstream}"]=1
     fi
   fi
-done
+  (( ${#seen[@]} >= pool_size ))
+}
+wait_for 30 "every webhook process answered" round_robin_complete || true
 check "round robin reached all ${pool_size} webhook processes (${!seen[*]})" test "${#seen[@]}" -eq "${pool_size}"
 
 req POST "/webhook-test/${path}" -H 'Content-Type: application/json' --data '{}'

@@ -105,14 +105,22 @@ stage="manifest"
 workflows="$(dump_rows workflow_entity "${work}/db.dump")"
 credentials="$(dump_rows credentials_entity "${work}/db.dump")"
 server="$(psql -Atc 'show server_version')"
+# The n8n version that wrote this database — n8n's own record (instance_version_history, newest id) — not the pin this
+# container was started with: a backup taken between a git pull and make upgrade, or by make rollback, must carry the
+# version its schema belongs to (restore refuses a bundle newer than the n8n that would run on it). Falls back to the pin.
+n8n_version=''
+if [[ "$(psql -X -Atc "select to_regclass('public.instance_version_history') is not null" 2>/dev/null || true)" == "t" ]]; then
+  n8n_version="$(psql -X -Atc "select major || '.' || minor || '.' || patch from instance_version_history order by id desc limit 1" 2>/dev/null || true)"
+fi
+n8n_version="${n8n_version:-${N8N_VERSION:-}}"
 {
   printf '# n8n Production Kit key bundle — restore needs this key to decrypt the credentials in db.dump\n'
   printf 'N8N_ENCRYPTION_KEY=%s\n' "${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY not set in the backup container}"
   printf 'N8N_VERSION=%s\nDOMAIN=%s\nPOSTGRES_SERVER_VERSION=%s\nCREATED_AT=%s\nBUNDLE_FORMAT=%s\n' \
-    "${N8N_VERSION:-}" "${DOMAIN:-}" "${server}" "${stamp}" "${BUNDLE_FORMAT}"
+    "${n8n_version}" "${DOMAIN:-}" "${server}" "${stamp}" "${BUNDLE_FORMAT}"
 } >"${work}/key-bundle.env"
 chmod 0600 "${work}/key-bundle.env"
-jq -n --arg name "${name}" --arg kind "${kind}" --arg created "${stamp}" --arg n8n "${N8N_VERSION:-}" \
+jq -n --arg name "${name}" --arg kind "${kind}" --arg created "${stamp}" --arg n8n "${n8n_version}" \
   --arg pg "${server}" --arg domain "${DOMAIN:-}" --argjson format "${BUNDLE_FORMAT}" \
   --argjson workflows "${workflows}" --argjson credentials "${credentials}" \
   --arg dsum "$(sha256sum "${work}/db.dump" | cut -d' ' -f1)" --argjson dsize "$(stat -c %s "${work}/db.dump")" \
