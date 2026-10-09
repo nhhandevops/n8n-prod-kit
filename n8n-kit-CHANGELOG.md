@@ -17,7 +17,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 - Target C: Kubernetes Helm chart (`k8s/helm/n8n-kit`) scheduled as milestone M2.5.
 
 ### Changed
-- S7 (2026-10-09): Caddy health-checks n8n with `/healthz/readiness` (a starting n8n answers 200 "starting up" on every path); n8n start windows 600 s / 300 s with `start_interval: 5s`, `make up --wait-timeout 900`; `DB_POSTGRESDB_STATEMENT_TIMEOUT` passed to n8n (.env); backups record the n8n version of the database they dump; `make pin` takes `PIN_FILE` / `PIN_ONLY`; only a command-line `N8N_VERSION` reaches pin/upgrade.
+- S7 (2026-10-09): Caddy health-checks n8n with `/healthz/readiness` (a starting n8n answers 200 "starting up" on every path); n8n start windows 600 s / 300 s with `start_interval: 5s`, `make up --wait-timeout 900`; `DB_POSTGRESDB_STATEMENT_TIMEOUT` passed to n8n (.env); backups record the n8n version of the database they dump; `make pin` takes `PIN_FILE` / `PIN_ONLY`; only a command-line `N8N_VERSION` reaches pin/upgrade; `make up` and `make upgrade` reload a changed Caddyfile into the running Caddy (`scripts/caddy-reload.sh`).
 - Stack (vs PLAN 0.1): n8n pinned to 2.42.3 with 1:1 `n8nio/runners` sidecars · Valkey 9.1 replaces Redis · Grafana Alloy replaces Promtail · Postgres 18 · backups multi-target via rclone (`BACKUP_REMOTES`) with two age recipients · `scripts/bootstrap-host.sh` for apt and dnf hosts · Caddy routes n8n's real production path list to the webhook pool.
 - Dev/build host on the laptop: Ubuntu 26.04 VM `server1` (VMware, kit on ports 8080/8443) instead of WSL2; Ubuntu 26.04 added next to 24.04 in bootstrap + CI matrix.
 

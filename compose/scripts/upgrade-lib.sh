@@ -302,6 +302,7 @@ start_rest() {
     return 1
   fi
   compose_at "${side}" up -d >/dev/null 2>&1 || warn "some optional services did not start — make status"
+  "${KIT_DIR}/scripts/caddy-reload.sh" || true
   "${KIT_DIR}/scripts/kuma-setup.sh" || warn "kuma-setup failed — make kuma-setup"
   "${KIT_DIR}/scripts/grafana-reload.sh" || true
 }

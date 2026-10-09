@@ -76,7 +76,7 @@ preflight: ## Check host, .env, ports, DNS, disk, RAM, clock before `up` (exit 1
 config: ## Print the fully resolved compose configuration
 	@$(COMPOSE) config
 
-up: ## preflight → version guard → render → pull → build backup image → (dev: export CA) → compose up --wait → status
+up: ## preflight → version guard → render → pull → build backup image → (dev: export CA) → up --wait → reloads → status
 	@$(KIT_DIR)/scripts/preflight.sh
 	@$(KIT_DIR)/scripts/version-guard.sh "make up"
 	@$(KIT_DIR)/scripts/render.sh
@@ -85,6 +85,7 @@ up: ## preflight → version guard → render → pull → build backup image �
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
 	@$(COMPOSE) up -d --wait --wait-timeout 900
+	@$(KIT_DIR)/scripts/caddy-reload.sh
 	@$(KIT_DIR)/scripts/kuma-setup.sh
 	@$(KIT_DIR)/scripts/grafana-reload.sh
 	@$(KIT_DIR)/scripts/status.sh

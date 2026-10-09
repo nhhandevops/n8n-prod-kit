@@ -359,6 +359,11 @@ re-checked every rule, panel and isolation claim against the live stack. Every f
 - Also: the guard failed open when postgres could not be started; a state survived `make clean`; `--no-recreate` before the confirm (postgres/valkey were recreated under live traffic); pulls only missing images (rollback works offline); the pulled images' version labels are checked before the downtime; non-numeric timeouts made bash skip arithmetic silently; RESUME did not start postgres/valkey or redo an interrupted version switch; monitoring health could fail an n8n upgrade (now core-only; smoke 09 only warns).
 - **Refuted (1):** "UPGRADE_TIMEOUT outlasts the CI job timeout" — measured timings leave room; the job sets UPGRADE_TIMEOUT=900 anyway.
 
+### `make up` never applied a changed Caddyfile to a running Caddy
+- **Symptom:** after S7 moved the health checks to `/healthz/readiness`, the build VM's dev Caddy still checked `/healthz` (its admin API `/config/` showed 4× `"uri":"/healthz"`) although the checkout had the new Caddyfile.
+- **Root cause:** the Caddyfile and its snippets are bind-mounted; a `git pull` that changes them does not change the container's configuration, so Compose never recreates Caddy and Caddy keeps its loaded config until a restart. Same class as S6's Grafana provisioning.
+- **Fix:** `scripts/caddy-reload.sh` (`caddy reload` through the admin API: graceful, refuses an invalid file and keeps the old config) at the end of `make up` and in `make upgrade`'s start step. Verified on the VM test stack (`[ OK ] caddy: configuration reloaded`, 3× readiness in /config/).
+
 ### Test tooling (this session)
 - The drill's `comm` failed on the VM ("not in sorted order"): n8n's ids mix case and en_US.UTF-8 collation differs between sort and comm → `LC_ALL=C` for both (CI's C.UTF-8 never showed it).
 - `docker compose config --images SERVICE` also prints the service's dependencies' images (Valkey came first): the label check matches images by their pinned digest.
