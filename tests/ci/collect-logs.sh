@@ -16,6 +16,12 @@ export KIT_DIR
 # shellcheck source=../../compose/scripts/lib.sh
 source "${KIT_DIR}/scripts/lib.sh"
 compose ps -a >"${out}/ps.txt" 2>&1
+# make upgrade / rollback state (versions, digests, backup names, phases — no secrets)
+if [[ -d "${KIT_DIR}/.upgrade" ]]; then
+  mkdir -p "${out}/upgrade"
+  cp -r "${KIT_DIR}/.upgrade/." "${out}/upgrade/" 2>/dev/null
+  rm -f "${out}/upgrade/lock"
+fi
 compose logs --no-color --timestamps >"${out}/stack.log" 2>&1
 # the resolved model, with every value of a *PASSWORD* / *KEY* / *TOKEN* / *HASH* variable replaced
 compose config 2>/dev/null |

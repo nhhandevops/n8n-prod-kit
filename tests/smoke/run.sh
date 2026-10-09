@@ -4,7 +4,8 @@
 # Runs tests/smoke/NN-*.sh in order and stops at the first failing script (later scripts build on earlier ones:
 # 04 creates the workflow that 05 inspects). ONLY=04,05 limits the run to those numbers. Prints a PASS/FAIL table,
 # then removes the "kit-smoke-*" workflows it created (SMOKE_KEEP=1 keeps them for debugging).
-# Exit 0 only when every selected script passed.
+# Exit 0 only when every selected script passed. SMOKE_FAIL=1 adds a failing row after everything passed (drills of
+# make upgrade / make rollback, TC-015).
 # shellcheck disable=SC2310,SC2311,SC2312,SC2329,SC2016  # functions run via check/wait_for; bash -c snippets are literal on purpose
 set -euo pipefail
 
@@ -50,6 +51,11 @@ for script in "${SMOKE_DIR}"/[0-9][0-9]-*.sh; do
   fi
 done
 
+if [[ "${SMOKE_FAIL:-}" == "1" ]] && (( failed == 0 )); then
+  # drills of make rollback (TC-015): a failed verification after everything really passed
+  rows+=("FAIL  SMOKE_FAIL=1 (forced failure for upgrade/rollback drills)")
+  failed=1
+fi
 log ""
 log "── result"
 if (( ${#rows[@]} == 0 )); then

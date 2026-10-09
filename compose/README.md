@@ -47,7 +47,9 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make restore-clean` | empty the work volume after an interrupted restore (never needed normally) |
 | `make restore-test` | verify every target's newest backup, restore the newest into a scratch Postgres; weekly from cron |
 | `make detach-recovery-key` | move the offline recovery key into your password manager (paste it back to prove the copy, then shreds) |
-| `make pin N8N_VERSION=2.42.5` | move the n8n pin (and the runners sidecar with it); then `make up` |
+| `make upgrade [N8N_VERSION=2.42.6]` | upgrade n8n + runners: pull first, stop and drain, pre-upgrade backup, migrations by n8n-main alone, verify; without a version it applies the pin a `git pull` brought (`make up` refuses to) — see `docs/operations/upgrade-rollback.md` |
+| `make rollback` | undo the last upgrade: images only when no migration ran (no data lost), else the pre-upgrade backup is restored first |
+| `make pin [N8N_VERSION=x]` | resolve image digests into `versions.env` (on a running install, change n8n's version with `make upgrade`) |
 | `make lint` | shellcheck + yamllint + compose config + `caddy validate` for every mode |
 | `make env-keys` | key names of `.env` for bug reports (never paste values) |
 | `make clean` | destroys containers **and volumes**; asks for the word `destroy` |
@@ -66,6 +68,6 @@ Scaling: `make scale-workers N=<1..16>` writes `WORKER_REPLICAS`, regenerates `c
 ## Known limits in this version
 
 - Backups: see `docs/operations/backup-restore.md` (targets, restore, disaster recovery with the recovery key). Set an off-host target (`BACKUP_REMOTES="r2:…"`) before going live — dev hosts back up to `compose/backups` only.
-- Monitoring (`--profile monitoring`), `make upgrade` / `rollback` / `chaos` arrive in the next sessions (see `n8n-kit-HANDOFF.md`).
+- Monitoring: `docs/operations/monitoring.md`. Upgrades: `docs/operations/upgrade-rollback.md`. `make chaos` / `loadtest` arrive in the next session (see `n8n-kit-HANDOFF.md`).
 - RHEL-family hosts: see `docs/operations/rhel-hosts.md` (install path verified in containers; a real SELinux + firewalld host run is still pending).
 - All n8n processes share one `/home/node/.n8n` volume (community nodes must be visible to every worker); a worker starting while another process was writing may log "Last session crashed" once — harmless.

@@ -92,3 +92,37 @@ jobs:
           name: smoke-logs
           path: artifacts/
           retention-days: 7
+
+  # TC-014 / TC-015 on a fresh runner: the stack starts on the previous n8n minor, then make upgrade (verification
+  # failed on purpose) -> make rollback (restores the pre-upgrade backup) -> make upgrade N8N_VERSION=<pin>.
+  # UPGRADE_FROM is pinned, not derived: when versions.env moves to a new minor, move it to the newest stable patch of
+  # the minor before (there must be migrations in between — the drill checks).
+  upgrade:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      UPGRADE_FROM: 2.41.7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pin the previous n8n minor
+        run: PIN_ONLY="N8N RUNNERS" make -C compose pin N8N_VERSION="${UPGRADE_FROM}"
+
+      - name: Bring the stack up on it (init, up, doctor)
+        run: tests/ci/up.sh
+
+      - name: Upgrade / rollback drill
+        run: tests/ci/upgrade-drill.sh
+
+      - name: Collect logs
+        if: failure()
+        run: tests/ci/collect-logs.sh artifacts
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-logs
+          path: artifacts/
+          retention-days: 7

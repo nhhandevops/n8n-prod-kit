@@ -82,23 +82,46 @@ fi
 section "version lock"
 project="$(_kit_project_name)"
 container_of() { docker ps -aq --filter "label=com.docker.compose.project=${project}" --filter "label=com.docker.compose.service=${1}" | head -1 || true; }
-image_tag_of() {   # prints the tag of a running container's image, e.g. 2.42.4
-  local cid img
-  cid="$(container_of "${1}")"
-  [[ -n "${cid}" ]] || return 0
-  img="$(docker inspect --format '{{.Config.Image}}' "${cid}")"
-  img="${img%%@*}"
-  printf '%s\n' "${img##*:}"
-}
-n8n_tag="$(image_tag_of n8n-main)"; runners_tag="$(image_tag_of n8n-worker-1-runners)"
+# what RUNS: the image's version label (the tag in Config.Image follows any N8N_VERSION Compose was given) and digest
+n8n_ver="$(image_version_of n8n-main)"; runners_ver="$(image_version_of n8n-worker-1-runners)"
+n8n_dig="$(image_digest_of n8n-main)"; runners_dig="$(image_digest_of n8n-worker-1-runners)"
 pinned="$(env_get N8N_VERSION versions.env)"
-if [[ -z "${n8n_tag}" ]]; then
-  flag_warn "n8n-main is not running — version lock checked from versions.env only (N8N_VERSION=${pinned})"
-elif [[ "${n8n_tag}" == "${runners_tag}" && "${n8n_tag}" == "${pinned}" ]]; then
-  ok "n8n ${n8n_tag} = runners ${runners_tag} = versions.env ${pinned}"
+pinned_dig="$(env_get N8N_DIGEST versions.env)"; pinned_runners_dig="$(env_get RUNNERS_DIGEST versions.env)"
+if [[ -z "${n8n_ver}" ]]; then
+  flag_warn "n8n-main has no container — version lock checked from versions.env only (N8N_VERSION=${pinned})"
+elif [[ "${n8n_ver}" == "${runners_ver}" && "${n8n_ver}" == "${pinned}" && "${n8n_dig}" == "${pinned_dig}" &&
+  "${runners_dig}" == "${pinned_runners_dig}" ]]; then
+  ok "n8n ${n8n_ver} = runners ${runners_ver} = versions.env ${pinned} (digests match)"
+elif [[ "${n8n_ver}" == "${pinned}" && "${runners_ver}" == "${pinned}" ]]; then
+  flag_warn "n8n ${pinned} runs, but from other digests than versions.env pins (a re-pushed tag?) — make up applies the pinned ones"
+elif [[ -n "${runners_ver}" && "${runners_ver}" != "${n8n_ver}" ]]; then
+  flag_fail "n8n-main runs ${n8n_ver} but its runners ${runners_ver} — the runners image MUST match n8n: make up"
+elif version_ge "${pinned}" "${n8n_ver}"; then
+  flag_fail "versions.env pins n8n ${pinned}, ${n8n_ver} runs — apply it with: make upgrade (backup first, then migrations)"
 else
-  flag_fail "version mismatch: n8n-main ${n8n_tag:-?}, runners ${runners_tag:-?}, versions.env ${pinned} — run: make pin && make up (the runners image MUST match n8n)"
+  flag_fail "versions.env pins n8n ${pinned}, OLDER than the running ${n8n_ver} — after make upgrade use make rollback; a git checkout of versions.env needs: PIN_ONLY='N8N RUNNERS' make pin N8N_VERSION=${n8n_ver}"
 fi
+
+# ---------------------------------------------------------------------------------------------------------------------
+section "upgrade"
+up_phase="$(upgrade_phase)"
+up_desc="$(env_get FROM_VERSION "${UPGRADE_STATE}" 2>/dev/null) -> $(env_get TO_VERSION "${UPGRADE_STATE}" 2>/dev/null)"
+case "${up_phase}" in
+  '') ok "no make upgrade on record" ;;
+  done)
+    ok "last upgrade ${up_desc} finished $(env_get FINISHED_AT "${UPGRADE_STATE}") — make rollback can still undo it (pre-upgrade backup $(env_get BACKUP_NAME "${UPGRADE_STATE}"); data written since would be lost)"
+    ;;
+  failed)
+    flag_fail "the upgrade ${up_desc} FAILED at step $(env_get FAILED_STEP "${UPGRADE_STATE}") — 'make upgrade RESUME=1' tries again, 'make rollback' goes back to $(env_get FROM_VERSION "${UPGRADE_STATE}")"
+    ;;
+  *)
+    if (exec 9>"${UPGRADE_DIR}/lock" && flock -n 9); then
+      flag_fail "the upgrade/rollback ${up_desc} was interrupted (PHASE=${up_phase}) — 'make upgrade RESUME=1' or 'make rollback' continues; make up refuses until then"
+    else
+      flag_warn "make upgrade / make rollback ${up_desc} is running right now (PHASE=${up_phase})"
+    fi
+    ;;
+esac
 
 # ---------------------------------------------------------------------------------------------------------------------
 section "services"

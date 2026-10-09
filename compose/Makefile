@@ -31,9 +31,14 @@ COMPOSE := docker compose --project-directory $(KIT_DIR) --env-file $(KIT_DIR)/v
 
 # Variables given on the command line (make init DOMAIN=…) are passed to the scripts as environment — but only when
 # set, so a script's `${VAR:-default}` still sees them as unset otherwise.
-PASS_VARS := DOMAIN ACME_EMAIL HTTP_PORT HTTPS_PORT FORCE CI YES N8N_VERSION WORKER_REPLICAS SERVICE SINCE NO_COLOR \
-             BACKUP FROM ADOPT_KEY AGE_KEY SKIP_SAFETY_BACKUP
+PASS_VARS := DOMAIN ACME_EMAIL HTTP_PORT HTTPS_PORT FORCE CI YES WORKER_REPLICAS SERVICE SINCE NO_COLOR \
+             BACKUP FROM ADOPT_KEY AGE_KEY SKIP_SAFETY_BACKUP \
+             RESUME SMOKE_FAIL ALLOW_MAJOR ALLOW_PRERELEASE FORCE_VERSION PIN_ONLY ROLLBACK_MODE ROLLBACK_CONFIRM \
+             UPGRADE_TIMEOUT UPGRADE_DRAIN_TIMEOUT UPGRADE_START_TIMEOUT
 $(foreach v,$(PASS_VARS),$(if $(value $(v)),$(eval export $(v))))
+# N8N_VERSION is NOT exported: Compose would take it from the environment for every service (n8n tag out of step with
+# the pinned digest, a wrong version in backup manifests). Only `pin` and `upgrade` receive it, explicitly.
+unexport N8N_VERSION
 
 SINCE ?= 10m
 
@@ -42,7 +47,8 @@ SINCE ?= 10m
 with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
 
 .PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers kuma-setup \
-        backup-now backups restore restore-clean restore-test detach-recovery-key dev-ca trust-ca lint version env-keys clean
+        backup-now backups restore restore-clean restore-test detach-recovery-key upgrade rollback dev-ca trust-ca lint version \
+        env-keys clean
 
 help: ## Show this help
 	@printf 'n8n Production Kit — compose/ targets (run from anywhere: make -C compose <target>)\n\n'
@@ -55,8 +61,8 @@ help: ## Show this help
 init: ## Create .env + secrets for DOMAIN=… [ACME_EMAIL=…] [HTTP_PORT=…] [HTTPS_PORT=…] [FORCE=1]
 	@$(KIT_DIR)/scripts/init.sh
 
-pin: ## Resolve image digests into versions.env (make pin N8N_VERSION=x to change the n8n pin)
-	@$(KIT_DIR)/scripts/pin.sh
+pin: ## Resolve image digests into versions.env [N8N_VERSION=x] [PIN_ONLY="N8N RUNNERS"] (a running n8n: make upgrade)
+	@N8N_VERSION="$(N8N_VERSION)" $(KIT_DIR)/scripts/pin.sh
 
 render: ## Generate compose.scale.yml (WORKER_REPLICAS>2) and the Prometheus worker targets
 	@$(KIT_DIR)/scripts/render.sh
@@ -67,14 +73,15 @@ preflight: ## Check host, .env, ports, DNS, disk, RAM, clock before `up` (exit 1
 config: ## Print the fully resolved compose configuration
 	@$(COMPOSE) config
 
-up: ## preflight → render → pull → build backup image → (dev: export CA) → compose up --wait → status
+up: ## preflight → version guard → render → pull → build backup image → (dev: export CA) → compose up --wait → status
 	@$(KIT_DIR)/scripts/preflight.sh
+	@$(KIT_DIR)/scripts/version-guard.sh "make up"
 	@$(KIT_DIR)/scripts/render.sh
 	@$(call with_retry,$(COMPOSE) pull --quiet --ignore-buildable,image pull)
 	@$(call with_retry,$(COMPOSE) build --quiet backup,backup image build)
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
-	@$(COMPOSE) up -d --wait --wait-timeout 480
+	@$(COMPOSE) up -d --wait --wait-timeout 900
 	@$(KIT_DIR)/scripts/kuma-setup.sh
 	@$(KIT_DIR)/scripts/grafana-reload.sh
 	@$(KIT_DIR)/scripts/status.sh
@@ -84,6 +91,7 @@ down: ## Stop and remove the containers (volumes and .env are kept)
 
 restart: ## Restart one service: make restart SERVICE=n8n-worker-1
 	@[[ -n "$(SERVICE)" ]] || { echo 'usage: make restart SERVICE=<service>' >&2; exit 2; }
+	@$(KIT_DIR)/scripts/version-guard.sh "make restart"
 	@$(COMPOSE) restart $(SERVICE)
 
 pull: ## Pull the pinned images (the backup image is built locally, not pulled)
@@ -125,6 +133,14 @@ restore-test: ## Verify every target's newest backup, restore the newest into a 
 
 detach-recovery-key: ## Print the offline recovery key once, then shred it from this host
 	@$(KIT_DIR)/scripts/detach-recovery-key.sh
+
+# --- upgrades ----------------------------------------------------------------------------------------------------------
+
+upgrade: ## Upgrade n8n, backup first: make upgrade [N8N_VERSION=x] [YES=1] [RESUME=1] (no version: apply versions.env)
+	@N8N_VERSION="$(N8N_VERSION)" $(KIT_DIR)/scripts/upgrade.sh
+
+rollback: ## Undo the last make upgrade (restores its backup when a migration ran): make rollback [YES=1]
+	@$(KIT_DIR)/scripts/rollback.sh
 
 scale-workers: ## Set the worker count: make scale-workers N=4  (1..16; N=1 parks worker 2)
 	@[[ -n "$(N)" ]] || { echo 'usage: make scale-workers N=<1..16>' >&2; exit 2; }

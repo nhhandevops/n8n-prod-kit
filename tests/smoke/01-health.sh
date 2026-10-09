@@ -31,4 +31,25 @@ workers="$(printf '%s\n' "${services[@]}" | grep -cE '^n8n-worker-[0-9]+$' || tr
 runners="$(printf '%s\n' "${services[@]}" | grep -cE '^n8n-worker-[0-9]+-runners$' || true)"
 check "worker count ${workers} = WORKER_REPLICAS ${expected}" test "${workers}" -eq "${expected}"
 check "every worker has a runner sidecar (${runners} sidecars)" test "${runners}" -eq "${workers}"
+
+# What runs is what versions.env pins: the image's version label and digest of every n8n process (the tag in
+# Config.Image would follow a stray N8N_VERSION in the environment; make upgrade relies on this check).
+pinned="$(env_get N8N_VERSION "${KIT_DIR}/versions.env")"
+version_lock_ok() {
+  local cid svc v d project
+  project="$(_kit_project_name)"
+  while read -r cid svc; do
+    [[ "${svc}" == n8n-* ]] || continue
+    d="$(docker inspect --format '{{.Config.Image}}' "${cid}")"
+    d="${d##*@}"
+    if [[ "${svc}" == *-runners ]]; then
+      [[ "${d}" == "$(env_get RUNNERS_DIGEST "${KIT_DIR}/versions.env")" ]] || { fail "  ${svc}: runners digest ${d:0:19}…"; return 1; }
+    else
+      v="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${cid}")"
+      [[ "${v}" == "${pinned}" && "${d}" == "$(env_get N8N_DIGEST "${KIT_DIR}/versions.env")" ]] ||
+        { fail "  ${svc}: n8n ${v:-?} ${d:0:19}…"; return 1; }
+    fi
+  done < <(docker ps --filter "label=com.docker.compose.project=${project}" --format '{{.ID}} {{.Label "com.docker.compose.service"}}')
+}
+check "every n8n process runs the pinned n8n ${pinned} (version label + digest)" version_lock_ok
 finish

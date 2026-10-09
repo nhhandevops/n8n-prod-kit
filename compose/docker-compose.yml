@@ -426,8 +426,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # ≈ 51 s observed on a loaded VM including ~150 migrations on a fresh DB; a major upgrade can take longer → generous 120 s.
-      start_period: 120s
+      # A first start runs every migration (275 for 2.41.7): 6.5 min on the build VM at load 12 (3m51s until Node listened,
+      # then 2m41s of migrations; 2026-10-09) — 51 s on an idle one. start_period costs nothing when start is fast (the first
+      # passing check makes it healthy; start_interval checks every 5 s meanwhile) and keeps `make up --wait` from giving up
+      # on a slow host. make upgrade does not depend on it: it watches main itself (UPGRADE_TIMEOUT).
+      start_period: 600s
+      start_interval: 5s
     depends_on:
       postgres:
         condition: service_healthy
@@ -460,8 +464,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # ≈ 36 s observed; no migrations to run (main did them), hence shorter than main.
-      start_period: 90s
+      # ≈ 36 s observed on an idle host, ~4 min at load 12 (Node startup alone); no migrations (main did them). See main.
+      start_period: 300s
+      start_interval: 5s
     depends_on:
       # "main healthy" = DB migrated by exactly one process; any instance type WOULD run migrations on an empty DB (verified).
       n8n-main:
@@ -487,7 +492,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 90s
+      start_period: 300s
+      start_interval: 5s
     depends_on:
       n8n-main:
         condition: service_healthy
@@ -527,7 +533,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 90s
+      start_period: 300s
+      start_interval: 5s
     depends_on:
       n8n-main:
         condition: service_healthy
@@ -567,7 +574,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 90s
+      start_period: 300s
+      start_interval: 5s
     depends_on:
       n8n-main:
         condition: service_healthy

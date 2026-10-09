@@ -21,6 +21,7 @@ fi
 if [[ ! -f .env ]]; then
   die ".env not found — run 'make init DOMAIN=<your-domain>' first"
 fi
+version_guard "make scale-workers"
 
 current="$(env_get WORKER_REPLICAS)"
 info "workers: ${current:-2} -> ${n}"
@@ -34,7 +35,7 @@ if (( n == 1 )); then
 fi
 
 info "converging the stack"
-compose up -d --wait --wait-timeout 240 --remove-orphans
+compose up -d --wait --wait-timeout 600 --remove-orphans
 
 bad=0
 for (( i = 1; i <= n; i++ )); do

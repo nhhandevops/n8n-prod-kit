@@ -130,11 +130,13 @@
 	# POST is not replayed into a second member.
 	lb_try_duration 5s
 	lb_retries 2
-	# Active check: GET /healthz on each member every 10 s with a 3 s budget;
-	# only HTTP 200 counts. n8n's /healthz answers as soon as the process is
-	# up (the stricter /healthz/readiness is used by the compose healthcheck,
-	# which also gates `depends_on`; the proxy only needs liveness).
-	health_uri /healthz
+	# Active check: GET /healthz/readiness on each member every 10 s with a 3 s
+	# budget; only HTTP 200 counts. Not /healthz: n8n answers that with 200 as
+	# soon as its HTTP server listens, which is BEFORE it is connected and
+	# migrated — and until then it answers every other path with HTTP 200
+	# "n8n is starting up", so a webhook routed to a starting member would get
+	# a 200 that never runs the workflow (S7, n8n 2.42 abstract-server).
+	health_uri /healthz/readiness
 	health_interval 10s
 	health_timeout 3s
 	health_status 200
@@ -291,7 +293,8 @@
 	handle {
 		import /etc/caddy/ui-protect-{$UI_PROTECT:off}.caddy
 		reverse_proxy n8n-main:5678 {
-			health_uri /healthz
+			# readiness, as for the pool: a migrating main answers 503, not a fake 200 (S7)
+			health_uri /healthz/readiness
 			health_interval 10s
 			header_down +X-Kit-Upstream {upstream_hostport}
 		}

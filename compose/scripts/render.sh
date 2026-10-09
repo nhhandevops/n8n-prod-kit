@@ -180,7 +180,8 @@ IFS= read -r -d '' worker_template <<'YAML' || true
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 90s
+      start_period: 300s
+      start_interval: 5s
     depends_on:
       n8n-main:
         condition: service_healthy

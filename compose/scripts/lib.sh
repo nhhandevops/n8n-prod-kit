@@ -447,3 +447,124 @@ service_health() {
   fi
   docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${cid}"
 }
+
+# ---------------------------------------------------------------------------------------------
+# Versions and upgrades (S7) — used by upgrade.sh, rollback.sh, doctor.sh and the version guard
+# that `make up`, `make restart`, scale.sh and restore.sh run before they start n8n.
+#   UPGRADE_DIR / UPGRADE_STATE   compose/.upgrade/ (gitignored) and its state.env: the upgrade or
+#                                 rollback in progress or last finished (keys documented in upgrade.sh)
+# ---------------------------------------------------------------------------------------------
+UPGRADE_DIR="${KIT_DIR}/.upgrade"
+UPGRADE_STATE="${UPGRADE_DIR}/state.env"
+
+# version_ge A B   true when dotted version A >= B (sort -V does the comparison).
+version_ge() {
+  local lowest
+  lowest="$(printf '%s\n%s\n' "${2}" "${1}" | sort -V)"
+  [[ "${lowest%%$'\n'*}" == "${2}" ]]
+}
+
+# is_release_version V   plain x.y.z — what n8n publishes as releases (no latest/next/beta/rc tags).
+is_release_version() {
+  [[ "${1:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# kit_container SVC   id of the service's container in this project (running or stopped), empty when none.
+kit_container() {
+  local project
+  project="$(_kit_project_name)"
+  docker ps -aq --filter "label=com.docker.compose.project=${project}" \
+    --filter "label=com.docker.compose.service=${1:?kit_container: SERVICE required}" | head -1 || true
+}
+
+# image_version_of SVC   the version label (org.opencontainers.image.version) of the image SVC's container
+# runs — the truth about what runs: the tag in Config.Image follows whatever N8N_VERSION Compose was given,
+# even with an older digest. Empty when there is no container.
+image_version_of() {
+  local cid
+  cid="$(kit_container "${1}")"
+  [[ -n "${cid}" ]] || return 0
+  docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${cid}" 2>/dev/null || true
+}
+
+# image_digest_of SVC   the sha256 digest SVC's container was created from (the part after @ in
+# Config.Image — the kit always pins one). Empty when there is no container or no digest.
+image_digest_of() {
+  local cid img
+  cid="$(kit_container "${1}")"
+  [[ -n "${cid}" ]] || return 0
+  img="$(docker inspect --format '{{.Config.Image}}' "${cid}" 2>/dev/null || true)"
+  [[ "${img}" == *@sha256:* ]] && printf '%s\n' "${img##*@}"
+  return 0
+}
+
+# kit_psql SQL   one query against n8n's database as its owner (inside the postgres container), unaligned,
+# tuples only. Non-zero when postgres is not running or the query fails.
+kit_psql() {
+  compose exec -T postgres psql -X -At -v ON_ERROR_STOP=1 -U n8n -d n8n -c "${1}" 2>/dev/null
+}
+
+# db_n8n_version   the n8n version that last started against the database (n8n's own
+# instance_version_history, one row per version change); empty when unknown (postgres down, older n8n).
+db_n8n_version() {
+  kit_psql "select major || '.' || minor || '.' || patch from instance_version_history order by \"createdAt\" desc, id desc limit 1" |
+    head -1 || true
+}
+
+# db_migration_mark   "<count>:<newest timestamp>" of n8n's migrations table — changes exactly when a migration ran.
+db_migration_mark() {
+  kit_psql 'select count(*) || chr(58) || coalesce(max("timestamp"), 0) from migrations' | head -1 || true
+}
+
+# upgrade_phase   PHASE of the upgrade/rollback in .upgrade/state.env; empty when there never was one.
+upgrade_phase() {
+  [[ -f "${UPGRADE_STATE}" ]] || return 0
+  env_get PHASE "${UPGRADE_STATE}"
+}
+
+# upgrade_pending   true while an upgrade or rollback is unfinished (any PHASE but done / rolled-back / aborted).
+upgrade_pending() {
+  local phase
+  phase="$(upgrade_phase)"
+  [[ -n "${phase}" && ! "${phase}" =~ ^(done|rolled-back|aborted)$ ]]
+}
+
+# version_guard "WHAT"   die before WHAT would start n8n on the wrong version:
+#   * an upgrade or rollback is unfinished — it owns the stack until `make upgrade RESUME=1` / `make rollback`;
+#   * versions.env pins a NEWER n8n than this installation runs — that is an upgrade, and only `make upgrade`
+#     takes the backup and runs the migrations in order;
+#   * versions.env pins an OLDER n8n than the database was last used with — n8n would start on the newer schema
+#     without a word (it ignores migrations it does not know).
+# "Runs" = the version label of n8n-main's container; without one (after make down) the database's own record.
+# Skipped inside make upgrade / make rollback (KIT_UPGRADE_INTERNAL=1); FORCE_VERSION=1 is the expert override.
+version_guard() {
+  local what="${1:-this command}" pinned running seen project phase
+  [[ "${KIT_UPGRADE_INTERNAL:-}" == "1" ]] && return 0
+  if upgrade_pending; then
+    phase="$(upgrade_phase)"
+    die "an upgrade is unfinished (PHASE=${phase}; make doctor shows it) — finish it with 'make upgrade RESUME=1' or undo it with 'make rollback' before ${what}"
+  fi
+  pinned="$(env_get N8N_VERSION "${KIT_DIR}/versions.env")"
+  running="$(image_version_of n8n-main)"
+  seen="n8n-main runs"
+  if [[ -z "${running}" ]]; then
+    project="$(_kit_project_name)"
+    if docker volume inspect "${project}_pg_data" >/dev/null 2>&1; then
+      # the stack is down but has a database: ask it which n8n used it last
+      compose up -d --wait postgres >/dev/null 2>&1 || true
+      running="$(db_n8n_version)"
+      seen="the database was last used by"
+    fi
+  fi
+  if [[ -z "${running}" || "${running}" == "${pinned}" ]]; then
+    return 0
+  fi
+  if [[ "${FORCE_VERSION:-}" == "1" ]]; then
+    warn "FORCE_VERSION=1: versions.env pins n8n ${pinned}, ${seen} ${running} — continuing anyway"
+    return 0
+  fi
+  if version_ge "${pinned}" "${running}"; then
+    die "versions.env pins n8n ${pinned}, ${seen} ${running} — apply the new version with 'make upgrade' (it takes a backup, then runs the migrations in order), not ${what}"
+  fi
+  die "versions.env pins n8n ${pinned}, but ${seen} ${running} — n8n cannot go back on a database a newer version migrated. After 'make upgrade' use 'make rollback'; if versions.env came from git, pin forward: PIN_ONLY='N8N RUNNERS' make pin N8N_VERSION=${running}"
+}

@@ -1,8 +1,9 @@
 name: weekly-latest-n8n
 
-# Early warning for upstream changes: every Monday, pin the newest STABLE n8n release (from the GitHub Releases API —
-# never the floating `latest` image tag, so n8n and its runners image stay on the same version) and run the full
-# smoke suite against it. A failure opens an issue labelled n8n-upstream. Run it by hand with "Run workflow".
+# Early warning for upstream changes: every Monday, take the newest STABLE n8n release (from the GitHub Releases API —
+# never the floating `latest` image tag, so n8n and its runners image stay on the same version) and do what a user of
+# the kit will do: start on the kit's pin with some data, `make upgrade` to that release (backup, migrations, verify),
+# then run the full smoke suite. A failure opens an issue labelled n8n-upstream. Run it by hand with "Run workflow".
 on:
   schedule:
     - cron: "0 2 * * 1"   # Mondays 02:00 UTC
@@ -34,11 +35,13 @@ jobs:
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
           echo "Latest stable n8n: ${version} (kit pins ${pinned})" >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: Pin it (n8n + runners digests)
-        run: make -C compose pin N8N_VERSION=${{ steps.n8n.outputs.version }}
+      - name: Bring the stack up on the kit's pin (init, up, doctor), with data to carry over
+        run: |
+          tests/ci/up.sh
+          SMOKE_KEEP=1 make -C compose smoke
 
-      - name: Bring the stack up (init, up, doctor)
-        run: tests/ci/up.sh
+      - name: make upgrade to the latest stable n8n
+        run: make -C compose upgrade N8N_VERSION=${{ steps.n8n.outputs.version }} YES=1
 
       - name: make smoke
         run: make -C compose smoke
@@ -63,5 +66,5 @@ jobs:
         run: |
           gh label create n8n-upstream --color B60205 --description "Change in n8n upstream affects the kit" --force
           body="The weekly run against the latest stable n8n failed: ${RUN_URL} (logs are attached to the run)."
-          body="${body} The pin in compose/versions.env is unchanged; investigate before make pin N8N_VERSION=${VERSION}."
-          gh issue create --label n8n-upstream --title "n8n ${VERSION} fails the kit's smoke suite" --body "${body}"
+          body="${body} The pin in compose/versions.env is unchanged; investigate before moving it to ${VERSION}."
+          gh issue create --label n8n-upstream --title "n8n ${VERSION}: make upgrade or the smoke suite fails" --body "${body}"

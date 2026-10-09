@@ -16,6 +16,10 @@
 #      in the n8n_data volume and would refuse a different one) is reset so n8n re-creates it from .env
 #   8. empty the Bull queue (jobs in it belong to the timeline that is being rolled back)
 #   9. start everything, wait for health, drop n8n_prev, print the status table
+# RESTORE_NO_START=1 (make rollback): stop after step 8 — n8n stays stopped, n8n_prev stays; the caller switches the
+# n8n version, starts the stack and runs `restore.sh finalize`. RESTORE_SAFETY_LABEL labels the safety backup.
+# Refuses while a make upgrade / make rollback is unfinished, when versions.env and the running n8n disagree (the
+# version guard of make up), and for a bundle made by a NEWER n8n than versions.env pins (FORCE_VERSION=1 overrides).
 # The decrypted dump and the key in the work volume are removed on EVERY exit (also Ctrl-C and errors).
 # shellcheck disable=SC2310,SC2311,SC2312,SC2016  # SC2016: $VALKEY_PASSWORD expands inside the container
 set -euo pipefail
@@ -31,6 +35,8 @@ from="${FROM:-}"
 
 exec 8>"${KIT_DIR}/.restore.lock"
 flock -n 8 || die "another make restore is running on this host"
+version_guard "make restore"
+no_start="${RESTORE_NO_START:-}"
 
 restore_key="${KIT_DIR}/secrets/restore-key.txt"
 stopped=0
@@ -40,9 +46,11 @@ cleanup() {
   trap - EXIT INT TERM HUP
   rm -f "${restore_key}"
   compose run --rm -T backup /opt/backup/restore.sh clean >/dev/null 2>&1 || warn "could not empty the backup_work volume — run: make restore-clean"
-  if (( rc != 0 && stopped == 1 && swapped == 0 )); then
+  if (( rc != 0 && stopped == 1 && swapped == 0 )) && [[ "${no_start}" == "1" ]]; then
+    warn "the database was NOT changed — n8n stays stopped (RESTORE_NO_START: the caller decides)"
+  elif (( rc != 0 && stopped == 1 && swapped == 0 )); then
     warn "the database was NOT changed — starting n8n again"
-    compose up -d --wait --wait-timeout 240 >/dev/null 2>&1 || warn "n8n did not come back healthy — make status"
+    compose up -d --wait --wait-timeout 600 >/dev/null 2>&1 || warn "n8n did not come back healthy — make status"
   fi
   exit "${rc}"
 }
@@ -74,6 +82,18 @@ fi
 compose run --rm -T "${key_args[@]}" backup /opt/backup/restore.sh "${fetch_args[@]}" || die "fetch failed — nothing was changed"
 rm -f "${restore_key}"
 
+bundle_version="$(compose run --rm -T backup jq -r '.n8n_version // empty' /work/current/manifest.json 2>/dev/null || true)"
+pinned="$(env_get N8N_VERSION versions.env)"
+if [[ -n "${bundle_version}" && "${bundle_version}" != "${pinned}" ]]; then
+  if version_ge "${pinned}" "${bundle_version}"; then
+    info "the backup was made by n8n ${bundle_version}; n8n ${pinned} migrates it forward when it starts"
+  elif [[ "${FORCE_VERSION:-}" == "1" ]]; then
+    warn "FORCE_VERSION=1: restoring a backup of n8n ${bundle_version} under the older n8n ${pinned}"
+  else
+    die "the backup was made by n8n ${bundle_version}, NEWER than the ${pinned} versions.env pins — n8n cannot run on a newer database. Pin ${bundle_version} first (make upgrade N8N_VERSION=${bundle_version}), or FORCE_VERSION=1" 5
+  fi
+fi
+
 key_rc=0
 hints="$(compose run --rm -T backup /opt/backup/restore.sh keycheck)" || key_rc=$?
 if (( key_rc == 3 )); then
@@ -100,7 +120,11 @@ compose stop "${n8n_services[@]}" >/dev/null
 
 if [[ "${SKIP_SAFETY_BACKUP:-}" != "1" ]]; then
   info "safety backup of the current database (kind pre-restore)"
-  safety="$(compose run --rm -T backup /opt/backup/backup.sh --kind pre-restore)" ||
+  safety_args=(--kind pre-restore)
+  if [[ -n "${RESTORE_SAFETY_LABEL:-}" ]]; then
+    safety_args+=(--name "${RESTORE_SAFETY_LABEL}")
+  fi
+  safety="$(compose run --rm -T backup /opt/backup/backup.sh "${safety_args[@]}")" ||
     die "the safety backup failed — the database was NOT changed (SKIP_SAFETY_BACKUP=1 to restore without one)"
   safety_name="$(awk '$1 == "BACKUP" && $2 == "OK" { print $3 }' <<<"${safety}")"
 fi
@@ -135,10 +159,16 @@ compose run --rm --no-deps -T --entrypoint sh n8n-main -c 'rm -f /home/node/.n8n
   warn "could not reset n8n's settings file — if n8n-main reports 'Mismatching encryption keys', delete /home/node/.n8n/config in the n8n_data volume"
 
 info "emptying the job queue (Bull keys n8n:*)"
-compose exec -T valkey sh -c 'VALKEYCLI_AUTH=$VALKEY_PASSWORD valkey-cli --no-auth-warning FLUSHDB' >/dev/null
+compose exec -T valkey sh -c 'VALKEYCLI_AUTH=$VALKEY_PASSWORD valkey-cli --no-auth-warning FLUSHDB' >/dev/null ||
+  warn "could not empty the queue — jobs of the replaced timeline may run; n8n marks their executions crashed"
+
+if [[ "${no_start}" == "1" ]]; then
+  ok "database restored; n8n NOT started (RESTORE_NO_START=1)${safety_name:+ — safety backup ${safety_name}}"
+  exit 0
+fi
 
 info "starting the stack"
-if ! compose up -d --wait --wait-timeout 240; then
+if ! compose up -d --wait --wait-timeout 600; then
   fail "the restored database is in place, but the stack did not come back healthy — make status; make logs SERVICE=n8n-main SINCE=10m"
   die "the replaced database is kept as n8n_prev${safety_name:+; the safety backup is ${safety_name}}"
 fi

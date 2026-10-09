@@ -11,6 +11,10 @@
 #                        kit's version lock), then resolve
 #   PIN_FORCE_HUB_API=1  skip `docker buildx imagetools` and go straight to the registry HTTP APIs
 #                        (useful when the Docker Hub anonymous pull quota is exhausted, HTTP 429)
+#   PIN_FILE=path        pin this copy of versions.env instead (make upgrade resolves its target there
+#                        first, so a wrong version changes nothing)
+#   PIN_ONLY="N8N RUNNERS"   resolve only these keys (make upgrade: a re-pushed monitoring tag must not
+#                        ride along with an n8n upgrade)
 #
 # Why digests: a tag can be re-pushed; `image: name:tag@sha256:…` makes every `make up` start the
 # exact bytes that were tested. The compose file requires them (`${X_DIGEST:?run make pin}`).
@@ -20,7 +24,7 @@
 #      the same value `docker pull` prints — for multi-arch and single-arch images alike)
 #   2. Docker Hub tags API   https://hub.docker.com/v2/repositories/<ns>/<name>/tags/<tag>  -> .digest
 #      Only for Hub-hosted images: `caddy` -> library/caddy, `valkey/valkey`, `n8nio/runners`, and
-#      docker.n8n.io/n8nio/n8n -> n8nio/n8n (docker.n8n.io is a redirect to Docker Hub). This API is
+#      docker.n8n.io/n8nio/n8n -> n8nio/n8n (docker.n8n.io is a proxy in front of Docker Hub). This API is
 #      NOT subject to the pull-rate quota that breaks step 1 on shared IPs (verified: 429 on 1, 200 here).
 #   3. Registry HTTP API v2 (any registry, e.g. ghcr.io/n8n-io/n8n): anonymous bearer token from the
 #      WWW-Authenticate challenge, then HEAD /v2/<path>/manifests/<tag> -> Docker-Content-Digest.
@@ -35,7 +39,7 @@ cd "${KIT_DIR}"
 # shellcheck source=lib.sh
 source "${KIT_DIR}/scripts/lib.sh"
 
-versions_file="${KIT_DIR}/versions.env"
+versions_file="${PIN_FILE:-${KIT_DIR}/versions.env}"
 # Capture the override BEFORE anything could set N8N_VERSION from the file.
 requested_n8n_version="${N8N_VERSION:-}"
 mode="pin"
@@ -45,7 +49,7 @@ for arg in "${@}"; do
       mode="check"
       ;;
     -h | --help)
-      sed -n '2,24p' "${BASH_SOURCE[0]:-$0}" >&2
+      sed -n '2,31p' "${BASH_SOURCE[0]:-$0}" >&2
       exit 0
       ;;
     *)
@@ -62,6 +66,13 @@ fi
 # monitoring profile (pinned even when the profile is off: compose interpolates every service's image).
 pin_keys=(N8N RUNNERS CADDY POSTGRES VALKEY
   PROMETHEUS GRAFANA LOKI ALLOY NODE_EXPORTER CADVISOR KUMA)
+if [[ -n "${PIN_ONLY:-}" ]]; then
+  read -r -a only_keys <<<"${PIN_ONLY//,/ }"
+  for key in "${only_keys[@]}"; do
+    [[ " ${pin_keys[*]} " == *" ${key} "* ]] || die "PIN_ONLY: unknown key '${key}' (known: ${pin_keys[*]})"
+  done
+  pin_keys=("${only_keys[@]}")
+fi
 version_var_of() {
   local key="${1}"
   if [[ "${key}" == "RUNNERS" ]]; then
@@ -143,7 +154,7 @@ digest_via_imagetools() {
 # Split an image reference into registry host and repository path.
 #   caddy                      -> docker.io  library/caddy
 #   valkey/valkey              -> docker.io  valkey/valkey
-#   docker.n8n.io/n8nio/n8n    -> docker.io  n8nio/n8n      (docker.n8n.io redirects to Docker Hub)
+#   docker.n8n.io/n8nio/n8n    -> docker.io  n8nio/n8n      (docker.n8n.io proxies Docker Hub)
 #   ghcr.io/n8n-io/runners     -> ghcr.io    n8n-io/runners
 split_ref() {
   local image="${1}"
@@ -209,7 +220,7 @@ digest_via_registry_v2() {
     api="https://registry-1.docker.io"
   fi
   # Anonymous token: the registry's /v2/ answers 401 with WWW-Authenticate: Bearer realm=..,service=..
-  challenge="$(curl -sSI --max-time 30 "${api}/v2/" 2>/dev/null | tr -d '\r' | grep -i '^www-authenticate:' || true)"
+  challenge="$(curl -sS -o /dev/null -D - --max-time 30 "${api}/v2/" 2>/dev/null | tr -d '\r' | grep -i '^www-authenticate:' || true)"
   token=''
   if [[ "${challenge}" =~ realm=\"([^\"]+)\" ]]; then
     realm="${BASH_REMATCH[1]}"
@@ -306,7 +317,7 @@ if (( failures > 0 )); then
   die "${failures} image(s) could not be resolved; versions.env was updated for the others only" 1
 fi
 if (( changed > 0 )); then
-  ok "versions.env: ${changed} digest line(s) rewritten — review 'git diff compose/versions.env' and commit"
+  ok "${versions_file##*/}: ${changed} digest line(s) rewritten — review the diff and commit"
 else
   ok "versions.env: all digests already current"
 fi

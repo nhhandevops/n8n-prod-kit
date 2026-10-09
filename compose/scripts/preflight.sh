@@ -23,11 +23,6 @@ flag_fail() {
   failures=$((failures + 1))
 }
 
-# version_ge A B — true when dotted version A >= B (sort -V does the comparison).
-version_ge() {
-  [[ "$(printf '%s\n%s\n' "${2}" "${1}" | sort -V | head -1)" == "${2}" ]]
-}
-
 # --- docker & compose -----------------------------------------------------------------------------------------------
 need_cmd docker ss df awk grep
 docker_version="$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
