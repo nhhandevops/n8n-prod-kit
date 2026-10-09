@@ -116,7 +116,7 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Webhook processors up",
+      "title": "Webhook processors",
       "description": "Production webhooks, forms and MCP go to this pool",
       "datasource": {
         "type": "prometheus",
@@ -136,7 +136,17 @@
             "uid": "prometheus"
           },
           "expr": "sum(up{job=\"n8n-webhook\"})",
-          "legendFormat": "",
+          "legendFormat": "up",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(up{job=\"n8n-webhook\"} == 0) or vector(0)",
+          "legendFormat": "down",
           "instant": true
         }
       ],
@@ -160,7 +170,32 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "down"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
@@ -172,7 +207,7 @@
         },
         "colorMode": "value",
         "graphMode": "none",
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "justifyMode": "auto",
         "orientation": "auto",
         "wideLayout": true,
@@ -182,7 +217,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Workers up",
+      "title": "Workers",
       "description": "Every execution runs on a worker",
       "datasource": {
         "type": "prometheus",
@@ -202,7 +237,17 @@
             "uid": "prometheus"
           },
           "expr": "sum(up{job=\"n8n-worker\"})",
-          "legendFormat": "",
+          "legendFormat": "up",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(up{job=\"n8n-worker\"} == 0) or vector(0)",
+          "legendFormat": "down",
           "instant": true
         }
       ],
@@ -226,7 +271,32 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "down"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
@@ -238,7 +308,7 @@
         },
         "colorMode": "value",
         "graphMode": "none",
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "justifyMode": "auto",
         "orientation": "auto",
         "wideLayout": true,
@@ -443,7 +513,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Executions per minute",
-      "description": "Bull job counters from n8n-main (refreshed every 20 s)",
+      "description": "Bull job counters from n8n-main (refreshed every 20 s; they restart from 0 with n8n-main, rate() handles it)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -482,7 +552,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -547,7 +618,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -573,7 +645,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Execution duration",
-      "description": "n8n_workflow_execution_duration_seconds from every n8n process that observed executions",
+      "description": "From n8n_workflow_execution_duration_seconds of every n8n process. Empty when nothing ran in the last 5 minutes, and after a process restart until its next execution",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -612,7 +684,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": false,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -638,7 +711,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Executions by status",
-      "description": "Per minute, from the execution-duration histogram",
+      "description": "Per minute, from the execution-duration histogram (empty when nothing ran in the last 5 minutes)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -668,7 +741,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": false,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -694,7 +768,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "HTTP requests through Caddy",
-      "description": "Edge traffic by status code (5xx = n8n down or overloaded)",
+      "description": "Edge traffic by status code, without Prometheus' own scrapes of Caddy (5xx = n8n down or overloaded)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -712,7 +786,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (code) (rate(caddy_http_request_duration_seconds_count[5m]))",
+          "expr": "sum by (code) (rate(caddy_http_request_duration_seconds_count{handler!=\"metrics\"}[5m]))",
           "legendFormat": "{{code}}"
         }
       ],
@@ -724,7 +798,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -780,7 +855,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -836,7 +912,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -892,7 +969,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -917,8 +995,8 @@
     {
       "id": 15,
       "type": "logs",
-      "title": "Errors (n8n and Caddy)",
-      "description": "Loki: JSON log lines with level=error in the selected time range",
+      "title": "Errors (n8n, task runners, Caddy)",
+      "description": "Loki: JSON log lines with level=error, plus ERROR lines of the task-runner sidecars (plain text)",
       "datasource": {
         "type": "loki",
         "uid": "loki"
@@ -937,6 +1015,15 @@
             "uid": "loki"
           },
           "expr": "{service=~\"n8n-.*|caddy\", level=\"error\"}",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{service=~\"n8n-.*-runners\"} |~ \"ERROR\" !~ \"ExperimentalWarning|--trace-warnings\"",
           "queryType": "range"
         }
       ],

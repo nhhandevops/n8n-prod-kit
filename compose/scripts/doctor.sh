@@ -327,9 +327,10 @@ else
     flag_warn "alerts are NOT sent anywhere (ALERT_TELEGRAM_BOT_TOKEN / ALERT_TELEGRAM_CHAT_ID empty) — they only show in Grafana → Alerting"
   fi
   if [[ "$(service_health grafana)" == "healthy" ]]; then
-    auth="$(printf '%s:%s' "$(env_get GRAFANA_ADMIN_USER)" "$(env_get GRAFANA_ADMIN_PASSWORD)" | base64 | tr -d '\n')"
-    alerts="$(compose exec -T grafana wget -qO- --header "Authorization: Basic ${auth}" \
-      'http://127.0.0.1:3000/grafana/api/prometheus/grafana/api/v1/alerts' 2>/dev/null || true)"
+    # the credentials go to curl on stdin (-K -), never on a command line that every host user can read in /proc
+    alerts="$(printf 'user = "%s:%s"\n' "$(env_get GRAFANA_ADMIN_USER)" "$(env_get GRAFANA_ADMIN_PASSWORD)" |
+      compose exec -T grafana curl -fsS -m 20 -K - 'http://127.0.0.1:3000/grafana/api/prometheus/grafana/api/v1/alerts' \
+        2>/dev/null || true)"
     firing="$(jq -r '.data.alerts[]? | select(.state == "Alerting" or .state == "firing") | .labels.alertname' <<<"${alerts}" 2>/dev/null | sort -u || true)"
     if [[ -z "${alerts}" ]]; then
       flag_warn "could not read Grafana's alerts (GRAFANA_ADMIN_PASSWORD changed after Grafana's first start?)"
@@ -340,6 +341,17 @@ else
     fi
   else
     flag_fail "grafana is $(service_health grafana) — make logs SERVICE=grafana"
+  fi
+fi
+if [[ "${profiles}" == *",kuma,"* ]]; then
+  kuma_rc=0
+  kuma_state="$("${KIT_DIR}/scripts/kuma-setup.sh" --check 2>/dev/null)" || kuma_rc=$?
+  if (( kuma_rc == 1 )); then
+    flag_fail "Uptime Kuma has no admin account yet — whoever opens kuma.DOMAIN first would create it; run: make kuma-setup"
+  elif (( kuma_rc != 0 )); then
+    flag_warn "could not ask Uptime Kuma whether its admin account exists (${kuma_state:-no answer}) — make logs SERVICE=uptime-kuma"
+  else
+    ok "uptime kuma: admin account exists"
   fi
 fi
 

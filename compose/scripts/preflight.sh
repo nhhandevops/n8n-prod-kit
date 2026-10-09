@@ -138,6 +138,11 @@ if [[ "$(env_get BACKUP_ENABLED)" != "false" && -z "${backup_remotes}" ]]; then
   warn "BACKUP_REMOTES is empty — nothing will be backed up; set an off-host target (e.g. r2:n8n-backups/prod) before going live"
 fi
 
+# --- dev TLS: compose.dev.yml bind-mounts secrets/dev-root.crt (a missing file would become a directory) ----------
+if [[ "$(env_get TLS_MODE)" == "internal" && -d secrets/dev-root.crt ]]; then
+  flag_fail "secrets/dev-root.crt is a directory (Docker created it while the file was missing) — rmdir it, then make up (dev-ca.sh exports the CA)"
+fi
+
 # --- monitoring profile -------------------------------------------------------------------------------------------
 profiles=",$(env_get COMPOSE_PROFILES | tr -d ' '),"
 monitoring_on=0

@@ -41,7 +41,7 @@ SINCE ?= 10m
 # "toomanyrequests: Rate exceeded" on bursts, seen in CI 2026-10-08). Three attempts, 20 s and 40 s apart.
 with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
 
-.PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers \
+.PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers kuma-setup \
         backup-now backups restore restore-clean restore-test detach-recovery-key dev-ca trust-ca lint version env-keys clean
 
 help: ## Show this help
@@ -75,6 +75,7 @@ up: ## preflight → render → pull → build backup image → (dev: export CA)
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
 	@$(COMPOSE) up -d --wait --wait-timeout 480
+	@$(KIT_DIR)/scripts/kuma-setup.sh
 	@$(KIT_DIR)/scripts/status.sh
 
 down: ## Stop and remove the containers (volumes and .env are kept)
@@ -129,6 +130,9 @@ scale-workers: ## Set the worker count: make scale-workers N=4  (1..16; N=1 park
 	@$(KIT_DIR)/scripts/scale.sh "$(N)"
 
 # --- dev TLS -----------------------------------------------------------------------------------------------------------
+
+kuma-setup: ## (profile kuma) create Uptime Kuma's admin account from KUMA_ADMIN_USER/KUMA_ADMIN_PASSWORD (make up does it)
+	@$(KIT_DIR)/scripts/kuma-setup.sh
 
 dev-ca: ## (TLS_MODE=internal) start caddy, wait for its local CA, export secrets/dev-root.crt
 	@$(KIT_DIR)/scripts/dev-ca.sh

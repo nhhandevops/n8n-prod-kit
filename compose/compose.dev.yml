@@ -29,9 +29,10 @@ x-dev-trust: &dev-trust
   extra_hosts:
     - "${DOMAIN:?set DOMAIN}:host-gateway"
   volumes:
-    - caddy_data:/certs:ro
+    # only the CA certificate (dev-ca.sh exports it before `up`), not caddy_data, which also holds the CA's private key
+    - ./secrets/dev-root.crt:/certs/dev-root.crt:ro,z
   environment:
-    NODE_EXTRA_CA_CERTS: /certs/caddy/pki/authorities/local/root.crt
+    NODE_EXTRA_CA_CERTS: /certs/dev-root.crt
 
 services:
   n8n-main: *dev-trust

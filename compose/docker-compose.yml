@@ -283,9 +283,13 @@ services:
       - caddy_config:/config
       # the Caddyfile and its snippet files, read-only; `:z` relabels for SELinux hosts (no-op elsewhere, verified).
       - ./caddy:/etc/caddy:ro,z
+    # edge-grafana / edge-kuma: one private link each to Grafana and Uptime Kuma (monitoring profile), so neither shares a
+    # network with the n8n workers (whose workflows can call anything on their networks)
     networks:
       - proxy
       - internal
+      - edge-grafana
+      - edge-kuma
     healthcheck:
       # the admin API on loopback. 127.0.0.1, NEVER `localhost`: busybox resolves localhost to ::1 while Caddy's admin listens on
       # 127.0.0.1 only (verified). Port 2019 is not published — the config it returns contains the basic-auth hash.
@@ -750,6 +754,24 @@ services:
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      # Grafana is served from the n8n origin (/grafana/): a plugin installed from the catalogue would run its scripts there,
+      # next to n8n's session cookie — no catalogue installs, no external snapshots, no public dashboards
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      # Memory (measured 2026-10-09 in throwaway Grafanas; live, Grafana sat at its 768 MiB limit and swapped): Grafana
+      # gzips every response itself with ~5 MiB of buffers each, which ballooned the heap to 0.8-1.1 GiB while dashboards
+      # loaded (OOM-killed at 1 GiB). Caddy's `encode zstd gzip` compresses instead. GOMEMLIMIT keeps the Go GC target
+      # below the container limit (about half of MEM_LIMIT_GRAFANA), and the 11 bundled data-source plugins the kit does
+      # not use stop running as separate processes. All three together: peak 400 MiB under the worst load at 768m.
+      GF_SERVER_ENABLE_GZIP: "false"
+      GOMEMLIMIT: ${GRAFANA_GOMEMLIMIT:-400MiB}
+      # (a trailing backslash inside double quotes joins the lines without a space)
+      GF_PLUGINS_DISABLE_PLUGINS: "elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,\
+        jaeger,mssql,mysql,opentsdb,stackdriver,tempo,zipkin"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      GF_PUBLIC_DASHBOARDS_ENABLED: "false"
+      # encrypts the secrets Grafana stores (the Telegram token of the contact point). make init generates one for new
+      # installs; the fallback is Grafana's built-in default, so an older .env keeps decrypting what it already stored
+      GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:-SW2YcwTIb9zpOOhoPsMm}
       GF_LOG_MODE: console
       GF_LOG_CONSOLE_FORMAT: json
       # referenced by the contact point in alerting/notifications.yml (render.sh); smoke 09 proves Grafana expanded them
@@ -759,9 +781,10 @@ services:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro,z
       - ./monitoring/grafana/dashboards:/var/lib/grafana-dashboards:ro,z
-    # proxy: Caddy -> grafana:3000 and egress to Telegram; monitoring: Prometheus + Loki
+    # edge-grafana: Caddy -> grafana:3000 and egress to Telegram (NOT proxy: the workers must not reach Grafana directly, past
+    # Caddy's /grafana/metrics block and UI_PROTECT); monitoring: Prometheus + Loki
     networks:
-      - proxy
+      - edge-grafana
       - monitoring
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/grafana/api/health"]
@@ -930,11 +953,16 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    environment:
+      # skip Kuma 2's "choose a database" first-run page; make up then creates the admin account itself
+      # (scripts/kuma-setup.sh, KUMA_ADMIN_USER / KUMA_ADMIN_PASSWORD from .env), so the setup page is never left open
+      UPTIME_KUMA_DB_TYPE: sqlite
     volumes:
       - kuma_data:/app/data
-    # proxy: egress for its checks and notifications; Caddy reaches it as uptime-kuma:3001
+    # edge-kuma: Caddy reaches it as uptime-kuma:3001, and egress for its checks and notifications. Not proxy: the workers
+    # must not reach it.
     networks:
-      - proxy
+      - edge-kuma
     logging: *logging
     deploy:
       resources:
@@ -952,6 +980,9 @@ networks:
   # workflows can call any address on their networks), because Loki holds every log line and nothing here needs a login.
   monitoring:
     internal: true
+  # Caddy <-> Grafana and Caddy <-> Uptime Kuma, one link each (routable: Telegram and Kuma's checks need egress)
+  edge-grafana: {}
+  edge-kuma: {}
 
 volumes:
   caddy_data: {}

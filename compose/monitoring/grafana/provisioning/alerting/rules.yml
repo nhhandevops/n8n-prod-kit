@@ -1,9 +1,10 @@
 # compose/monitoring/grafana/provisioning/alerting/rules.yml — Grafana-managed alert rules of the kit (S6).
+# GENERATED (scratch generator kept with the session notes); edit consistently, then check with smoke 09 + make doctor.
 # Evaluated every 30 s in the folder "n8n-kit"; notifications go to the Telegram contact point that render.sh writes into
 # notifications.yml when ALERT_TELEGRAM_BOT_TOKEN + ALERT_TELEGRAM_CHAT_ID are set (otherwise they only show in
 # Grafana -> Alerting). Grafana does NOT expand environment variables in rule files — neither in the queries nor in the
-# annotations (verified in CI 2026-10-08) — so nothing here depends on the environment and alert templates use plain
-# $values / $labels.
+# annotations (verified in CI 2026-10-08) — so nothing here depends on the environment: this kit's Compose project is
+# found as "the project that has an n8n-main container", and alert templates use plain $values / $labels.
 # Shape of every rule: A = an instant PromQL query, C = a threshold on A (one alert instance per returned series).
 apiVersion: 1
 
@@ -57,8 +58,8 @@ groups:
         annotations:
           summary: 'No webhook processor is up - production webhooks fail'
           description: >-
-            Both n8n-webhook processes are unreachable: production webhooks, forms and MCP calls get 502. make status;
-            make logs SERVICE=n8n-webhook-1
+            Every n8n-webhook process is unreachable: production webhooks, forms and MCP calls get 502. make status; make
+            logs SERVICE=n8n-webhook-1
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
@@ -66,6 +67,72 @@ groups:
             model:
               refId: A
               expr: 'sum(up{job="n8n-webhook"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+      - uid: kit-webhook-processor-missing
+        title: WebhookProcessorMissing
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ with $values.A }}{{ printf "%.0f" .Value }}{{ end }} webhook processor(s) down for 5 minutes'
+          description: >-
+            Production webhooks still work through the remaining processor(s), but without redundancy. make status; make
+            logs SERVICE=n8n-webhook-1
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: '(count(up{job="n8n-webhook"} == 0) or vector(0)) and on() (sum(up{job="n8n-webhook"}) >= 1)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+      - uid: kit-worker-pool-down
+        title: WorkerPoolDown
+        condition: C
+        for: 2m
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: 'No n8n worker is up - no execution runs'
+          description: >-
+            Every n8n worker is unreachable: queued executions wait until one comes back (with WORKER_REPLICAS=1 this is
+            the only worker). make status; make logs SERVICE=n8n-worker-1 SINCE=15m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'sum(up{job="n8n-worker"})'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -88,17 +155,17 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: '{{ printf "%.1f" $values.A.Value }} n8n worker(s) down for 5 minutes'
+          summary: '{{ with $values.A }}{{ printf "%.0f" .Value }}{{ end }} n8n worker(s) down for 5 minutes'
           description: >-
-            Executions still run on the remaining workers, but capacity is reduced. make status; make logs
-            SERVICE=n8n-worker-1
+            Some workers are down: executions run on the remaining ones with reduced capacity (all down = WorkerPoolDown).
+            make status; make logs SERVICE=n8n-worker-1
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
             datasourceUid: prometheus
             model:
               refId: A
-              expr: 'count(up{job="n8n-worker"} == 0) or vector(0)'
+              expr: '(count(up{job="n8n-worker"} == 0) or vector(0)) and on() (sum(up{job="n8n-worker"}) >= 1)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -112,6 +179,43 @@ groups:
                 - evaluator:
                     type: gt
                     params: [0]
+      - uid: kit-service-unhealthy
+        title: KitServiceUnhealthy
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.container_label_com_docker_compose_service }} has been unhealthy for 5 minutes'
+          description: >-
+            Its Docker healthcheck fails (for n8n: /healthz/readiness, which needs the database and Valkey). Postgres or
+            Valkey down shows up here first: n8n keeps answering /metrics without them. make status; make doctor
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                min by (container_label_com_docker_compose_service)
+                (abs(container_health_state{container_label_com_docker_compose_service=~"postgres|valkey|caddy|backup|n8n-.+"})
+                and on(container_label_com_docker_compose_project) count by (container_label_com_docker_compose_project)
+                (container_health_state{container_label_com_docker_compose_service="n8n-main"}))
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
       - uid: kit-queue-backlog
         title: QueueBacklog
         condition: C
@@ -121,7 +225,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: '{{ printf "%.1f" $values.A.Value }} executions waiting in the queue'
+          summary: '{{ with $values.A }}{{ printf "%.0f" .Value }}{{ end }} executions waiting in the queue'
           description: >-
             More than 500 jobs have been waiting for 5 minutes: too few workers, or stuck ones. make scale-workers N=...;
             check the worker logs and Valkey memory (make doctor)
@@ -148,15 +252,16 @@ groups:
       - uid: kit-execution-failure-rate
         title: ExecutionFailureRate
         condition: C
-        for: 15m
+        for: 5m
         noDataState: OK
         execErrState: Error
         labels:
           severity: warning
         annotations:
-          summary: 'More than 10 % of executions failed in the last 15 minutes'
+          summary: 'More than 10 % of executions failed over 15 minutes (for 5 minutes)'
           description: >-
-            Failed / all executions over 15 minutes (only when at least 5 ran). n8n UI: Executions, filter by status Error
+            Failed / all production executions over 15 minutes, only when at least 5 ran (editor test runs are not
+            counted). n8n UI: Executions, filter by status Error
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
@@ -164,9 +269,22 @@ groups:
             model:
               refId: A
               expr: >-
-                (sum(increase(n8n_workflow_execution_duration_seconds_count{status!="success"}[15m])) /
-                clamp_min(sum(increase(n8n_workflow_execution_duration_seconds_count[15m])), 1)) and on()
-                (sum(increase(n8n_workflow_execution_duration_seconds_count[15m])) >= 5)
+                (((sum(increase(n8n_workflow_execution_duration_seconds_count{status!="success",mode!~"manual|evaluation|integrated"}[15m])
+                and n8n_workflow_execution_duration_seconds_count{status!="success",mode!~"manual|evaluation|integrated"}
+                offset 15m) or vector(0)) +
+                (sum((n8n_workflow_execution_duration_seconds_count{status!="success",mode!~"manual|evaluation|integrated"}
+                unless n8n_workflow_execution_duration_seconds_count{status!="success",mode!~"manual|evaluation|integrated"}
+                offset 15m) and on(instance) (up offset 15m == 1)) or vector(0))) /
+                clamp_min(((sum(increase(n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"}[15m])
+                and n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"} offset 15m) or
+                vector(0)) + (sum((n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"} unless
+                n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"} offset 15m) and
+                on(instance) (up offset 15m == 1)) or vector(0))), 1)) and on()
+                (((sum(increase(n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"}[15m]) and
+                n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"} offset 15m) or vector(0))
+                + (sum((n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"} unless
+                n8n_workflow_execution_duration_seconds_count{mode!~"manual|evaluation|integrated"} offset 15m) and
+                on(instance) (up offset 15m == 1)) or vector(0))) >= 5)
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -189,9 +307,10 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: 'No successful backup for {{ printf "%.1f" $values.A.Value }} hours on at least one target'
+          summary: 'No successful backup for {{ with $values.A }}{{ printf "%.1f" .Value }}{{ end }} hours on at least one target'
           description: >-
-            The oldest last-success over BACKUP_REMOTES is older than 26 h (or no backup metric exists at all). make logs
+            The oldest last-success over BACKUP_REMOTES is older than 26 h; the clock starts when backups were switched
+            on, and a target that never succeeded counts as never. Quiet while BACKUP_ENABLED is false. make logs
             SERVICE=backup SINCE=48h; make backup-now; make doctor
         data:
           - refId: A
@@ -199,7 +318,9 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              expr: '(time() - min(backup_last_success_timestamp_seconds)) / 3600'
+              expr: >-
+                ((time() - (min(backup_last_success_timestamp_seconds or on(remote) (backup_last_status * 0)) or on()
+                max(backup_schedule_enabled_since_timestamp_seconds))) / 3600) * on() max(backup_schedule_enabled)
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -288,16 +409,19 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'Last passing restore test was {{ printf "%.1f" $values.A.Value }} days ago'
+          summary: 'No passing restore test for {{ with $values.A }}{{ printf "%.1f" .Value }}{{ end }} days'
           description: >-
-            The weekly restore test (RESTORE_TEST_SCHEDULE) has not passed for more than 8 days. make restore-test
+            The weekly restore test (RESTORE_TEST_SCHEDULE) has not passed for more than 8 days (counted from when backups
+            were switched on). make restore-test
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
             datasourceUid: prometheus
             model:
               refId: A
-              expr: '(time() - max(restore_test_last_success_timestamp_seconds)) / 86400'
+              expr: >-
+                ((time() - (max(restore_test_last_success_timestamp_seconds) or on()
+                max(backup_schedule_enabled_since_timestamp_seconds))) / 86400) * on() max(backup_schedule_enabled)
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -320,10 +444,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'Root disk {{ humanizePercentage $values.A.Value }} full'
+          summary: 'Filesystem {{ $labels.mountpoint }} {{ with $values.A }}{{ humanizePercentage .Value }}{{ end }} full'
           description: >-
-            Above 80 %: Docker logs, the database and local backups all live there. docker system df; prune executions
-            (EXECUTIONS_DATA_MAX_AGE); keep backups off-host
+            Above 80 %: Docker logs, the database and local backups live on the host's disks. docker system df; prune
+            executions (EXECUTIONS_DATA_MAX_AGE); keep backups off-host
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
@@ -331,8 +455,11 @@ groups:
             model:
               refId: A
               expr: >-
-                max(1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} /
-                node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})
+                max by (mountpoint) (1 -
+                node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|iso9660|fuse.*",mountpoint!~"/boot.*"} /
+                node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|iso9660|fuse.*",mountpoint!~"/boot.*"}) unless
+                on(mountpoint) (max by (mountpoint)
+                (node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs|nsfs|iso9660|fuse.*",mountpoint!~"/boot.*"}) == 1)
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -355,7 +482,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'TLS certificate expires in {{ printf "%.1f" $values.A.Value }} days'
+          summary: 'TLS certificate expires in {{ with $values.A }}{{ printf "%.1f" .Value }}{{ end }} days'
           description: >-
             Caddy renews 30 days ahead, so renewal keeps failing: make logs SERVICE=caddy SINCE=24h (DNS, port 80, ACME
             rate limits)
@@ -379,6 +506,39 @@ groups:
                 - evaluator:
                     type: lt
                     params: [14]
+      - uid: kit-cert-check-failing
+        title: CertCheckFailing
+        condition: C
+        for: 2h30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The hourly certificate check cannot read the certificate Caddy serves'
+          description: >-
+            Three hourly cert-checks in a row failed, so CertExpiring is blind. make logs SERVICE=backup; make logs
+            SERVICE=caddy SINCE=3h
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 'min(cert_check_success)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
       - uid: kit-container-restarting
         title: ContainerRestarting
         condition: C
@@ -388,10 +548,9 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: 'A container of Compose project {{ $labels.container_label_com_docker_compose_project }} restarted more than twice in 15 minutes'
+          summary: 'A container of this kit restarted more than twice in 15 minutes'
           description: >-
-            Crash loop (one alert per Compose project on this host): make status shows which one; make logs SERVICE=<name>
-            SINCE=15m
+            Crash loop in this kit's Compose project: make status shows which one; make logs SERVICE=NAME SINCE=15m
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
@@ -400,7 +559,9 @@ groups:
               refId: A
               expr: >-
                 max by (container_label_com_docker_compose_project)
-                (changes(container_start_time_seconds{container_label_com_docker_compose_project!=""}[15m]))
+                (changes(container_start_time_seconds{container_label_com_docker_compose_project!=""}[15m])) and
+                on(container_label_com_docker_compose_project) count by (container_label_com_docker_compose_project)
+                (container_health_state{container_label_com_docker_compose_service="n8n-main"})
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -423,17 +584,17 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: '{{ printf "%.1f" $values.A.Value }} monitoring target(s) down'
+          summary: '{{ with $values.A }}{{ printf "%.0f" .Value }}{{ end }} monitoring target(s) down'
           description: >-
-            Caddy metrics, node-exporter, cAdvisor, Loki or Alloy cannot be scraped: dashboards and alerts that depend on
-            them go blind. make status
+            Caddy metrics, node-exporter, cAdvisor, Loki, Alloy or Grafana cannot be scraped: dashboards and alerts that
+            depend on them go blind. make status
         data:
           - refId: A
             relativeTimeRange: {from: 900, to: 0}
             datasourceUid: prometheus
             model:
               refId: A
-              expr: 'count(up{job=~"caddy|node|cadvisor|loki|alloy"} == 0) or vector(0)'
+              expr: 'count(up{job=~"caddy|node|cadvisor|loki|alloy|grafana"} == 0) or vector(0)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200

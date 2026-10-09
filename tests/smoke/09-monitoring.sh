@@ -62,17 +62,20 @@ for uid in kit-n8n-overview kit-host kit-backups; do
 done
 req GET /grafana/api/v1/provisioning/alert-rules -u "${gf_auth}"
 rule_count="$(jq -r 'length' <<<"$(req_body)" 2>/dev/null || echo 0)"
-check "alert rules provisioned (${rule_count})" test "${rule_count}" -ge 13
+check "alert rules provisioned (${rule_count})" test "${rule_count}" -ge 17
 if grep -q 'type: telegram' "${KIT_DIR}/monitoring/grafana/provisioning/alerting/notifications.yml" 2>/dev/null; then
   # the contact point references $ALERT_TELEGRAM_BOT_TOKEN: prove Grafana expanded it (decrypted export, admin only)
   req GET '/grafana/api/v1/provisioning/contact-points/export?decrypt=true&format=json' -u "${gf_auth}"
-  bot_token="$(jq -r '.contactPoints[]? | select(.name == "telegram") | .receivers[0].settings.bottoken // empty' <<<"$(req_body)" 2>/dev/null || true)"
+  settings="$(jq -c '.contactPoints[]? | select(.name == "telegram") | .receivers[0].settings // {}' <<<"$(req_body)" 2>/dev/null || true)"
   check "Telegram contact point carries the token from .env (HTTP ${REQ_STATUS})" \
-    test "${bot_token}" = "$(env_get ALERT_TELEGRAM_BOT_TOKEN)"
+    test "$(jq -r '.bottoken // empty' <<<"${settings}")" = "$(env_get ALERT_TELEGRAM_BOT_TOKEN)"
+  # Grafana's default parse_mode is HTML, in which Telegram rejects any "<…>" in an alert text: messages go out as plain text
+  check "Telegram messages are plain text (parse_mode $(jq -r '.parse_mode // "unset"' <<<"${settings}"))" \
+    bash -c '[[ "${1,,}" == "none" ]]' _ "$(jq -r '.parse_mode // empty' <<<"${settings}")"
 fi
 rules_ok() {
   req GET /grafana/api/prometheus/grafana/api/v1/rules -u "${gf_auth}"
-  [[ "${REQ_STATUS}" == 200 ]] && jq -e '[.data.groups[].rules[]] | length >= 13 and all(.health != "error")' <<<"$(req_body)" >/dev/null
+  [[ "${REQ_STATUS}" == 200 ]] && jq -e '[.data.groups[].rules[]] | length >= 17 and all(.health != "error")' <<<"$(req_body)" >/dev/null
 }
 check "every alert rule evaluates without error (<= 90 s)" wait_for 90 "rule health" rules_ok
 if ! rules_ok; then
@@ -82,17 +85,39 @@ fi
 # --- Loki (queried through Grafana's data source proxy) -------------------------------------------------------------
 loki_has() {   # loki_has 'LOGQL'
   req GET /grafana/api/datasources/proxy/uid/loki/loki/api/v1/query_range -u "${gf_auth}" -G \
-    --data-urlencode "query=${1}" --data-urlencode "limit=5" --data-urlencode "since=15m"
+    --data-urlencode "query=${1}" --data-urlencode "limit=5" --data-urlencode "since=1h"
   [[ "${REQ_STATUS}" == 200 ]] && jq -e '.data.result | length > 0' <<<"$(req_body)" >/dev/null
 }
-check "Loki holds n8n-main's logs (<= 90 s)" wait_for 90 "n8n-main logs in Loki" loki_has '{service="n8n-main"}'
-check "n8n's JSON log level became a label" wait_for 30 "level label" loki_has '{service="n8n-main", level=~".+"}'
+check "Loki holds n8n's logs (<= 90 s; an idle n8n-main logs rarely, so any n8n process, last hour)" wait_for 90 "n8n logs in Loki" loki_has '{service=~"n8n-.*"}'
+check "n8n's JSON log level became a label" wait_for 30 "level label" loki_has '{service=~"n8n-.*", level=~".+"}'
 check "Loki holds Caddy's access log" wait_for 30 "caddy logs" loki_has '{service="caddy"}'
+# 03-08 just called the n8n API with X-N8n-Api-Key: Caddy's access log drops request headers, so no key reaches Loki
+req GET /grafana/api/datasources/proxy/uid/loki/loki/api/v1/query_range -u "${gf_auth}" -G \
+  --data-urlencode 'query={service="caddy"} |= "\"X-N8n-Api-Key\":["' \
+  --data-urlencode "limit=5" --data-urlencode "since=5m"
+# (matches the JSON key of a logged header — Caddy logs header values as arrays, which LogQL's json parser skips. This
+# query's own URL, which Caddy logs too, carries the term percent-encoded, so it cannot match itself.)
+check "no n8n API key in Caddy's access log (Loki, last 5 min)" \
+  bash -c '[[ "$1" == 200 ]] && [[ "$(jq -r ".data.result | length" <<<"$2")" == 0 ]]' _ "${REQ_STATUS}" "$(req_body)"
+
+# --- isolation: the workers run user workflows, which can call any address on their networks ------------------------
+reach_js='const hs = process.argv.slice(1); Promise.all(hs.map((h) => fetch("http://" + h + "/", { signal: AbortSignal.timeout(5000) }).then(() => h, () => ""))).then((r) => console.log(r.filter(Boolean).join(" ")))'
+targets=(grafana:3000 loki:3100 alloy:12345 node-exporter:9100 cadvisor:8080)
+if [[ "${profiles}" == *",kuma,"* ]]; then
+  targets+=(uptime-kuma:3001)
+fi
+reachable="$(compose exec -T n8n-worker-1 node -e "${reach_js}" "${targets[@]}" 2>/dev/null || echo "(probe failed)")"
+check "a worker cannot reach Grafana, Loki, Alloy, the exporters or Kuma (reachable: ${reachable:-none})" test -z "${reachable}"
 
 # --- Uptime Kuma (profile kuma) -------------------------------------------------------------------------------------
 if [[ "${profiles}" == *",kuma,"* ]]; then
   kuma_url="${BASE_URL/:\/\//://kuma.}"
   kuma_status="$(curl -sS --max-time 30 "${CURL_TLS[@]}" -o /dev/null -w '%{http_code}' "${kuma_url}/" 2>/dev/null || echo 000)"
   check "Uptime Kuma answers at ${kuma_url}/ (HTTP ${kuma_status})" bash -c '[[ "$1" =~ ^(200|302)$ ]]' _ "${kuma_status}"
+  # /api/entry-page looks the same before and after setup when the DB type is preset; Kuma's socket "setup" event is the
+  # reliable signal (kuma-setup.sh --check)
+  kuma_state="$("${KIT_DIR}/scripts/kuma-setup.sh" --check 2>/dev/null || true)"
+  check "Uptime Kuma's admin account exists — no open first-run page (${kuma_state:-no answer})" \
+    test "${kuma_state}" = "already set up"
 fi
 finish

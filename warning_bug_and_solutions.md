@@ -266,3 +266,44 @@ Regression test for the worst ones: `tests/ci/dr-drill.sh` (CI runs it on every 
 ### Windows git: new scripts committed without the executable bit; empty dirs vanish in `git stash -u`
 - **Symptom:** CI step `tests/ci/dr-drill.sh: Permission denied`; a freshly created empty `dashboards/` directory was gone after a stash round trip.
 - **Fix:** `git update-index --chmod=+x <file>` for every new script committed from Windows (check with `git ls-files -s`); create directories right before writing into them. Also: in this Bash tool `\\` inside heredocs collapses to `\` — patch scripts are written as files (memory note).
+
+## 2026-10-09 · S6 on the real VM + an 8-agent verification (4 investigators, 4 skeptical verifiers): 41 confirmed findings
+
+The first real run of the monitoring profile (build VM, 4 vCPU / 6 GB, shared with other projects) and a workflow that
+re-checked every rule, panel and isolation claim against the live stack. Every finding below was confirmed by its verifier.
+
+### cAdvisor's disk metrics drove the VM load to 44
+- **Symptom:** after `make up` with the profile, load average 44 on 4 vCPU, 69 % kernel time; Grafana's first start missed its healthcheck window.
+- **Root cause:** cAdvisor's per-container filesystem usage (`disk`, `diskIO`) walks every container's layers each housekeeping cycle — 40 containers on this host.
+- **Verify:** `docker stats` → cAdvisor 60 % CPU / 224 MiB; with `--disable_metrics=…,disk,diskIO`: 0.5 % CPU / 25 MiB, load back to 5 within minutes.
+- **Fix:** disk + diskIO disabled (no panel used them); Grafana `start_period: 300s` (first start = ~700 migrations), `MEM_LIMIT_GRAFANA=768m`, `MEM_LIMIT_ALLOY=384m`, `make up --wait-timeout 480`.
+
+### Telegram silently rejects any alert text with "<…>" — ContainerRestarting could never be delivered
+- **Root cause:** Grafana's Telegram integration defaults to `parse_mode: HTML` (grafana/alerting receivers/telegram/v1/config.go); the rule description contained `make logs SERVICE=<name>`.
+- **Verify:** sendMessage with parse_mode=HTML and `<name>` in the text → `400 can't parse entities: Unsupported start tag "name"`.
+- **Fix:** contact point `parse_mode: None` + a short kit template (`🔴 FIRING: …` / `✅ RESOLVED: …`, summary, description, link); no `<…>` placeholders in rules; smoke 09 checks the provisioned parse_mode.
+
+### Uptime Kuma's first-run page was open to the internet and to every workflow
+- **Symptom:** an hour after `make up`, `kuma.DOMAIN` still offered "choose a database" + "create the admin" to anyone; Kuma also shared `proxy` with the workers.
+- **Fix:** `UPTIME_KUMA_DB_TYPE=sqlite` (skips the database page) and `make up` claims the admin itself (`scripts/kuma-setup.sh`, Kuma's own socket.io `setup` event from inside the container, password from `.env` on stdin). Gotcha found while building it: Kuma registers its socket handlers only after async work per connection (an immediate `emit` is dropped), and a fresh Kuma sends BOTH `loginRequired` and `setup` — the script waits for `setup`, and only concludes "already set up" when no `setup` follows within 3 s (tested against a throwaway fresh Kuma: created, then idempotent). `/api/entry-page` looks identical before and after setup once the DB type is preset, so `kuma-setup.sh --check` (the socket signal) backs doctor and smoke 09.
+
+### n8n API keys were logged in clear text and shipped to Loki
+- **Root cause:** Caddy redacts only Authorization/Cookie; `X-N8n-Api-Key` (and any user-chosen webhook auth header) was logged, and S6's Alloy copied it into Loki (14-day retention).
+- **Fix:** both Caddy sites log with `format filter { wrap json  request>headers delete }`; the VM's Loki volume was purged and the smoke API key rotated; smoke 09 asserts no `x-n8n-api-key` in Caddy's logs. Query strings are still logged (documented: no secrets in webhook URLs).
+
+### Grafana and Kuma were reachable from workflows; Grafana shares the n8n origin
+- **Fix:** private networks `edge-grafana` / `edge-kuma` (Caddy + one service each) instead of `proxy`; smoke 09 proves from inside a worker that Grafana, Loki, Alloy, the exporters and Kuma are unreachable. Grafana: plugin catalogue, external snapshots and public dashboards off; generated `GRAFANA_SECRET_KEY` (new installs; default kept as fallback so existing data stays readable); `UI_PROTECT=on` no longer forwards the edge password (`request_header -Authorization`). Open decision: move Grafana to its own `grafana.DOMAIN`.
+
+### Alerts that could not fire, or fired wrongly
+- **Postgres/Valkey down paged nobody:** n8n keeps answering /metrics without its database. New `KitServiceUnhealthy` from cAdvisor's `container_health_state` (the kit's Docker healthchecks).
+- **Partial pools:** one of two webhook processors down raised nothing; all workers down was only a warning. New `WebhookProcessorMissing` (warning) and `WorkerPoolDown` (critical; also the single-worker case).
+- **ExecutionFailureRate undercounted:** `increase()` drops the first observation of a series n8n creates on first use — 4 real failures counted as 2.13. Now counts series born inside the window (only for targets scraped 15 m earlier); editor runs excluded; `for: 5m`.
+- **BackupMissing fired on every fresh install and forever with backups off; RestoreTestStale never fired before the first test:** the backup sidecar now exports `backup_schedule_enabled` + `…_since_timestamp_seconds`; both clocks start when backups are switched on and stop while they are off; a target that never succeeded counts as never.
+- **CertExpiring was blind when the cert-check fails:** new `CertCheckFailing`. **DiskHigh** watched only `/`: now every real filesystem. **ContainerRestarting** scoped to this kit without environment variables (the project that has an n8n-main container). Templates guarded (`{{ with $values.A }}`).
+
+### Dashboard truthfulness
+- TLS panel: neutral "not checked (TLS_MODE=internal …)" instead of a red "No data", and a distinct "cert-check failing"; Host CPU stack now adds up to "CPU busy" ("not accounted by the guest kernel" = hypervisor time); load per CPU with thresholds; disk I/O without the duplicate LVM device; pool stats show "up / down"; Caddy traffic without Prometheus' own scrapes; sparse backup series drawn as points; restart gaps no longer bridged; new panels "CPU by Compose project" and "Memory per container (% of its limit)"; the project variable comes from this kit's own Loki.
+
+### Tooling (this session)
+- The heredoc backslash collapse (memory note) struck twice more — once silently (`printf` formats with literal newlines in `size_mb`), once caught by an assertion. Patches are now written as files.
+- The VM sync helper diffed only UNSTAGED changes, so a file whose executable bit had been staged (`git update-index --chmod=+x`) was skipped; it now diffs against HEAD and cleans untracked files under compose/ tests/ docs/ .github/ (ignored files such as .env are never touched).

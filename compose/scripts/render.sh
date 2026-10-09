@@ -194,9 +194,9 @@ YAML
 # trust it merges into n8n-worker-1/2 (extra_hosts, the /certs volume, NODE_EXTRA_CA_CERTS) is written
 # inline here for worker-3..N — same keys, same values — when .env says TLS_MODE=internal. The merged
 # model of worker-N therefore equals worker-1's in both TLS modes. ($'...' keeps the ${DOMAIN:?} literal.)
-dev_volume_line=$'\n      - caddy_data:/certs:ro'
+dev_volume_line=$'\n      - ./secrets/dev-root.crt:/certs/dev-root.crt:ro,z'
 dev_extra_hosts_lines=$'\n    extra_hosts:\n      - "${DOMAIN:?set DOMAIN}:host-gateway"'
-dev_env_line=$'\n      NODE_EXTRA_CA_CERTS: /certs/caddy/pki/authorities/local/root.crt'
+dev_env_line=$'\n      NODE_EXTRA_CA_CERTS: /certs/dev-root.crt'
 tls_mode="$(env_get TLS_MODE)"
 dev_trust=0
 if [[ "${tls_mode}" == "internal" ]]; then
@@ -358,6 +358,21 @@ contactPoints:
         settings:
           bottoken: $ALERT_TELEGRAM_BOT_TOKEN
           chatid: "$ALERT_TELEGRAM_CHAT_ID"
+          # plain text: Grafana's default parse_mode HTML makes Telegram reject any text with "<…>" (verified 2026-10-09:
+          # "can't parse entities: Unsupported start tag") — the alert would silently never arrive
+          parse_mode: None
+          message: '{{ template "kit.telegram" . }}'
+templates:
+  - orgId: 1
+    name: kit-telegram
+    template: |
+      {{ define "kit.telegram" }}{{ range .Alerts }}
+      {{- if eq .Status "firing" }}🔴 FIRING{{ else }}✅ RESOLVED{{ end }}: {{ .Labels.alertname }} ({{ .Labels.severity }})
+      {{ .Annotations.summary }}
+      {{ .Annotations.description }}
+      {{ .GeneratorURL }}
+
+      {{ end }}{{ end }}
 policies:
   - orgId: 1
     receiver: telegram

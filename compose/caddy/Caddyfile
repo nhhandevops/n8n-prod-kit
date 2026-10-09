@@ -204,7 +204,12 @@
 	# Access log as JSON lines on stdout -> `make logs SERVICE=caddy` / Loki.
 	log {
 		output stdout
-		format json
+		# request headers are dropped: n8n API keys (X-N8n-Api-Key) and user-chosen webhook auth headers would otherwise
+		# be logged in clear text and kept by Loki (Caddy itself only redacts Authorization and Cookie)
+		format filter {
+			wrap json
+			request>headers delete
+		}
 	}
 
 	# Cap request bodies (webhook payloads, binary uploads, workflow imports).

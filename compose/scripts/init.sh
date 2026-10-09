@@ -187,8 +187,13 @@ secret_runners="$(rand_hex 32)"
 env_set N8N_RUNNERS_AUTH_TOKEN "${secret_runners}"
 secret_grafana="$(rand_hex 12)"
 env_set GRAFANA_ADMIN_PASSWORD "${secret_grafana}"
-unset secret_key secret_pg secret_valkey secret_runners secret_grafana
-ok "secrets generated (N8N_ENCRYPTION_KEY, POSTGRES_PASSWORD, VALKEY_PASSWORD, N8N_RUNNERS_AUTH_TOKEN, GRAFANA_ADMIN_PASSWORD)"
+# monitoring profile: Grafana's secret key (encrypts what Grafana stores) and Uptime Kuma's admin, claimed by make up
+secret_grafana_key="$(rand_hex 20)"
+env_set GRAFANA_SECRET_KEY "${secret_grafana_key}"
+secret_kuma="$(rand_hex 16)"
+env_set KUMA_ADMIN_PASSWORD "${secret_kuma}"
+unset secret_key secret_pg secret_valkey secret_runners secret_grafana secret_grafana_key secret_kuma
+ok "secrets generated (N8N_ENCRYPTION_KEY, POSTGRES_PASSWORD, VALKEY_PASSWORD, N8N_RUNNERS_AUTH_TOKEN, GRAFANA_ADMIN_PASSWORD, GRAFANA_SECRET_KEY, KUMA_ADMIN_PASSWORD)"
 
 # --- 5a. directories first (the age keys land in secrets/) -------------------------------------------
 mkdir -p "${KIT_DIR}/secrets" "${KIT_DIR}/backups" "${KIT_DIR}/monitoring/prometheus/targets"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # compose/scripts/dev-ca.sh — dev-TLS plumbing for TLS_MODE=internal (`make dev-ca`; called by `make up`).
 #
-# With `tls internal` Caddy mints its own CA under /data/caddy/pki/authorities/local/ in the caddy_data volume. Because
-# the caddy service runs as uid 1000, that CA is readable by n8n (also uid 1000) straight through the volume, which
-# compose.dev.yml mounts read-only into every n8n service as /certs with NODE_EXTRA_CA_CERTS pointing at root.crt. Node
-# reads that file ONCE at process start, so the CA must exist BEFORE the n8n containers start — this script guarantees
-# that by starting caddy first and waiting for the file. It also exports a copy to secrets/dev-root.crt for `make trust-ca`.
+# With `tls internal` Caddy mints its own CA under /data/caddy/pki/authorities/local/ in the caddy_data volume. This
+# script starts caddy first, waits for the CA certificate and exports it to secrets/dev-root.crt, which compose.dev.yml
+# mounts read-only into every n8n service (and Uptime Kuma) as /certs/dev-root.crt with NODE_EXTRA_CA_CERTS pointing at
+# it — only the certificate, never the caddy_data volume with the CA's private key. Node reads that file ONCE at process
+# start, so it must exist BEFORE those containers start; `make trust-ca` uses the same file.
 # Idempotent; safe on a running stack.
 # shellcheck disable=SC2310,SC2312
 set -euo pipefail

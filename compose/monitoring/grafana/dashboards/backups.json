@@ -524,7 +524,7 @@
       "id": 8,
       "type": "stat",
       "title": "TLS certificate valid for",
-      "description": "ACME modes only (hourly cert-check); internal TLS uses 12 h certificates and shows no value",
+      "description": "ACME modes: days until the certificate Caddy serves expires (hourly cert-check). Internal TLS: 12 h certificates, not checked",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -542,7 +542,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(min(cert_expiry_timestamp_seconds) - time()) / 86400",
+          "expr": "(min(cert_expiry_timestamp_seconds) - time()) / 86400 or (min(cert_check_success) - 1) * 9999",
           "legendFormat": "",
           "instant": true
         }
@@ -570,7 +570,31 @@
               }
             ]
           },
-          "decimals": 0
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "not checked (TLS_MODE=internal, or no hourly check yet)",
+                  "color": "text",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "-9999": {
+                  "text": "cert-check failing",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "not checked (TLS_MODE=internal, or no hourly check yet)"
         },
         "overrides": []
       },
@@ -624,12 +648,14 @@
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "always",
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
-            }
+            },
+            "lineInterpolation": "stepAfter"
           },
           "min": 0
         },
@@ -689,12 +715,14 @@
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "always",
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
-            }
+            },
+            "lineInterpolation": "stepAfter"
           },
           "min": 0
         },

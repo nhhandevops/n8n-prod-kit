@@ -18,7 +18,12 @@ kuma.{$DOMAIN}:{$HTTPS_PORT:443} {
 	# skip_hosts list and Kuma requests are never access-logged (verified).
 	log {
 		output stdout
-		format json
+		# request headers are dropped: n8n API keys (X-N8n-Api-Key) and user-chosen webhook auth headers would otherwise
+		# be logged in clear text and kept by Loki (Caddy itself only redacts Authorization and Cookie)
+		format filter {
+			wrap json
+			request>headers delete
+		}
 	}
 
 	# Same reason as in the main site: the 502 Caddy generates while Kuma is
@@ -30,5 +35,7 @@ kuma.{$DOMAIN}:{$HTTPS_PORT:443} {
 
 	# Uptime Kuma speaks HTTP + WebSocket (socket.io); reverse_proxy passes
 	# the Upgrade handshake through transparently.
+	# the same optional UI protection (IP allow-list + basic auth) as the n8n editor
+	import /etc/caddy/ui-protect-{$UI_PROTECT:off}.caddy
 	reverse_proxy uptime-kuma:3001
 }

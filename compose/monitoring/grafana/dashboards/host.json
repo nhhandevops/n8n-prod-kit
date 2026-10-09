@@ -22,22 +22,21 @@
         "label": "Compose project",
         "type": "query",
         "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
+          "type": "loki",
+          "uid": "loki"
         },
         "query": {
-          "query": "label_values(container_start_time_seconds, container_label_com_docker_compose_project)",
+          "type": 1,
+          "label": "project",
+          "stream": "",
           "refId": "project"
         },
-        "definition": "label_values(container_start_time_seconds, container_label_com_docker_compose_project)",
+        "definition": "label_values(project)",
         "refresh": 2,
         "includeAll": false,
         "multi": false,
         "sort": 1,
-        "current": {
-          "text": "n8nkit",
-          "value": "n8nkit"
-        }
+        "current": {}
       }
     ]
   },
@@ -273,8 +272,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Load (1 min)",
-      "description": "",
+      "title": "Load per CPU (1 min)",
+      "description": "1-minute load divided by the CPU count: above 1 processes wait for a CPU",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -292,7 +291,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "node_load1",
+          "expr": "node_load1 / scalar(count(node_cpu_seconds_total{mode=\"idle\"}))",
           "legendFormat": "",
           "instant": true
         }
@@ -309,6 +308,14 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
               }
             ]
           },
@@ -461,7 +468,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "CPU",
-      "description": "",
+      "description": "Busy time per mode; on a VM the hypervisor's share shows as 'not accounted'. The stack top = CPU busy",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -481,6 +488,15 @@
           },
           "expr": "100 * sum by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) / scalar(count(node_cpu_seconds_total{mode=\"idle\"}))",
           "legendFormat": "{{mode}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "clamp_min(100 * (1 - sum(rate(node_cpu_seconds_total[5m])) / scalar(count(node_cpu_seconds_total{mode=\"idle\"}))), 0)",
+          "legendFormat": "not accounted by the guest kernel (VM)"
         }
       ],
       "fieldConfig": {
@@ -491,13 +507,15 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "normal",
               "group": "A"
             }
           },
-          "min": 0
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -556,7 +574,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "normal",
               "group": "A"
@@ -612,13 +631,15 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
             }
           },
-          "min": 0
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -638,7 +659,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Disk I/O",
-      "description": "",
+      "description": "Physical disks only (LVM/device-mapper volumes would count the same I/O twice)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -656,7 +677,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (device) (rate(node_disk_read_bytes_total[5m]))",
+          "expr": "sum by (device) (rate(node_disk_read_bytes_total{device!~\"dm-.*|sr[0-9]+\"}[5m]))",
           "legendFormat": "read {{device}}"
         },
         {
@@ -665,7 +686,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (device) (rate(node_disk_written_bytes_total[5m]))",
+          "expr": "sum by (device) (rate(node_disk_written_bytes_total{device!~\"dm-.*|sr[0-9]+\"}[5m]))",
           "legendFormat": "write {{device}}"
         }
       ],
@@ -677,7 +698,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -733,7 +755,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -759,7 +782,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "Memory per container (working set)",
-      "description": "Compare with the MEM_LIMIT_* values in .env",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -789,7 +812,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -854,7 +878,8 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -909,13 +934,129 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": true,
+            "pointSize": 4,
+            "spanNulls": 120000,
             "stacking": {
               "mode": "none",
               "group": "A"
             }
           },
           "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "CPU by Compose project (cores)",
+      "description": "Every Compose project on this host: shows how much of 'CPU busy' is this kit and how much is something else",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (container_label_com_docker_compose_project) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_project!=\"\"}[5m]))",
+          "legendFormat": "{{container_label_com_docker_compose_project}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": 120000,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Memory per container (% of its limit)",
+      "description": "Working set / MEM_LIMIT_*. A container stuck near 100 % is throttled by its limit (raise MEM_LIMIT_* in .env)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_project=\"$project\"}) / sum by (container_label_com_docker_compose_service) (container_spec_memory_limit_bytes{container_label_com_docker_compose_project=\"$project\"} > 0)",
+          "legendFormat": "{{container_label_com_docker_compose_service}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": 120000,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },

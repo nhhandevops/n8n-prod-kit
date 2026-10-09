@@ -37,4 +37,6 @@ route {
 	basic_auth {
 		{$UI_BASIC_AUTH_USER} {$UI_BASIC_AUTH_HASH}
 	}
+	# the edge password is for Caddy only — never forward it to n8n, Grafana or Kuma
+	request_header -Authorization
 }
