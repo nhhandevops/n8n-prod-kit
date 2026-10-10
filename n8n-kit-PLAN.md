@@ -214,7 +214,7 @@ docs/                        # mkdocs site: quickstart, architecture, operations
 
 | Failure | Behaviour |
 |---|---|
-| Worker dies mid-execution | Bull marks the job stalled and re-queues it; execution retried; documented that workflows should be idempotent |
+| Worker dies mid-execution | **Queued work is safe — in-flight work is lost.** Another worker picks up everything still waiting; the executions the dead worker was running are swept ~90 s later (lock 60 s + stalled check 30 s) and end as `crashed`. n8n 2.0 removed Bull's stalled-job retry (`maxStalledCount` is hard-coded to 0), so they are **not** re-queued or retried. Mitigate by draining instead of killing (`docker stop` + `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above p99), giving critical workflows an Error Workflow, and keeping workflows replay-safe. Needs ≥ 2 workers: the sweep only runs inside a worker process. Measured and sourced in `docs/operations/chaos-drills.md` |
 | Webhook processor dies | Caddy/ALB health check removes it; the other handles traffic; Compose/ECS restarts it |
 | Main dies | Webhooks and queued executions continue; schedule triggers pause until restart (seconds) |
 | Redis restart | AOF restores queue; in-flight jobs re-run |
@@ -275,7 +275,7 @@ n8n-prod-kit/
 | 4 | `make up` | ~2 min; `make status` shows 9 healthy services; HTTPS login page loads |
 | 5 | Create owner account; `make import-template NAME=zalo-form-notify` | Workflow appears, README explains credentials |
 | 6 | Send 200 test webhooks (`make loadtest N=200`) | Queue depth rises then drains; Grafana shows executions on both workers |
-| 7 | `docker kill n8n-worker-1` mid-run | Executions complete on worker-2; killed job re-queued; Compose restarts worker-1 |
+| 7 | `make chaos SCENARIO=worker` (kills a worker mid-run) | Everything still queued completes on worker-2; the ~10 executions that were in flight end as `crashed` and are **not** retried (n8n 2.0 removed Bull's stalled retry); the idempotent fixture leaves exactly one side effect per completed input. Docker does **not** restart a container you killed, so the drill brings it back with `compose up -d` — the demo point is that the queue survives and the operator recovers in one command |
 | 8 | `make backup-now` | Encrypted bundle appears in bucket |
 | 9 | Delete a workflow, `make restore BACKUP=latest` | Workflow is back; credentials still decrypt |
 | 10 | `make upgrade N8N_VERSION=<next>` | Pre-upgrade backup, migration, health green; `make rollback` works |
@@ -302,7 +302,7 @@ n8n-prod-kit/
 | TC-005 | Routing | POST `/webhook/test` | Handled by a webhook processor (log shows service name), not main |
 | TC-006 | Queue | Trigger execution | Job appears in Redis; executed by a worker; stored in Postgres |
 | TC-007 | Scale | `make scale-workers N=4` | 4 workers registered; load spread |
-| TC-008 | Resilience | Kill worker mid-execution | Job re-queued; execution finishes on another worker; no duplicate side effects in idempotent test workflow |
+| TC-008 | Resilience | Kill worker mid-execution | Every input reaches a terminal state (nothing vanishes); queued work finishes on the other worker; in-flight work ends as `crashed`, loudly, and is not retried; the idempotent test workflow leaves exactly one side effect per completed input; the killed worker is healthy again after `compose up -d` |
 | TC-009 | Resilience | Stop Redis 60 s | Webhooks return 5xx during outage; after restart, queue intact |
 | TC-010 | Resilience | Restart main | Webhooks still processed during restart; schedules resume |
 | TC-011 | Backup | `make backup-now` | Encrypted bundle uploaded; contains DB dump + key |
