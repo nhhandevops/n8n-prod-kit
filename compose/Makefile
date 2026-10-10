@@ -50,7 +50,7 @@ SINCE ?= 10m
 with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
 
 .PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers kuma-setup \
-        backup-now backups restore restore-clean restore-test detach-recovery-key upgrade rollback loadtest dev-ca trust-ca lint version \
+        backup-now backups restore restore-clean restore-test detach-recovery-key upgrade rollback loadtest chaos dev-ca trust-ca lint version \
         env-keys clean
 
 help: ## Show this help
@@ -155,6 +155,10 @@ scale-workers: ## Set the worker count: make scale-workers N=4  (1..16; N=1 park
 
 loadtest: ## Burst N webhooks through the pool and watch the queue drain: make loadtest [N=200] [P=20] [MODE=async|sync] [KEEP=1]
 	@N="$(N)" P="$(P)" MODE="$(MODE)" KEEP="$(KEEP)" DRAIN_TIMEOUT="$(DRAIN_TIMEOUT)" $(KIT_DIR)/scripts/loadtest.sh
+
+chaos: ## Break one part of the running stack and prove it recovers: make chaos SCENARIO=worker|redis|main [N=120] [YES=1]
+	@[[ -n "$(SCENARIO)" ]] || { echo 'usage: make chaos SCENARIO=worker|redis|main [N=120] [OUTAGE=60] [YES=1]' >&2; exit 2; }
+	@SCENARIO="$(SCENARIO)" N="$(N)" P="$(P)" OUTAGE="$(OUTAGE)" YES="$(YES)" $(KIT_DIR)/scripts/chaos.sh
 
 # --- dev TLS -----------------------------------------------------------------------------------------------------------
 

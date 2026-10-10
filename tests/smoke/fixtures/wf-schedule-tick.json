@@ -1,0 +1,21 @@
+{
+  "name": "kit-smoke-template",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "seconds", "secondsInterval": 20 }] } },
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": { "jsCode": "return [{ json: { tick: $execution.id, at: Date.now() } }];" },
+      "name": "Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": { "Schedule": { "main": [[{ "node": "Code", "type": "main", "index": 0 }]] } },
+  "settings": { "executionOrder": "v1" }
+}
