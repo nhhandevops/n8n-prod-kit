@@ -169,7 +169,7 @@ certificate to `~/n8nkit-root.crt`, and under WSL into the Windows `Downloads` f
 - On the host itself it installs into the system trust store with `update-ca-certificates` (Debian, Ubuntu)
   or `update-ca-trust` (RHEL family). It escalates with `sudo -n`, which never prompts, so if your `sudo`
   wants a password it prints `not installed into the host trust store` and offers `curl --cacert <path>`
-  instead. Delete the sentence.
+  instead.
 - For a browser on **another** machine it prints the lines you need: an `scp` of the certificate and
   `certutil -addstore -f ROOT` for an administrator PowerShell on Windows, plus the `security
   add-trusted-cert` equivalent for macOS. The URL to open is printed between the Windows lines and the macOS one.
