@@ -138,7 +138,8 @@ fire() {   # fire PATH FROM TO — POST ids FROM..TO with P in flight, codes app
 # drill may have just killed. Reading it from the victim is how the first version of this drill reported 0 of 120.
 side_effects() {   # how many distinct files this run produced (one per input id, overwritten by a retry)
   local n
-  n="$(compose exec -T n8n-main sh -c "ls -1 /home/node/.n8n-files/chaos-${run_id}-*.txt 2>/dev/null | wc -l" 2>/dev/null || true)"
+  # [0-9]* deliberately: it counts the numbered inputs and never the warm-up call's own file.
+  n="$(compose exec -T n8n-main sh -c "ls -1 /home/node/.n8n-files/chaos-${run_id}-[0-9]*.txt 2>/dev/null | wc -l" 2>/dev/null || true)"
   n="${n//[^0-9]/}"
   printf '%s\n' "${n:-0}"
 }
@@ -179,6 +180,17 @@ scenario_worker() {
     || die "the drill webhook never answered 200 — is the stack healthy?"
   compose exec -T "${victim}" sh -c "rm -f /home/node/.n8n-files/chaos-${run_id}-*.txt" >/dev/null 2>&1 || true
 
+  # The warm-up answers before its own execution has run, so let it settle and baseline every status: every number
+  # reported below is then a delta covering the N inputs alone.
+  settled_n() { printf '%s\n' "$(( $(count_status success) + $(count_status crashed) + $(count_status error) ))"; }
+  warmup_settled() { (( $(settled_n) >= 1 )); }
+  wait_for 120 "the warm-up execution to finish" warmup_settled \
+    || warn "the warm-up has not settled — the counts below may be off by one"
+  local base_success base_crashed base_error
+  base_success="$(count_status success)"
+  base_crashed="$(count_status crashed)"
+  base_error="$(count_status error)"
+
   local before_started
   before_started="$(started_at "${victim}")"
   info "firing ${N} jobs, then killing ${victim} while the backlog drains"
@@ -192,35 +204,54 @@ scenario_worker() {
   done
   info "queue depth at kill time: ${depth}"
   docker kill "$(compose ps -q "${victim}" | head -1)" >/dev/null 2>&1 || warn "could not kill ${victim}"
-  ok "SIGKILLed ${victim} (no graceful shutdown — its in-flight jobs are lost until Bull re-queues them)"
+  ok "SIGKILLed ${victim} — no graceful shutdown, so whatever it was executing is orphaned"
 
-  # Bull only re-queues a job once its lock lapses (QUEUE_WORKER_LOCK_DURATION 60 s) and the stalled check runs
-  # (QUEUE_WORKER_STALLED_INTERVAL 30 s), so recovery legitimately takes up to ~90 s longer than a normal drain.
-  all_written() { (( $(side_effects) >= N )); }
-  local recovered=0
-  wait_for "${RECOVER_TIMEOUT}" "all ${N} inputs to have produced their file" all_written && recovered=1
+  # What actually happens (verified against n8n 2.42.4 and bull 4.16.4, see docs/operations/chaos-drills.md):
+  # the SURVIVING worker runs Bull's stalled sweep, finds the victim's jobs still in `active` with expired locks
+  # (QUEUE_WORKER_LOCK_DURATION 60 s, swept every QUEUE_WORKER_STALLED_INTERVAL 30 s), and because n8n hard-codes
+  # maxStalledCount: 0 it moves them straight to `failed` — never back to `wait`. They surface as `crashed`
+  # executions and are NOT retried. So the drill waits for every input to reach a TERMINAL state, not for every
+  # input to succeed; ~90 s longer than a plain drain is normal.
+  settled() { (( $(settled_n) - base_success - base_crashed - base_error >= N )); }
+  local settled_ok=0
+  wait_for "${RECOVER_TIMEOUT}" "all ${N} inputs to reach a terminal state" settled && settled_ok=1
 
-  local effects st
+  local effects success_n crashed_n error_n st
   effects="$(side_effects)"
+  success_n=$(( $(count_status success) - base_success ))
+  crashed_n=$(( $(count_status crashed) - base_crashed ))
+  error_n=$(( $(count_status error) - base_error ))
   printf '\n' >&2
   log "what n8n recorded for the ${N} inputs"
-  for st in success error crashed running waiting; do
+  for st in success crashed error running waiting; do
     printf '         %-10s %s\n' "${st}" "$(count_status "${st}")" >&2
   done
 
+  # Docker does NOT restart a container terminated with `docker kill`: kill and stop both cancel the restart
+  # manager and set HasBeenManuallyStopped, so `restart: unless-stopped` deliberately stays out of it. Bringing
+  # the worker back is the operator's job — here, this `compose up -d`.
+  if [[ "$(started_at "${victim}")" == "none" ]]; then
+    info "${victim} did not come back on its own — expected: Docker treats an explicit kill as an operator stop"
+  fi
+  compose up -d --wait --wait-timeout "${RECOVER_TIMEOUT}" >/dev/null 2>&1 || true
+
   printf '\n' >&2
   log "worker drill (TC-008)"
-  check "every input produced its side effect (${effects}/${N}) — no job was lost" test "${recovered}" = 1
-  check "exactly one side effect per input (${effects} files for ${N} inputs) — retries did not duplicate" \
-    test "${effects}" -le "${N}"
-  # "none" means the container is not there at all, which must never count as "it came back".
-  check "${victim} came back (started ${before_started} -> $(started_at "${victim}"))" \
-    came_back "${victim}" "${before_started}"
-  # A worker's healthcheck has start_period 300s, so give recovery the same budget the service itself asks for.
-  check "${victim} is healthy again" wait_for "${RECOVER_TIMEOUT}" "${victim} healthy" test_service_healthy "${victim}"
-  check "${survivor} kept working through the kill ($(jobs_logged "${survivor}") jobs)" \
+  check "every input reached a terminal state (${success_n} success + ${crashed_n} crashed + ${error_n} error = ${N}) — nothing vanished" \
+    test "${settled_ok}" = 1
+  check "queued work survived the kill — ${success_n} of ${N} completed on the remaining worker(s)" \
+    test "${success_n}" -gt 0
+  check "exactly one side effect per successful input (${effects} files for ${success_n} successes) — no duplicates, none missing" \
+    test "${effects}" -eq "${success_n}"
+  check "${survivor} took the load over ($(jobs_logged "${survivor}") jobs)" \
     test "$(jobs_logged "${survivor}")" -gt 0
-  info "more executions than inputs means Bull re-ran a stalled job — expected, and why PLAN §2.9 tells users to keep workflows idempotent"
+  check "${victim} is back and healthy after make up" came_back "${victim}" "${before_started}"
+  check "${victim} reports healthy" wait_for "${RECOVER_TIMEOUT}" "${victim} healthy" test_service_healthy "${victim}"
+  if (( crashed_n == 0 )); then
+    warn "no execution ended as crashed — the kill did not catch anything in flight, so this run did not exercise the failure path. Raise N or P."
+  else
+    info "${crashed_n} execution(s) ended as 'crashed': n8n 2.x removed Bull's stalled-job retry (maxStalledCount is hard-coded to 0), so work in flight on a killed worker is LOST, not retried. Drain with docker stop / N8N_GRACEFUL_SHUTDOWN_TIMEOUT instead, and give critical workflows an error workflow — docs/operations/chaos-drills.md"
+  fi
   if (( SMOKE_FAILED > 0 )); then
     KEEP_DRILL=1
     warn "assertions failed — keeping workflow ${wf_id} and the files under /home/node/.n8n-files/chaos-${run_id}-* so you can inspect them"
