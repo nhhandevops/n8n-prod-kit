@@ -89,7 +89,12 @@ cleanup() {
   compose up -d --wait --wait-timeout 300 >/dev/null 2>&1 \
     || warn "the stack did not come back healthy by itself — check make status and make doctor"
   if [[ -n "${KEEP_DRILL}" ]]; then
-    info "KEEP_DRILL: the drill's workflow and files are left in place for inspection"
+    # Keep the evidence, but never leave a drill workflow PUBLISHED: it stays reachable on the public webhook
+    # URL and a schedule workflow would keep firing forever. Deactivating preserves the executions and files.
+    [[ -z "${wf_id}" ]]    || api POST "/api/v1/workflows/${wf_id}/deactivate" || true
+    [[ -z "${sched_id}" ]] || api POST "/api/v1/workflows/${sched_id}/deactivate" || true
+    info "KEEP_DRILL: workflow ${wf_id:-none}${sched_id:+ and ${sched_id}} deactivated but kept, with the files under /home/node/.n8n-files/chaos-${run_id}-*, for inspection"
+    info "delete them when done: make smoke removes any kit-smoke-* workflow, or do it in the UI"
     rm -f "${codes_file}" 2>/dev/null || true
     exit "${rc}"
   fi
@@ -139,12 +144,17 @@ side_effects() {   # how many distinct files this run produced (one per input id
 }
 # RestartCount is not a reliable signal here — it stayed 0 across a kill plus a policy restart on Docker 29 — so
 # "did it come back" is answered by the container's start time having moved instead.
-started_at() {   # started_at SERVICE — when this service's container last started
+started_at() {   # started_at SERVICE — when this service's container last started, or "none" if it is not there
   local cid t
   cid="$(compose ps -q "${1}" 2>/dev/null | head -1)"
   [[ -n "${cid}" ]] || { printf 'none\n'; return 0; }
   t="$(docker inspect -f '{{.State.StartedAt}}' "${cid}" 2>/dev/null || true)"
   printf '%s\n' "${t:-none}"
+}
+came_back() {   # came_back SERVICE PREVIOUS_START — the container exists AND started later than it did before
+  local now
+  now="$(started_at "${1}")"
+  [[ "${now}" != "none" && "${now}" != "${2}" ]]
 }
 count_status() {   # count_status STATUS -> executions of the drill workflow with that status (paged)
   local status="${1}" cursor='' n=0 page
@@ -203,8 +213,9 @@ scenario_worker() {
   check "every input produced its side effect (${effects}/${N}) — no job was lost" test "${recovered}" = 1
   check "exactly one side effect per input (${effects} files for ${N} inputs) — retries did not duplicate" \
     test "${effects}" -le "${N}"
+  # "none" means the container is not there at all, which must never count as "it came back".
   check "${victim} came back (started ${before_started} -> $(started_at "${victim}"))" \
-    test "$(started_at "${victim}")" != "${before_started}"
+    came_back "${victim}" "${before_started}"
   # A worker's healthcheck has start_period 300s, so give recovery the same budget the service itself asks for.
   check "${victim} is healthy again" wait_for "${RECOVER_TIMEOUT}" "${victim} healthy" test_service_healthy "${victim}"
   check "${survivor} kept working through the kill ($(jobs_logged "${survivor}") jobs)" \
@@ -236,10 +247,17 @@ scenario_redis() {
 
   info "firing ${N} jobs to build a backlog, then stopping valkey for ${OUTAGE}s"
   fire "${path}" 1 "${N}"
-  local depth_at_stop
+  # Both numbers are taken as close to the stop as possible: the depth is what must survive the outage, and the
+  # success count is the baseline it has to be measured against. Comparing the TOTAL success count against the
+  # depth would pass vacuously — by then the workers have usually finished more jobs than were left waiting.
+  local depth_at_stop success_at_stop
   depth_at_stop="$(queue_depth)"
+  success_at_stop="$(count_status success)"
   compose stop valkey >/dev/null 2>&1 || die "could not stop valkey"
-  ok "valkey stopped with ${depth_at_stop} job(s) waiting in the queue"
+  ok "valkey stopped with ${depth_at_stop} job(s) waiting and ${success_at_stop} already done"
+  if (( depth_at_stop == 0 )); then
+    warn "nothing was waiting when valkey stopped — the workers drained the burst first. Raise N (make chaos SCENARIO=redis N=400) so the outage has something to protect."
+  fi
 
   # During the outage the webhook processes cannot enqueue, so they must FAIL rather than silently drop the call.
   local outage_codes='' i code
@@ -257,19 +275,29 @@ scenario_redis() {
   sleep "${OUTAGE}"
   compose start valkey >/dev/null 2>&1 || die "could not start valkey again"
   ok "valkey started again after ${OUTAGE}s"
-  compose up -d --wait --wait-timeout 300 >/dev/null 2>&1 || true
+  # A worker's readiness probe requires a LIVE Redis connection, so "every worker healthy again" is the signal that
+  # they have reconnected. Measure the drain only after that, or a slow reconnect looks like a lost queue.
+  local reconnected=0
+  wait_for "${RECOVER_TIMEOUT}" "every service to be healthy again after the outage" stack_healthy && reconnected=1
 
-  drained() { (( $(count_status success) >= depth_at_stop )); }
+  # Only jobs that complete AFTER the stop count — the baseline is what makes this assertion mean anything.
+  drained() { (( $(count_status success) - success_at_stop >= depth_at_stop )); }
   local survived=0
-  wait_for "${RECOVER_TIMEOUT}" "the queued jobs to finish after the outage" drained && survived=1
+  if (( depth_at_stop > 0 )); then
+    wait_for "${RECOVER_TIMEOUT}" "the ${depth_at_stop} queued job(s) to finish after the outage" drained && survived=1
+  else
+    survived=1   # nothing was queued, so there is nothing for the outage to have lost
+  fi
+  local recovered_n=$(( $(count_status success) - success_at_stop ))
 
   printf '\n' >&2
   log "redis drill (TC-009)"
   check "webhooks failed loudly while valkey was down (${good_failures}/3 non-2xx) — no call was silently dropped" \
     test "${good_failures}" -eq 3
-  check "the ${depth_at_stop} job(s) queued before the outage completed afterwards ($(count_status success) success) — AOF kept the queue" \
+  check "every service reconnected and is healthy again" test "${reconnected}" = 1
+  check "the ${depth_at_stop} job(s) queued before the outage completed afterwards (${recovered_n} finished since) — AOF kept the queue" \
     test "${survived}" = 1
-  check "every service is healthy again" wait_for 300 "stack healthy" stack_healthy
+  if (( SMOKE_FAILED > 0 )); then KEEP_DRILL=1; fi
 }
 stack_healthy() {
   local bad
@@ -319,16 +347,25 @@ scenario_main() {
   sent="$(grep -c . "${codes_file}" || true)"
   ok_count="$(grep -c '^200$' "${codes_file}" || true)"
 
-  more_ticks() { (( $(ticks) > ticks_before )); }
+  # n8n-main's healthcheck allows a long start_period, and on a loaded host it genuinely uses it.
+  local healthy_again=0
+  wait_for "${RECOVER_TIMEOUT}" "n8n-main healthy again" test_service_healthy n8n-main && healthy_again=1
+  # Re-baseline AFTER main is back: a tick counted from before the restart would let this assertion pass on a
+  # tick that fired while main was still the old process, which proves nothing about resuming.
+  local ticks_after_restart
+  ticks_after_restart="$(ticks)"
+  more_ticks() { (( $(ticks) > ticks_after_restart )); }
   local resumed=0
-  wait_for 180 "a schedule tick after the restart" more_ticks && resumed=1
+  wait_for 180 "a schedule tick fired by the restarted main" more_ticks && resumed=1
 
   printf '\n' >&2
   log "main drill (TC-010)"
   check "every webhook answered 200 across the restart (${ok_count}/${sent}) — the pool is independent of main" \
     test "${ok_count}" -eq "${sent}"
-  check "the schedule trigger resumed on its own (${ticks_before} -> $(ticks) ticks)" test "${resumed}" = 1
-  check "n8n-main is healthy again" wait_for 300 "n8n-main healthy" test_service_healthy n8n-main
+  check "n8n-main is healthy again" test "${healthy_again}" = 1
+  check "the schedule trigger resumed on its own (${ticks_before} before, ${ticks_after_restart} at recovery, $(ticks) now)" \
+    test "${resumed}" = 1
+  if (( SMOKE_FAILED > 0 )); then KEEP_DRILL=1; fi
 }
 
 # ======================================================================================================================
