@@ -203,7 +203,7 @@ samples="$(grep -c '^[0-9]\+$' "${depth_file}" 2>/dev/null || true)"
 # Per-worker split: each worker logs "Worker started execution N (job M)" once per job, with the workflow id in the
 # JSON. Matching on this run's workflow id is what keeps an earlier run inside the same time window out of the count.
 printf '\n' >&2
-log "per-worker jobs (this run's workflow only)"
+log "per-worker jobs (this run's workflow; the total includes the warm-up job, the result below does not)"
 window=$(( send_elapsed + drain_elapsed + 240 ))
 worker_total=0
 for w in "${workers[@]}"; do
