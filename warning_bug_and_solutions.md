@@ -2,6 +2,18 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-10 · preflight/doctor: a bogus "0 GB free" disk FAIL whenever the docker daemon is unreachable
+
+- **Symptom:** on a fresh Ubuntu 24.04 host, right after `bootstrap-host.sh` and before the operator re-logged in for the `docker` group, `make preflight` reported `docker daemon not reachable` AND, underneath it, `disk: only 0 GB free under
+/var/lib/docker (need >= 10)` — the path on its own line. The host actually had **83 GB free**: the same command after the re-login printed `disk: 83 GB free under /var/lib/docker`. The disk FAIL was fiction and sent the operator hunting a full disk.
+- **Root cause:** two separate defects in the same two lines (`compose/scripts/preflight.sh`, `compose/scripts/doctor.sh`). (1) `docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"` — `docker info` writes an empty line to stdout *before* exiting non-zero, and command substitution strips only *trailing* newlines, so the captured path is `"
+/var/lib/docker"` (hence the line break in the message) and `df` cannot stat it. (2) `free_gb="$(df … | tail -1 | tr -dc '0-9' || echo 0)"` — under `set -o pipefail` the failing `df` fails the whole pipeline even though `tr` exited 0, so `|| echo 0` fires and appends `0` to `tr`'s empty output. The check then states a confident, false "only 0 GB free (need >= 10)" where it should have said "I cannot read this".
+- **Verify:** as a user outside the `docker` group, `printf '%q
+' "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"` → `$'
+/var/lib/docker'`; and `set -o pipefail; printf '%q
+' "$(df -BG --output=avail /nonexistent 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"` → `0`.
+- **Fix:** end the pipeline with `|| true` (adds nothing to stdout) and apply the default to the captured value (`docker_root="${docker_root:-/var/lib/docker}"` after `tr -d '[:space:]'`); report an empty `df` result as "cannot read free space … check it by hand: df -h <path>" instead of as `0`; and when `docker_version` is empty (daemon unreachable) mark the path as assumed instead of stacking a second mystery failure on the first. **Lesson:** `$(cmd || echo default)` is unsafe for any command that can write to stdout before failing, and under `pipefail` a trailing `|| echo default` fires when *any* stage of the pipeline fails — use `|| true` plus an explicit emptiness check. 2026-10-10.
+
 ## 2026-10-07 · hadolint install script failed: "release assets not found"
 
 - **Symptom:** `install-devtools.sh` aborted at the hadolint step after apt + gh had already installed.
