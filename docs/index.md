@@ -110,6 +110,7 @@ manager before anything else, and the local variant that needs no public domain.
 | Page | What is on it |
 |---|---|
 | [Quickstart](quickstart.md) | fresh host to a working HTTPS instance, step by step |
+| [Bắt đầu nhanh](quickstart.vi.md) | the same walkthrough in Vietnamese |
 | [Architecture](architecture.md) | the topology, the networks, and why each process exists |
 | [Configuration](configuration.md) | the settings in `compose/.env` and what changing them does |
 | [Security](security.md) | the hardening in place, what is exposed, and what you still own |
