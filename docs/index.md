@@ -111,6 +111,7 @@ manager before anything else, and the local variant that needs no public domain.
 |---|---|
 | [Quickstart](quickstart.md) | fresh host to a working HTTPS instance, step by step |
 | [Bắt đầu nhanh](quickstart.vi.md) | the same walkthrough in Vietnamese |
+| [Runbook](runbook.md) | every feature tried on purpose on a host you can break, with a sign-off sheet |
 | [Architecture](architecture.md) | the topology, the networks, and why each process exists |
 | [Configuration](configuration.md) | the settings in `compose/.env` and what changing them does |
 | [Security](security.md) | the hardening in place, what is exposed, and what you still own |
