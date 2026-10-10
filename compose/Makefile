@@ -50,7 +50,7 @@ SINCE ?= 10m
 with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
 
 .PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers kuma-setup \
-        backup-now backups restore restore-clean restore-test detach-recovery-key upgrade rollback dev-ca trust-ca lint version \
+        backup-now backups restore restore-clean restore-test detach-recovery-key upgrade rollback loadtest dev-ca trust-ca lint version \
         env-keys clean
 
 help: ## Show this help
@@ -149,6 +149,11 @@ rollback: ## Undo the last make upgrade (restores its backup when a migration ra
 scale-workers: ## Set the worker count: make scale-workers N=4  (1..16; N=1 parks worker 2)
 	@[[ -n "$(N)" ]] || { echo 'usage: make scale-workers N=<1..16>' >&2; exit 2; }
 	@$(KIT_DIR)/scripts/scale.sh "$(N)"
+
+# --- drills --------------------------------------------------------------------------------------------------------
+
+loadtest: ## Push N webhooks through the pool and time the drain: make loadtest [N=200] [P=20] [KEEP=1]
+	@N="$(N)" P="$(P)" KEEP="$(KEEP)" DRAIN_TIMEOUT="$(DRAIN_TIMEOUT)" $(KIT_DIR)/scripts/loadtest.sh
 
 # --- dev TLS -----------------------------------------------------------------------------------------------------------
 
