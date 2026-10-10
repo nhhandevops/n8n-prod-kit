@@ -2,6 +2,13 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-10 · The Read/Write Files node could not write a single file (n8n_files volume owned by root)
+
+- **Symptom:** any workflow writing to `/home/node/.n8n-files` errored at the write node. Four webhook calls gave four `error` executions and an empty volume; `touch /home/node/.n8n-files/probe` inside a worker answered `Permission denied`, with the directory showing `drwxr-xr-x 2 root root` while the container runs as `uid=1000(node)`.
+- **Root cause:** Docker copies ownership onto a fresh named volume from the mount point **in the image**. `/home/node/.n8n` exists in the n8n image owned by `node:node`, so the `n8n_data` volume is fine — but `/home/node/.n8n-files` does **not** exist in the image (verified: `docker run --rm --entrypoint sh docker.n8n.io/n8nio/n8n:2.42.4 -c "ls -ld /home/node/.n8n-files"` → No such file or directory). Docker therefore created the mount point as `root:root 0755` and n8n (uid 1000) could not write into it. The kit points `N8N_RESTRICT_FILE_ACCESS_TO` at exactly that tree and documents it as the Read/Write Files node's home, so the documented feature was dead on every fresh install. `backup-perms.sh` already solves the same class of problem for the uid-70 backup volumes; `n8n_files` was missed because the path is absent from the image rather than merely owned by the wrong uid.
+- **Verify:** `docker compose exec -T n8n-worker-1 sh -c 'ls -ld /home/node/.n8n-files; touch /home/node/.n8n-files/probe'`.
+- **Fix:** `compose/scripts/files-perms.sh`, run by `make up` **after** `compose up` — the volume does not exist before the first `up`, and `docker run -v <name>:` would create it without Compose's project labels. It chowns the directory to 1000 from a throw-away **plain `docker run`** container: `compose run` cannot do it because the services `cap_drop: ALL` and root without `CAP_CHOWN` cannot chown (the reason backup-perms.sh gives). Chowning while the stack runs needs no restart — same inode on the host. Idempotent and silent when already correct; the directory only, never recursive (files n8n writes afterwards are uid 1000 anyway). 2026-10-10.
+
 ## 2026-10-10 · preflight/doctor: a bogus "0 GB free" disk FAIL whenever the docker daemon is unreachable
 
 - **Symptom:** on a fresh Ubuntu 24.04 host, right after `bootstrap-host.sh` and before the operator re-logged in for the `docker` group, `make preflight` reported `docker daemon not reachable` AND, underneath it, `disk: only 0 GB free under
