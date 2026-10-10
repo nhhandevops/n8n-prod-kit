@@ -241,8 +241,16 @@ scenario_worker() {
     test "${settled_ok}" = 1
   check "queued work survived the kill — ${success_n} of ${N} completed on the remaining worker(s)" \
     test "${success_n}" -gt 0
-  check "exactly one side effect per successful input (${effects} files for ${success_n} successes) — no duplicates, none missing" \
-    test "${effects}" -eq "${success_n}"
+  # A crashed execution may ALREADY have done its work: the kill can land after the write node finished but
+  # before the execution was marked done. So the invariant is not equality — it is "every success wrote its
+  # file" and "never more side effects than inputs", the latter being what the idempotent key buys us.
+  check "every successful input left its side effect (${effects} files >= ${success_n} successes)" \
+    test "${effects}" -ge "${success_n}"
+  check "never more side effects than inputs (${effects} files for ${N} inputs) — the idempotent key prevents duplicates" \
+    test "${effects}" -le "${N}"
+  if (( effects > success_n )); then
+    info "$(( effects - success_n )) crashed execution(s) had already written their side effect before the kill landed — a crashed execution is NOT proof that nothing happened, which is exactly why re-driving one needs an idempotent workflow"
+  fi
   check "${survivor} took the load over ($(jobs_logged "${survivor}") jobs)" \
     test "$(jobs_logged "${survivor}")" -gt 0
   check "${victim} is back and healthy after make up" came_back "${victim}" "${before_started}"
