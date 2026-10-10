@@ -9,6 +9,7 @@ on:
       - mkdocs.yml
       - .github/workflows/docs.yml
       - requirements-docs.txt
+      - requirements-docs.in
   push:
     branches: [main]
     paths:
@@ -16,6 +17,7 @@ on:
       - mkdocs.yml
       - .github/workflows/docs.yml
       - requirements-docs.txt
+      - requirements-docs.in
   workflow_dispatch:
 
 permissions:
@@ -38,7 +40,10 @@ jobs:
           cache-dependency-path: requirements-docs.txt
 
       - name: Install MkDocs Material
-        run: pip install -r requirements-docs.txt
+        # --require-hashes: every package, including transitive ones, must match a hash in the lock file.
+        # --only-binary :all:  refuse source distributions, so no setup.py from a dependency executes here.
+        # The lock is generated with: pip-compile --generate-hashes -o requirements-docs.txt requirements-docs.in
+        run: "pip install --require-hashes --only-binary :all: -r requirements-docs.txt"
 
       - name: Build the site (strict)
         run: mkdocs build --strict
