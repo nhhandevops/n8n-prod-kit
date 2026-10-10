@@ -335,8 +335,11 @@ scenario_main() {
   # A steady trickle through the webhook pool spans the restart: main is deliberately not in this path
   # (N8N_DISABLE_PRODUCTION_MAIN_PROCESS=true), so every one of these must answer 200 the whole time.
   info "sending a webhook every second while n8n-main restarts"
+  # post_one prints the code with NO trailing newline (it is written for command substitution), so the trickle has
+  # to add one. Appending it raw concatenates all 40 codes into a single "200200200..." line, which then counts as
+  # one sent request and zero 200s — the first run of this drill failed exactly that way.
   local i
-  ( for i in $(seq 1 40); do post_one "${path}" "trickle-${i}" >>"${codes_file}"; sleep 1; done ) &
+  ( for i in $(seq 1 40); do printf '%s\n' "$(post_one "${path}" "trickle-${i}")" >>"${codes_file}"; sleep 1; done ) &
   local trickle_pid=$!
   sleep 5
   compose restart n8n-main >/dev/null 2>&1 || die "could not restart n8n-main"
