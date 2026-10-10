@@ -137,6 +137,13 @@ count_executions() {   # count_executions STATUS -> how many executions of this 
   done
   printf '%s\n' "${n}"
 }
+# MODE=async answers before the workflow has run, so the warm-up's own execution is still in flight here. Wait for
+# it to land before baselining, or it finishes during the run and is counted as one extra success.
+warmup_landed() {
+  (( $(count_executions success) + $(count_executions error) >= 1 ))
+}
+wait_for 120 "the warm-up execution to finish" warmup_landed \
+  || warn "the warm-up execution has not finished — the totals below may be off by one"
 base_success="$(count_executions success)"
 base_error="$(count_executions error)"
 info "load test: N=${N} P=${P} MODE=${MODE} -> ${BASE_URL}/webhook/${path} (${#workers[@]} workers, drain budget ${DRAIN_TIMEOUT}s)"
@@ -193,14 +200,20 @@ error_n=$(( $(count_executions error) - base_error ))
 peak="$(awk '/^[0-9]+$/ && $1 > m { m = $1 } END { print m + 0 }' "${depth_file}" 2>/dev/null || echo 0)"
 samples="$(grep -c '^[0-9]\+$' "${depth_file}" 2>/dev/null || true)"
 
-# Per-worker split: each worker logs the jobs it picked up, which is also how a chaos drill shows a takeover.
+# Per-worker split: each worker logs "Worker started execution N (job M)" once per job, with the workflow id in the
+# JSON. Matching on this run's workflow id is what keeps an earlier run inside the same time window out of the count.
 printf '\n' >&2
-log "per-worker jobs (container logs for the window this run covers)"
+log "per-worker jobs (this run's workflow only)"
 window=$(( send_elapsed + drain_elapsed + 240 ))
+worker_total=0
 for w in "${workers[@]}"; do
-  n="$(compose logs --no-color --since "${window}s" "${w}" 2>/dev/null | grep -ciE 'start(ed)? (job|execution)' || true)"
-  printf '         %-24s %s\n' "${w}" "${n:-0}" >&2
+  n="$(compose logs --no-color --since "${window}s" "${w}" 2>/dev/null \
+        | grep -F "\"workflowId\":\"${wf_id}\"" | grep -c 'started execution' || true)"
+  n="${n:-0}"
+  worker_total=$(( worker_total + n ))
+  printf '         %-24s %s\n' "${w}" "${n}" >&2
 done
+printf '         %-24s %s\n' "total" "${worker_total}" >&2
 
 printf '\n' >&2
 log "result"
