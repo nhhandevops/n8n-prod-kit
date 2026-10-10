@@ -27,7 +27,7 @@
     {
       "parameters": {
         "operation": "write",
-        "fileName": "={{ '/home/node/.n8n-files/chaos-' + $('Webhook').item.json.body.run + '-' + $('Webhook').item.json.body.id + '.txt' }}",
+        "fileName": "={{ '/home/node/.n8n-files/chaos-' + $('Webhook').item.json.body.run + '/' + $('Webhook').item.json.body.id + '.txt' }}",
         "dataPropertyName": "data",
         "options": {}
       },

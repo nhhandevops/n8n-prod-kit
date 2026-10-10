@@ -18,8 +18,11 @@
 # is a measurement, not a failure; only a queue that never drains is.
 #
 # It talks to the stack the way a user does (through Caddy on PUBLIC_URL) and reuses the smoke suite's owner and API
-# key from compose/.smoke/, creating them on first use. It deletes nothing: its own workflow goes away on exit
-# unless KEEP=1, and the executions age out through the normal pruning settings.
+# key from compose/.smoke/, creating them on first use. Its own workflow goes away on exit unless KEEP=1.
+#
+# It does NOT delete anything directly — but every request it fires becomes a stored execution, and n8n's pruning
+# (EXECUTIONS_DATA_PRUNE_MAX_COUNT, 10000 by default) is global and oldest-first. A large N therefore pushes the
+# instance's REAL execution history out of the database. The check below refuses to do that silently.
 #
 # Exit codes: 0 every sent request produced a successful execution · 1 setup failed · 2 the queue did not drain.
 # shellcheck disable=SC2310,SC2311,SC2312,SC2016  # helpers are called in conditions on purpose (see tests/smoke/lib.sh);
@@ -70,6 +73,17 @@ while read -r svc; do
 done < <(compose config --services | grep -E '^n8n-worker-[0-9]+$' | sort)
 (( ${#workers[@]} > 0 )) || die "no n8n-worker-* services found"
 
+# n8n prunes executions globally and oldest-first, so a burst big enough to approach the cap evicts the operator's
+# own history. Warn before anything is published, and make a run that would evict most of it an explicit choice.
+prune_on="$(env_get EXECUTIONS_DATA_PRUNE)"
+prune_max="$(env_get EXECUTIONS_DATA_PRUNE_MAX_COUNT)"
+prune_max="${prune_max:-10000}"
+if [[ "${prune_on:-true}" != "false" ]] && [[ "${prune_max}" =~ ^[0-9]+$ ]] && (( prune_max > 0 && N * 4 > prune_max )); then
+  warn "N=${N} against EXECUTIONS_DATA_PRUNE_MAX_COUNT=${prune_max}: n8n prunes executions globally, oldest first, so this run will push roughly ${N} of the instance's existing executions out of the database."
+  confirm "Continue and let this load test evict existing execution history?" \
+    || die "cancelled — nothing was published" 0
+fi
+
 ensure_owner || die "could not get an owner account (see above)"
 ensure_api_key || die "could not get an API key (see above)"
 
@@ -95,8 +109,18 @@ cleanup() {
     if [[ -n "${KEEP}" ]]; then
       info "KEEP=1: workflow ${wf_id} left published on /webhook/${path}"
     else
+      # DELETE answers 409 for a moment while the deactivation settles, and api() can never report a failure
+      # (req swallows every error), so this retries and warns rather than leaving a live webhook behind silently.
       api POST "/api/v1/workflows/${wf_id}/deactivate" || true
-      api DELETE "/api/v1/workflows/${wf_id}" || true
+      local tries=0
+      until api DELETE "/api/v1/workflows/${wf_id}" && status_is 200; do
+        tries=$((tries + 1))
+        if (( tries >= 10 )); then
+          warn "could not delete the load-test workflow ${wf_id} (HTTP ${REQ_STATUS}) — it is still published on /webhook/${path}; remove it in the UI"
+          break
+        fi
+        sleep 2
+      done
     fi
   fi
   rm -f "${codes_file}" "${depth_file}" 2>/dev/null || true
@@ -151,11 +175,15 @@ info "load test: N=${N} P=${P} MODE=${MODE} -> ${BASE_URL}/webhook/${path} (${#w
 # --- sample the real queue depth from Valkey while the run proceeds ----------------------------------------------
 # A single bounded loop inside the container: killing a backgrounded `compose exec` does not reliably stop the
 # process it started, so the loop counts itself out instead of relying on the signal.
+# Capped absolutely, not scaled: at the old (DRAIN_TIMEOUT+900)/interval a big N left this loop running inside
+# the Valkey container for days after the run, because killing the `compose exec` client does not signal the
+# process it started. The loop also stops as soon as its output is gone (the `|| break` below).
 max_ticks=$(( (DRAIN_TIMEOUT + 900) / SAMPLE_INTERVAL ))
+(( max_ticks > 1200 )) && max_ticks=1200
 compose exec -T valkey sh -c '
   key=$1; interval=$2; ticks=$3; i=0
   while [ "$i" -lt "$ticks" ]; do
-    VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli llen "$key" 2>/dev/null || echo 0
+    { VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli llen "$key" 2>/dev/null || echo 0; } || break
     i=$((i + 1))
     sleep "$interval"
   done
