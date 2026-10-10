@@ -1,0 +1,4 @@
+# Direct dependency only. requirements-docs.txt is GENERATED from this, with hashes:
+#   pip-compile --generate-hashes --output-file requirements-docs.txt requirements-docs.in
+# Regenerate it when bumping, never hand-edit the lock.
+mkdocs-material==9.7.7
