@@ -40,10 +40,43 @@ esac
 if [[ ! "${N}" =~ ^[0-9]+$ ]] || (( N < 10 || N > 5000 )); then
   die "N must be 10..5000 (got '${N}')"
 fi
+# P reaches `xargs -P` directly: in GNU xargs P=0 means "as many processes as possible", which would point the
+# whole of N at the edge at once, and a typo like "4o" makes xargs exit before anything is measured.
+if [[ ! "${P}" =~ ^[0-9]+$ ]] || (( P < 1 || P > 200 )); then
+  die "P must be 1..200 (got '${P}')"
+fi
+if [[ ! "${OUTAGE}" =~ ^[0-9]+$ ]] || (( OUTAGE < 1 || OUTAGE > 3600 )); then
+  die "OUTAGE must be 1..3600 seconds (got '${OUTAGE}')"
+fi
 
 # --- preconditions ----------------------------------------------------------------------------------------------
-not_running="$(compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$2 != "running" { print $1 }' || true)"
-[[ -z "${not_running}" ]] || die "not every service is running (${not_running//$'\n'/ }) — a chaos drill needs a healthy stack: make up && make status"
+# `compose ps` without --all hides stopped and missing containers, and its {{.State}} is the container state, never
+# the health status — so the obvious "ps | awk $2 != running" check can only ever see a healthy stack. Health comes
+# from service_health (missing/none/starting/healthy/unhealthy) and the run state from docker inspect.
+unhealthy_services() {   # one service name per line; empty output means the whole project is running and healthy
+  local svc cid status health
+  while read -r svc; do
+    [[ -n "${svc}" ]] || continue
+    cid="$(compose ps -aq "${svc}" 2>/dev/null | head -1)"
+    status=''
+    [[ -n "${cid}" ]] && status="$(docker inspect -f '{{.State.Status}}' "${cid}" 2>/dev/null || true)"
+    health="$(service_health "${svc}" 2>/dev/null || true)"
+    if [[ "${status}" != "running" ]] || { [[ "${health}" != "healthy" && "${health}" != "none" ]]; }; then
+      printf '%s\n' "${svc}"
+    fi
+  done < <(compose ps -a --format '{{.Service}}' 2>/dev/null | sort -u)
+}
+stack_healthy() {
+  [[ -z "$(unhealthy_services)" ]]
+}
+
+# An unfinished upgrade or a pin that differs from what runs must not be discovered halfway through a drill: the
+# drill's own `compose up -d` would otherwise apply it while the stack is deliberately broken.
+version_guard "make chaos"
+
+[[ -n "$(compose ps -aq n8n-main 2>/dev/null)" ]] || die "this project has no containers — a chaos drill needs a running stack: make up && make status"
+not_running="$(unhealthy_services)"
+[[ -z "${not_running}" ]] || die "not every service is running and healthy (${not_running//$'\n'/ }) — a chaos drill needs a healthy stack: make up && make status"
 
 workers=()
 while read -r svc; do
@@ -51,13 +84,14 @@ while read -r svc; do
 done < <(compose config --services | grep -E '^n8n-worker-[0-9]+$' | sort)
 (( ${#workers[@]} >= 2 )) || die "the ${SCENARIO} drill needs at least 2 workers (make scale-workers N=2)"
 
+# Ask BEFORE ensure_owner: on an instance with no owner that call claims one, so asking afterwards would make
+# "nothing was touched" untrue. confirm() handles YES=1/CI=1 and the no-tty case itself — wrapping it in a test
+# for a non-empty YES meant YES=0, YES=no and YES=false all silently skipped the question.
+confirm "Run the '${SCENARIO}' chaos drill against ${BASE_URL}? Containers will be killed or stopped, then recovered." \
+  || die "cancelled — nothing was touched" 0
+
 ensure_owner  || die "could not get an owner account (see above)"
 ensure_api_key || die "could not get an API key (see above)"
-
-if [[ -z "${YES}" ]]; then
-  confirm "Run the '${SCENARIO}' chaos drill against the running stack? Containers will be killed or stopped and then recovered." \
-    || die "cancelled — nothing was touched" 0
-fi
 
 # --- shared state and recovery ------------------------------------------------------------------------------------
 run_id="$(rand_hex 4)"
@@ -80,27 +114,43 @@ delete_workflow() {   # delete_workflow ID — deactivate, then delete (DELETE 4
     sleep 2
   done
 }
+deactivate_workflow() {   # deactivate_workflow ID LABEL — and SAY SO when it did not work
+  local id="${1}" label="${2}"
+  [[ -n "${id}" ]] || return 0
+  api POST "/api/v1/workflows/${id}/deactivate"
+  if status_is 200; then
+    return 0
+  fi
+  warn "could NOT deactivate the ${label} workflow ${id} (HTTP ${REQ_STATUS}) — it is still published and reachable; deactivate or delete it in the UI"
+  return 1
+}
 cleanup() {
   local rc=$?
+  # The recovery must not be interruptible: a second Ctrl-C used to end bash mid-trap and leave valkey stopped
+  # and the drill's workflow published.
+  trap '' INT TERM HUP
   printf '\n' >&2
-  info "restoring the stack"
-  # Whatever happened, every service must be running again: `compose up -d` starts what the drill stopped and leaves
-  # everything else alone. Volumes, the database and .env are never touched by this script.
-  compose up -d --wait --wait-timeout 300 >/dev/null 2>&1 \
-    || warn "the stack did not come back healthy by itself — check make status and make doctor"
+  info "restoring the stack (this is not interruptible — it is what puts the stack back)"
+  # `--no-recreate` is deliberate: this starts what the drill stopped or killed, and must never recreate a service
+  # onto a different image. Volumes, the database and .env are never touched by this script.
+  if ! compose up -d --wait --wait-timeout 600 --no-recreate; then
+    warn "the stack did NOT come back healthy — run 'make up' and 'make doctor'. Still not running/healthy: $(unhealthy_services | tr '\n' ' ')"
+    (( rc == 0 )) && rc=1   # never report success on a stack we left broken; never mask an existing failure
+  fi
   if [[ -n "${KEEP_DRILL}" ]]; then
-    # Keep the evidence, but never leave a drill workflow PUBLISHED: it stays reachable on the public webhook
-    # URL and a schedule workflow would keep firing forever. Deactivating preserves the executions and files.
-    [[ -z "${wf_id}" ]]    || api POST "/api/v1/workflows/${wf_id}/deactivate" || true
-    [[ -z "${sched_id}" ]] || api POST "/api/v1/workflows/${sched_id}/deactivate" || true
-    info "KEEP_DRILL: workflow ${wf_id:-none}${sched_id:+ and ${sched_id}} deactivated but kept, with the files under /home/node/.n8n-files/chaos-${run_id}-*, for inspection"
+    # Keep the evidence, but never leave a drill workflow PUBLISHED: it stays reachable on the public webhook URL
+    # and a schedule workflow would keep firing. `api` cannot fail (req swallows every error), so the result is
+    # checked explicitly rather than claimed.
+    deactivate_workflow "${wf_id}" drill || rc=1
+    deactivate_workflow "${sched_id}" schedule || rc=1
+    info "KEEP_DRILL: kept ${wf_id:-none}${sched_id:+ and ${sched_id}} and the files under /home/node/.n8n-files/chaos-${run_id}/ for inspection"
     info "delete them when done: make smoke removes any kit-smoke-* workflow, or do it in the UI"
     rm -f "${codes_file}" 2>/dev/null || true
     exit "${rc}"
   fi
   delete_workflow "${wf_id}"
   delete_workflow "${sched_id}"
-  compose exec -T n8n-main sh -c "rm -f /home/node/.n8n-files/chaos-${run_id}-*.txt" >/dev/null 2>&1 || true
+  compose exec -T n8n-main sh -c "rm -rf /home/node/.n8n-files/chaos-${run_id}" >/dev/null 2>&1 || true
   rm -f "${codes_file}" 2>/dev/null || true
   exit "${rc}"
 }
@@ -139,7 +189,7 @@ fire() {   # fire PATH FROM TO — POST ids FROM..TO with P in flight, codes app
 side_effects() {   # how many distinct files this run produced (one per input id, overwritten by a retry)
   local n
   # [0-9]* deliberately: it counts the numbered inputs and never the warm-up call's own file.
-  n="$(compose exec -T n8n-main sh -c "ls -1 /home/node/.n8n-files/chaos-${run_id}-[0-9]*.txt 2>/dev/null | wc -l" 2>/dev/null || true)"
+  n="$(compose exec -T n8n-main sh -c "ls -1 /home/node/.n8n-files/chaos-${run_id}/[0-9]*.txt 2>/dev/null | wc -l" 2>/dev/null || true)"
   n="${n//[^0-9]/}"
   printf '%s\n' "${n:-0}"
 }
@@ -178,7 +228,9 @@ scenario_worker() {
   publish wf-chaos-idempotent.json "${path}"
   wait_for 180 "the pool to register /webhook/${path}" warm "${path}" \
     || die "the drill webhook never answered 200 — is the stack healthy?"
-  compose exec -T "${victim}" sh -c "rm -f /home/node/.n8n-files/chaos-${run_id}-*.txt" >/dev/null 2>&1 || true
+  # The drill writes into its own directory so it never mixes with the operator's own Read/Write Files output.
+  # The Write File node does not create parent directories, so it has to exist before the first execution.
+  compose exec -T n8n-main sh -c "mkdir -p /home/node/.n8n-files/chaos-${run_id}" >/dev/null 2>&1     || die "could not create the drill's directory under /home/node/.n8n-files (run make up once, it fixes the volume ownership)"
 
   # The warm-up answers before its own execution has run, so let it settle and baseline every status: every number
   # reported below is then a delta covering the N inputs alone.
@@ -233,7 +285,7 @@ scenario_worker() {
   if [[ "$(started_at "${victim}")" == "none" ]]; then
     info "${victim} did not come back on its own — expected: Docker treats an explicit kill as an operator stop"
   fi
-  compose up -d --wait --wait-timeout "${RECOVER_TIMEOUT}" >/dev/null 2>&1 || true
+  compose up -d --wait --wait-timeout "${RECOVER_TIMEOUT}" --no-recreate >/dev/null 2>&1 || true
 
   printf '\n' >&2
   log "worker drill (TC-008)"
@@ -262,7 +314,7 @@ scenario_worker() {
   fi
   if (( SMOKE_FAILED > 0 )); then
     KEEP_DRILL=1
-    warn "assertions failed — keeping workflow ${wf_id} and the files under /home/node/.n8n-files/chaos-${run_id}-* so you can inspect them"
+    warn "assertions failed — keeping workflow ${wf_id} and the files under /home/node/.n8n-files/chaos-${run_id}/ so you can inspect them"
   fi
 }
 test_service_healthy() {
@@ -337,11 +389,6 @@ scenario_redis() {
   check "the ${depth_at_stop} job(s) queued before the outage completed afterwards (${recovered_n} finished since) — AOF kept the queue" \
     test "${survived}" = 1
   if (( SMOKE_FAILED > 0 )); then KEEP_DRILL=1; fi
-}
-stack_healthy() {
-  local bad
-  bad="$(compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$2 != "running" { print $1 }' || true)"
-  [[ -z "${bad}" ]]
 }
 
 # ======================================================================================================================
