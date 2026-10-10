@@ -85,6 +85,7 @@ up: ## preflight → version guard → render → pull → build backup image �
 	@$(KIT_DIR)/scripts/backup-perms.sh
 	@if [[ "$(TLS_MODE)" == "internal" ]]; then $(KIT_DIR)/scripts/dev-ca.sh; fi
 	@$(COMPOSE) up -d --wait --wait-timeout 900
+	@$(KIT_DIR)/scripts/files-perms.sh
 	@$(KIT_DIR)/scripts/caddy-reload.sh
 	@$(KIT_DIR)/scripts/kuma-setup.sh
 	@$(KIT_DIR)/scripts/grafana-reload.sh
