@@ -45,16 +45,16 @@ SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-1}"
 # The drain budget scales with the backlog: 2 workers x concurrency 10 on a 2 vCPU host run a few executions/s.
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-$(( 120 + N * 3 ))}"
 
-if [[ ! "${N}" =~ ^[0-9]+$ ]] || (( N < 1 || N > 100000 )); then
+if [[ ! "${N}" =~ ^[1-9][0-9]*$ ]] || (( N < 1 || N > 100000 )); then
   die "N must be 1..100000 (got '${N}')"
 fi
-if [[ ! "${P}" =~ ^[0-9]+$ ]] || (( P < 1 || P > 200 )); then
+if [[ ! "${P}" =~ ^[1-9][0-9]*$ ]] || (( P < 1 || P > 200 )); then
   die "P must be 1..200 (got '${P}')"
 fi
-if [[ ! "${DRAIN_TIMEOUT}" =~ ^[0-9]+$ ]] || (( DRAIN_TIMEOUT < 1 )); then
+if [[ ! "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*$ ]] || (( DRAIN_TIMEOUT < 1 )); then
   die "DRAIN_TIMEOUT must be a positive number of seconds (got '${DRAIN_TIMEOUT}')"
 fi
-if [[ ! "${SAMPLE_INTERVAL}" =~ ^[0-9]+$ ]] || (( SAMPLE_INTERVAL < 1 )); then
+if [[ ! "${SAMPLE_INTERVAL}" =~ ^[1-9][0-9]*$ ]] || (( SAMPLE_INTERVAL < 1 )); then
   die "SAMPLE_INTERVAL must be a positive number of seconds (got '${SAMPLE_INTERVAL}')"
 fi
 case "${MODE}" in
@@ -64,8 +64,12 @@ case "${MODE}" in
 esac
 
 # --- the stack has to be up before anything here means something -----------------------------------------------------
-not_running="$(compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$2 != "running" { print $1 }' || true)"
-[[ -z "${not_running}" ]] || die "not every service is running (${not_running//$'\n'/ }) — run make up && make status first"
+# unhealthy_services() comes from tests/smoke/lib.sh. `compose ps` without --all cannot see a stopped container,
+# and its {{.State}} is the container state rather than health, so the naive check passes on a stack whose workers
+# are down — the run would then simply time out with "the queue did not drain" instead of saying the stack is broken.
+[[ -n "$(compose ps -aq n8n-main 2>/dev/null)" ]] || die "this project has no containers — run make up first"
+not_running="$(unhealthy_services)"
+[[ -z "${not_running}" ]] || die "not every service is running and healthy (${not_running//$'\n'/ }) — run make up && make status first"
 
 workers=()
 while read -r svc; do
@@ -191,15 +195,18 @@ compose exec -T valkey sh -c '
 sampler_pid=$!
 
 # --- send phase ----------------------------------------------------------------------------------------------------
-# One curl per request through `xargs -P`: no extra dependency, and each child prints only its HTTP code. A non-2xx
-# (or a connection dropped by a chaos drill) must not kill the run — the histogram IS the result, hence `|| echo 000`
-# per child and `|| true` on the pipeline. The child takes url/nonce/index as $1..$3 and shifts, so "$@" is exactly
-# the TLS options; `-I{}` is safe next to curl's `%{http_code}` because that contains no literal `{}` pair.
+# One curl per request through `xargs -P`: no extra dependency, and each child prints exactly ONE line. A non-2xx
+# (or a connection dropped by a chaos drill) must not kill the run — the histogram IS the result — but a plain
+# `curl … || echo 000` emits TWO lines when curl fails after writing a code, inflating both `sent` and the 000
+# bucket. The code is captured first and printed once. The child takes url/nonce/index as $1..$3 and shifts, so
+# "$@" is exactly the TLS options; `-I{}` is safe next to `%{http_code}`, which holds no literal `{}` pair.
 send_start="${SECONDS}"
 seq 1 "${N}" | xargs -P "${P}" -I{} sh -c '
   url=$1; nonce=$2; i=$3; shift 3
-  curl -sS --max-time 60 "$@" -o /dev/null -w "%{http_code}\n" \
-    -X POST "$url" -H "Content-Type: application/json" --data "{\"ping\":\"$nonce-$i\"}" 2>/dev/null || echo 000
+  code=$(curl -sS --max-time 60 "$@" -o /dev/null -w "%{http_code}" \
+    -X POST "$url" -H "Content-Type: application/json" --data "{\"ping\":\"$nonce-$i\"}" 2>/dev/null) || code=""
+  case "$code" in ""|*[!0-9]*) code=000 ;; esac
+  printf "%s\n" "$code"
 ' sh "${BASE_URL}/webhook/${path}" "${nonce}" {} "${CURL_TLS[@]}" >>"${codes_file}" || true
 send_elapsed=$(( SECONDS - send_start ))
 
@@ -213,8 +220,10 @@ sort "${codes_file}" | uniq -c | sort -rn | while read -r count code; do
 done
 
 # --- drain phase -----------------------------------------------------------------------------------------------------
+# Terminal states, not success alone: a single errored execution would otherwise burn the whole DRAIN_TIMEOUT and
+# report "the queue did not drain" about a queue that drained perfectly well.
 drained() {
-  (( $(count_executions success) - base_success >= ok_count ))
+  (( $(count_executions success) - base_success + $(count_executions error) - base_error >= ok_count ))
 }
 drain_start="${SECONDS}"
 drain_rc=0

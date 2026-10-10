@@ -37,39 +37,20 @@ case "${SCENARIO}" in
   worker|redis|main) ;;
   *) die "usage: make chaos SCENARIO=worker|redis|main [N=${N}] [OUTAGE=${OUTAGE}] [YES=1]" ;;
 esac
-if [[ ! "${N}" =~ ^[0-9]+$ ]] || (( N < 10 || N > 5000 )); then
+if [[ ! "${N}" =~ ^[1-9][0-9]*$ ]] || (( N < 10 || N > 5000 )); then
   die "N must be 10..5000 (got '${N}')"
 fi
 # P reaches `xargs -P` directly: in GNU xargs P=0 means "as many processes as possible", which would point the
 # whole of N at the edge at once, and a typo like "4o" makes xargs exit before anything is measured.
-if [[ ! "${P}" =~ ^[0-9]+$ ]] || (( P < 1 || P > 200 )); then
+if [[ ! "${P}" =~ ^[1-9][0-9]*$ ]] || (( P < 1 || P > 200 )); then
   die "P must be 1..200 (got '${P}')"
 fi
-if [[ ! "${OUTAGE}" =~ ^[0-9]+$ ]] || (( OUTAGE < 1 || OUTAGE > 3600 )); then
+if [[ ! "${OUTAGE}" =~ ^[1-9][0-9]*$ ]] || (( OUTAGE < 1 || OUTAGE > 3600 )); then
   die "OUTAGE must be 1..3600 seconds (got '${OUTAGE}')"
 fi
 
 # --- preconditions ----------------------------------------------------------------------------------------------
-# `compose ps` without --all hides stopped and missing containers, and its {{.State}} is the container state, never
-# the health status — so the obvious "ps | awk $2 != running" check can only ever see a healthy stack. Health comes
-# from service_health (missing/none/starting/healthy/unhealthy) and the run state from docker inspect.
-unhealthy_services() {   # one service name per line; empty output means the whole project is running and healthy
-  local svc cid status health
-  while read -r svc; do
-    [[ -n "${svc}" ]] || continue
-    cid="$(compose ps -aq "${svc}" 2>/dev/null | head -1)"
-    status=''
-    [[ -n "${cid}" ]] && status="$(docker inspect -f '{{.State.Status}}' "${cid}" 2>/dev/null || true)"
-    health="$(service_health "${svc}" 2>/dev/null || true)"
-    if [[ "${status}" != "running" ]] || { [[ "${health}" != "healthy" && "${health}" != "none" ]]; }; then
-      printf '%s\n' "${svc}"
-    fi
-  done < <(compose ps -a --format '{{.Service}}' 2>/dev/null | sort -u)
-}
-stack_healthy() {
-  [[ -z "$(unhealthy_services)" ]]
-}
-
+# unhealthy_services() and stack_healthy() come from tests/smoke/lib.sh so loadtest.sh gets the same check.
 # An unfinished upgrade or a pin that differs from what runs must not be discovered halfway through a drill: the
 # drill's own `compose up -d` would otherwise apply it while the stack is deliberately broken.
 version_guard "make chaos"
@@ -82,7 +63,10 @@ workers=()
 while read -r svc; do
   [[ -n "${svc}" ]] && workers+=("${svc}")
 done < <(compose config --services | grep -E '^n8n-worker-[0-9]+$' | sort)
-(( ${#workers[@]} >= 2 )) || die "the ${SCENARIO} drill needs at least 2 workers (make scale-workers N=2)"
+# Only the worker drill needs a survivor; redis and main are fine on a single-worker instance.
+if [[ "${SCENARIO}" == "worker" ]] && (( ${#workers[@]} < 2 )); then
+  die "the worker drill needs at least 2 workers so one survives the kill (make scale-workers N=2)"
+fi
 
 # Ask BEFORE ensure_owner: on an instance with no owner that call claims one, so asking afterwards would make
 # "nothing was touched" untrue. confirm() handles YES=1/CI=1 and the no-tty case itself — wrapping it in a test
@@ -97,7 +81,9 @@ ensure_api_key || die "could not get an API key (see above)"
 run_id="$(rand_hex 4)"
 # Log windows are anchored to when the drill STARTED: a fixed "--since 420s" looks at the wrong window once the
 # recovery waits have burned more than that — which is exactly when the evidence matters.
-drill_started_at="$(date -u +%Y-%m-%dT%H:%M:%S)"
+# The trailing Z is load-bearing: `docker compose logs --since` reads a timezone-less timestamp as LOCAL time, so
+# on a host west of UTC the window would start in the FUTURE and every log query would come back empty.
+drill_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 wf_id=''
 sched_id=''
 codes_file="$(mktemp "${STATE_DIR}/.chaos-codes.XXXXXX")"
@@ -156,11 +142,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-queue_depth() {
+queue_len() {   # queue_len KEY -> list length, 0 when valkey cannot be reached
   local d
-  d="$(compose exec -T valkey sh -c 'VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli llen "$1"' sh "${wait_key}" 2>/dev/null || true)"
+  d="$(compose exec -T valkey sh -c 'VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli llen "$1"' sh "${1}" 2>/dev/null || true)"
   d="${d//[^0-9]/}"
   printf '%s\n' "${d:-0}"
+}
+queue_depth() {   # the wait list: jobs nobody has picked up yet
+  queue_len "${wait_key}"
 }
 publish() {   # publish FIXTURE PATH -> sets wf_id
   api POST /api/v1/workflows "$(workflow_from_fixture "${1}" "kit-smoke-chaos-${run_id}" "${2}")"
@@ -177,11 +166,15 @@ post_one() {   # post_one PATH ID -> HTTP code on stdout
 warm() {
   [[ "$(post_one "${1}" warmup)" == "200" ]]
 }
-fire() {   # fire PATH FROM TO — POST ids FROM..TO with P in flight, codes appended to codes_file
+fire() {   # fire PATH FROM TO — POST ids FROM..TO with P in flight, one code line per request in codes_file
+  # The code is captured and printed once: `curl … || echo 000` emits TWO lines when curl fails after writing a
+  # code, which inflates both the request count and the 000 bucket.
   seq "${2}" "${3}" | xargs -P "${P}" -I{} sh -c '
     url=$1; run=$2; i=$3; shift 3
-    curl -sS --max-time 30 "$@" -o /dev/null -w "%{http_code}\n" \
-      -X POST "$url" -H "Content-Type: application/json" --data "{\"run\":\"$run\",\"id\":\"$i\"}" 2>/dev/null || echo 000
+    code=$(curl -sS --max-time 30 "$@" -o /dev/null -w "%{http_code}" \
+      -X POST "$url" -H "Content-Type: application/json" --data "{\"run\":\"$run\",\"id\":\"$i\"}" 2>/dev/null) || code=""
+    case "$code" in ""|*[!0-9]*) code=000 ;; esac
+    printf "%s\n" "$code"
   ' sh "${BASE_URL}/webhook/${1}" "${run_id}" {} "${CURL_TLS[@]}" >>"${codes_file}" || true
 }
 # The n8n_files volume is shared by every n8n service, so the count is read from n8n-main — never from a worker the
@@ -256,6 +249,8 @@ scenario_worker() {
   done
   info "queue depth at kill time: ${depth}"
   docker kill "$(compose ps -q "${victim}" | head -1)" >/dev/null 2>&1 || warn "could not kill ${victim}"
+  local killed_at
+  killed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   ok "SIGKILLed ${victim} — no graceful shutdown, so whatever it was executing is orphaned"
 
   # What actually happens (verified against n8n 2.42.4 and bull 4.16.4, see docs/operations/chaos-drills.md):
@@ -274,9 +269,12 @@ scenario_worker() {
   crashed_n=$(( $(count_status crashed) - base_crashed ))
   error_n=$(( $(count_status error) - base_error ))
   printf '\n' >&2
-  log "what n8n recorded for the ${N} inputs"
-  for st in success crashed error running waiting; do
-    printf '         %-10s %s\n' "${st}" "$(count_status "${st}")" >&2
+  log "what n8n recorded for the ${N} inputs (deltas, so the warm-up is not counted twice)"
+  printf '         %-10s %s\n' success "${success_n}" >&2
+  printf '         %-10s %s\n' crashed "${crashed_n}" >&2
+  printf '         %-10s %s\n' error "${error_n}" >&2
+  for st in running waiting; do
+    printf '         %-10s %s  (absolute)\n' "${st}" "$(count_status "${st}")" >&2
   done
 
   # Docker does NOT restart a container terminated with `docker kill`: kill and stop both cancel the restart
@@ -303,8 +301,10 @@ scenario_worker() {
   if (( effects > success_n )); then
     info "$(( effects - success_n )) crashed execution(s) had already written their side effect before the kill landed — a crashed execution is NOT proof that nothing happened, which is exactly why re-driving one needs an idempotent workflow"
   fi
-  check "${survivor} took the load over ($(jobs_logged "${survivor}") jobs)" \
-    test "$(jobs_logged "${survivor}")" -gt 0
+  # Measured from the KILL, not the drill start: the survivor was obviously working before the kill too, so a
+  # window covering that period satisfies "took the load over" without any takeover having happened.
+  check "${survivor} took the load over AFTER the kill ($(jobs_logged "${survivor}" "${killed_at}") jobs since)" \
+    test "$(jobs_logged "${survivor}" "${killed_at}")" -gt 0
   check "${victim} is back and healthy after make up" came_back "${victim}" "${before_started}"
   check "${victim} reports healthy" wait_for "${RECOVER_TIMEOUT}" "${victim} healthy" test_service_healthy "${victim}"
   if (( crashed_n == 0 )); then
@@ -320,9 +320,9 @@ scenario_worker() {
 test_service_healthy() {
   [[ "$(service_health "${1}" 2>/dev/null || true)" == "healthy" ]]
 }
-jobs_logged() {   # jobs_logged SERVICE — jobs of this drill's workflow that this worker started
+jobs_logged() {   # jobs_logged SERVICE [SINCE] — jobs of this drill's workflow a worker started in that window
   local n
-  n="$(compose logs --no-color --since "${drill_started_at}" "${1}" 2>/dev/null \
+  n="$(compose logs --no-color --since "${2:-${drill_started_at}}" "${1}" 2>/dev/null \
         | grep -F "\"workflowId\":\"${wf_id}\"" | grep -c 'started execution' || true)"
   printf '%s\n' "${n:-0}"
 }
@@ -343,8 +343,10 @@ scenario_redis() {
   # depth would pass vacuously — by then the workers have usually finished more jobs than were left waiting.
   local depth_at_stop success_at_stop
   depth_at_stop="$(queue_depth)"
-  success_at_stop="$(count_status success)"
   compose stop valkey >/dev/null 2>&1 || die "could not stop valkey"
+  # Baseline AFTER the stop, never before: stopping takes a second or two, and every job the workers finish in
+  # that window would otherwise be credited to the outage. Postgres answers this even while n8n is degraded.
+  success_at_stop="$(count_status success)"
   ok "valkey stopped with ${depth_at_stop} job(s) waiting and ${success_at_stop} already done"
   if (( depth_at_stop == 0 )); then
     warn "nothing was waiting when valkey stopped — the workers drained the burst first. Raise N (make chaos SCENARIO=redis N=400) so the outage has something to protect."
@@ -366,6 +368,13 @@ scenario_redis() {
   sleep "${OUTAGE}"
   compose start valkey >/dev/null 2>&1 || die "could not start valkey again"
   ok "valkey started again after ${OUTAGE}s"
+  # Direct AOF evidence, read from the queue itself BEFORE the n8n processes reconnect (they take 10 s+ to notice
+  # Valkey is back). Whatever is in the wait list now came off disk, not from a worker having re-enqueued it.
+  local depth_after_restart=0
+  if wait_for 60 "valkey to answer again" valkey_answering; then
+    depth_after_restart="$(queue_depth)"
+    info "queue depth straight after the restart, before any worker reconnected: ${depth_after_restart}"
+  fi
   # A worker's readiness probe requires a LIVE Redis connection, so "every worker healthy again" is the signal that
   # they have reconnected. Measure the drain only after that, or a slow reconnect looks like a lost queue.
   local reconnected=0
@@ -376,8 +385,6 @@ scenario_redis() {
   local survived=0
   if (( depth_at_stop > 0 )); then
     wait_for "${RECOVER_TIMEOUT}" "the ${depth_at_stop} queued job(s) to finish after the outage" drained && survived=1
-  else
-    survived=1   # nothing was queued, so there is nothing for the outage to have lost
   fi
   local recovered_n=$(( $(count_status success) - success_at_stop ))
 
@@ -386,9 +393,20 @@ scenario_redis() {
   check "webhooks failed loudly while valkey was down (${good_failures}/3 non-2xx) — no call was silently dropped" \
     test "${good_failures}" -eq 3
   check "every service reconnected and is healthy again" test "${reconnected}" = 1
-  check "the ${depth_at_stop} job(s) queued before the outage completed afterwards (${recovered_n} finished since) — AOF kept the queue" \
-    test "${survived}" = 1
+  if (( depth_at_stop == 0 )); then
+    # NOT a pass: with an empty queue at the stop there was nothing for AOF to protect, so the drill simply did
+    # not test durability. Saying so beats printing a green line with a 0 in it.
+    warn "SKIPPED the durability assertion: nothing was queued when valkey stopped, so this run proved nothing about AOF. Re-run with a bigger burst, e.g. make chaos SCENARIO=redis N=400 P=60"
+  else
+    check "the queue itself survived the outage (${depth_after_restart} job(s) still waiting when valkey came back, before any worker reconnected) — this is the AOF evidence" \
+      test "${depth_after_restart}" -gt 0
+    check "the ${depth_at_stop} job(s) queued before the outage completed afterwards (${recovered_n} finished since)" \
+      test "${survived}" = 1
+  fi
   if (( SMOKE_FAILED > 0 )); then KEEP_DRILL=1; fi
+}
+valkey_answering() {
+  compose exec -T valkey sh -c 'VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli ping' 2>/dev/null | grep -q PONG
 }
 
 # ======================================================================================================================
@@ -407,10 +425,18 @@ scenario_main() {
   api POST "/api/v1/workflows/${sched_id}/activate"
   status_is 200 || die "could not publish the schedule workflow (HTTP ${REQ_STATUS})"
 
+  # An unanswered call — main is restarting, so Caddy returns 502 with an empty body — must NOT read as "0 ticks".
+  # The post-restart re-baseline would become 0 and the resume assertion would then pass on its first poll.
+  # -1 is returned instead, which no comparison here treats as progress.
   ticks() {
     api GET "/api/v1/executions?workflowId=${sched_id}&status=success&limit=250"
-    req_body | jq -r '.data | length' 2>/dev/null || echo 0
+    if ! status_is 200; then printf '%s\n' -1; return 0; fi
+    local n
+    n="$(req_body | jq -r '.data | length' 2>/dev/null || true)"
+    [[ "${n}" =~ ^[0-9]+$ ]] || n=-1
+    printf '%s\n' "${n}"
   }
+  ticks_answering() { (( $(ticks) >= 0 )); }
   first_tick() { (( $(ticks) >= 1 )); }
   wait_for 120 "the schedule trigger to fire once before the restart" first_tick \
     || die "the schedule trigger never fired — it cannot prove a resume"
@@ -442,6 +468,8 @@ scenario_main() {
   # Re-baseline AFTER main is back: a tick counted from before the restart would let this assertion pass on a
   # tick that fired while main was still the old process, which proves nothing about resuming.
   local ticks_after_restart
+  wait_for 120 "the API to answer again after the restart" ticks_answering \
+    || warn "the API never answered after the restart — the resume assertion below cannot be trusted"
   ticks_after_restart="$(ticks)"
   more_ticks() { (( $(ticks) > ticks_after_restart )); }
   local resumed=0

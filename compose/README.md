@@ -68,6 +68,6 @@ Scaling: `make scale-workers N=<1..16>` writes `WORKER_REPLICAS`, regenerates `c
 ## Known limits in this version
 
 - Backups: see `docs/operations/backup-restore.md` (targets, restore, disaster recovery with the recovery key). Set an off-host target (`BACKUP_REMOTES="r2:…"`) before going live — dev hosts back up to `compose/backups` only.
-- Monitoring: `docs/operations/monitoring.md`. Upgrades: `docs/operations/upgrade-rollback.md`. `make chaos` / `loadtest` arrive in the next session (see `n8n-kit-HANDOFF.md`).
+- Monitoring: `docs/operations/monitoring.md`. Upgrades: `docs/operations/upgrade-rollback.md`. Load test and chaos drills: `docs/operations/chaos-drills.md` — read that before `make chaos`, which kills and stops containers on purpose.
 - RHEL-family hosts: see `docs/operations/rhel-hosts.md` (install path verified in containers; a real SELinux + firewalld host run is still pending).
 - All n8n processes share one `/home/node/.n8n` volume (community nodes must be visible to every worker); a worker starting while another process was writing may log "Last session crashed" once — harmless.
