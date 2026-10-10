@@ -16,7 +16,9 @@
 # unless KEEP=1, and the executions age out through the normal pruning settings.
 #
 # Exit codes: 0 every sent request produced a successful execution · 1 setup failed · 2 the queue did not drain.
-# shellcheck disable=SC2310,SC2311,SC2312  # helpers are called in conditions on purpose (see tests/smoke/lib.sh)
+# shellcheck disable=SC2310,SC2311,SC2312,SC2016  # helpers are called in conditions on purpose (see tests/smoke/lib.sh);
+#                                                  the sh -c snippets are literal on purpose — $VALKEY_PASSWORD must
+#                                                  expand inside the container, $1.. inside the child shell
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -26,15 +28,25 @@ source "${SCRIPT_DIR}/../../tests/smoke/lib.sh"
 N="${N:-200}"
 P="${P:-20}"
 KEEP="${KEEP:-}"
-# Sampling costs a `docker exec` per tick, which is itself load on a small host — 3 s is often enough to catch the
-# peak without distorting what it measures.
-SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-3}"
+# Queue depth is read from Valkey, not from n8n's Prometheus gauge: that gauge only refreshes every
+# N8N_METRICS_QUEUE_METRICS_INTERVAL seconds (20 by default), so sampling it faster just re-reads a stale number.
+# One long-lived `exec` inside the container does the sampling, so a 1 s interval costs no docker exec per tick.
+SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-1}"
 # The drain budget scales with the backlog: 2 workers x concurrency 10 on a 2 vCPU host run a few executions/s.
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-$(( 120 + N * 3 ))}"
 
-[[ "${N}" =~ ^[0-9]+$ ]] && (( N >= 1 && N <= 100000 )) || die "N must be 1..100000 (got '${N}')"
-[[ "${P}" =~ ^[0-9]+$ ]] && (( P >= 1 && P <= 200 )) || die "P must be 1..200 (got '${P}')"
-[[ "${DRAIN_TIMEOUT}" =~ ^[0-9]+$ ]] || die "DRAIN_TIMEOUT must be a number of seconds (got '${DRAIN_TIMEOUT}')"
+if [[ ! "${N}" =~ ^[0-9]+$ ]] || (( N < 1 || N > 100000 )); then
+  die "N must be 1..100000 (got '${N}')"
+fi
+if [[ ! "${P}" =~ ^[0-9]+$ ]] || (( P < 1 || P > 200 )); then
+  die "P must be 1..200 (got '${P}')"
+fi
+if [[ ! "${DRAIN_TIMEOUT}" =~ ^[0-9]+$ ]] || (( DRAIN_TIMEOUT < 1 )); then
+  die "DRAIN_TIMEOUT must be a positive number of seconds (got '${DRAIN_TIMEOUT}')"
+fi
+if [[ ! "${SAMPLE_INTERVAL}" =~ ^[0-9]+$ ]] || (( SAMPLE_INTERVAL < 1 )); then
+  die "SAMPLE_INTERVAL must be a positive number of seconds (got '${SAMPLE_INTERVAL}')"
+fi
 
 # --- the stack has to be up before anything here means something -----------------------------------------------------
 not_running="$(compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$2 != "running" { print $1 }' || true)"
@@ -53,8 +65,10 @@ ensure_api_key || die "could not get an API key (see above)"
 wf_id=''
 sampler_pid=''
 codes_file="$(mktemp "${STATE_DIR}/.loadtest-codes.XXXXXX")"
-peak_file="$(mktemp "${STATE_DIR}/.loadtest-peak.XXXXXX")"
-printf '0\n' >"${peak_file}"
+depth_file="$(mktemp "${STATE_DIR}/.loadtest-depth.XXXXXX")"
+# BullMQ names its lists "<QUEUE_BULL_PREFIX>:jobs:<state>"; the kit's prefix is n8n (compose/docker-compose.yml).
+queue_prefix="$(env_get QUEUE_BULL_PREFIX)"
+wait_key="${queue_prefix:-n8n}:jobs:wait"
 
 stop_sampler() {
   [[ -n "${sampler_pid}" ]] || return 0
@@ -73,7 +87,7 @@ cleanup() {
       api DELETE "/api/v1/workflows/${wf_id}" || true
     fi
   fi
-  rm -f "${codes_file}" "${peak_file}" 2>/dev/null || true
+  rm -f "${codes_file}" "${depth_file}" 2>/dev/null || true
   exit "${rc}"
 }
 trap cleanup EXIT
@@ -98,29 +112,35 @@ warm() {
 }
 wait_for 180 "the pool to register /webhook/${path}" warm || die "the webhook never answered 200 — is the stack healthy? (make status)"
 
-metric_int() {   # metric_int NAME -> integer value of a main metric, 0 when absent
-  local v
-  v="$(main_metric "${1}")"
-  v="${v%%.*}"
-  [[ "${v}" =~ ^[0-9]+$ ]] || v=0
-  printf '%s\n' "${v}"
+# --- baseline AFTER the warm-up, so the warm-up's own execution is not counted ---------------------------------------
+count_executions() {   # count_executions STATUS -> how many executions of this workflow have it (paged)
+  local status="${1}" cursor='' n=0 page
+  while :; do
+    api GET "/api/v1/executions?workflowId=${wf_id}&status=${status}&limit=250${cursor:+&cursor=${cursor}}"
+    status_is 200 || break
+    page="$(req_body)"
+    n=$(( n + $(jq -r '.data | length' <<<"${page}" 2>/dev/null || echo 0) ))
+    cursor="$(jq -r '.nextCursor // empty' <<<"${page}" 2>/dev/null || true)"
+    [[ -n "${cursor}" ]] || break
+  done
+  printf '%s\n' "${n}"
 }
-baseline_completed="$(metric_int n8n_scaling_mode_queue_jobs_completed)"
+base_success="$(count_executions success)"
+base_error="$(count_executions error)"
 info "load test: N=${N} P=${P} -> ${BASE_URL}/webhook/${path} (${#workers[@]} workers, drain budget ${DRAIN_TIMEOUT}s)"
 
-# --- sample the queue depth while the send phase runs -----------------------------------------------------------------
-sample_queue() {
-  local depth peak=0
-  while :; do
-    depth="$(metric_int n8n_scaling_mode_queue_jobs_waiting)"
-    if (( depth > peak )); then
-      peak="${depth}"
-      printf '%s\n' "${peak}" >"${peak_file}"
-    fi
-    sleep "${SAMPLE_INTERVAL}"
+# --- sample the real queue depth from Valkey while the run proceeds ----------------------------------------------
+# A single bounded loop inside the container: killing a backgrounded `compose exec` does not reliably stop the
+# process it started, so the loop counts itself out instead of relying on the signal.
+max_ticks=$(( (DRAIN_TIMEOUT + 900) / SAMPLE_INTERVAL ))
+compose exec -T valkey sh -c '
+  key=$1; interval=$2; ticks=$3; i=0
+  while [ "$i" -lt "$ticks" ]; do
+    VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey-cli llen "$key" 2>/dev/null || echo 0
+    i=$((i + 1))
+    sleep "$interval"
   done
-}
-sample_queue &
+' sh "${wait_key}" "${SAMPLE_INTERVAL}" "${max_ticks}" >"${depth_file}" 2>/dev/null &
 sampler_pid=$!
 
 # --- send phase ----------------------------------------------------------------------------------------------------
@@ -146,32 +166,20 @@ sort "${codes_file}" | uniq -c | sort -rn | while read -r count code; do
 done
 
 # --- drain phase -----------------------------------------------------------------------------------------------------
-count_executions() {   # count_executions STATUS -> how many executions of this workflow have it (paged)
-  local status="${1}" cursor='' n=0 page
-  while :; do
-    api GET "/api/v1/executions?workflowId=${wf_id}&status=${status}&limit=250${cursor:+&cursor=${cursor}}"
-    status_is 200 || break
-    page="$(req_body)"
-    n=$(( n + $(jq -r '.data | length' <<<"${page}" 2>/dev/null || echo 0) ))
-    cursor="$(jq -r '.nextCursor // empty' <<<"${page}" 2>/dev/null || true)"
-    [[ -n "${cursor}" ]] || break
-  done
-  printf '%s\n' "${n}"
-}
 drained() {
-  (( $(count_executions success) >= ok_count ))
+  (( $(count_executions success) - base_success >= ok_count ))
 }
 drain_start="${SECONDS}"
 drain_rc=0
 wait_for "${DRAIN_TIMEOUT}" "${ok_count} successful executions" drained || drain_rc=2
 drain_elapsed=$(( SECONDS - drain_start ))
+total_elapsed=$(( SECONDS - send_start ))
 stop_sampler
 
-success_n="$(count_executions success)"
-error_n="$(count_executions error)"
-peak="$(tr -dc '0-9' <"${peak_file}" 2>/dev/null || true)"
-peak="${peak:-0}"
-completed_now="$(metric_int n8n_scaling_mode_queue_jobs_completed)"
+success_n=$(( $(count_executions success) - base_success ))
+error_n=$(( $(count_executions error) - base_error ))
+peak="$(awk '/^[0-9]+$/ && $1 > m { m = $1 } END { print m + 0 }' "${depth_file}" 2>/dev/null || echo 0)"
+samples="$(grep -c '^[0-9]\+$' "${depth_file}" 2>/dev/null || true)"
 
 # Per-worker split: each worker logs the jobs it picked up, which is also how a chaos drill shows a takeover.
 printf '\n' >&2
@@ -185,14 +193,15 @@ done
 printf '\n' >&2
 log "result"
 printf '         sent               %s (HTTP 200: %s)\n' "${sent}" "${ok_count}" >&2
-printf '         send phase         %ss\n' "${send_elapsed}" >&2
-printf '         drain phase        %ss\n' "${drain_elapsed}" >&2
-printf '         executions         %s success, %s error\n' "${success_n}" "${error_n}" >&2
-printf '         throughput         %s executions/min over the drain\n' \
-  "$(( drain_elapsed > 0 ? success_n * 60 / drain_elapsed : success_n ))" >&2
-printf '         peak queue depth   %s waiting (sampled every %ss)\n' "${peak}" "${SAMPLE_INTERVAL}" >&2
-printf '         queue completed    %s -> %s (+%s)\n' \
-  "${baseline_completed}" "${completed_now}" "$(( completed_now - baseline_completed ))" >&2
+printf '         send phase         %ss (%s req/s)\n' "${send_elapsed}" \
+  "$(( sent / (send_elapsed > 0 ? send_elapsed : 1) ))" >&2
+printf '         drain after send   %ss\n' "${drain_elapsed}" >&2
+printf '         end to end         %ss (first request -> last execution)\n' "${total_elapsed}" >&2
+printf '         executions         %s success, %s error (this run only)\n' "${success_n}" "${error_n}" >&2
+printf '         throughput         %s executions/min end to end\n' \
+  "$(( total_elapsed > 0 ? success_n * 60 / total_elapsed : success_n ))" >&2
+printf '         peak queue depth   %s waiting (%s samples of %s, %ss apart)\n' \
+  "${peak}" "${samples:-0}" "${wait_key}" "${SAMPLE_INTERVAL}" >&2
 
 if (( drain_rc != 0 )); then
   fail "the queue did not drain within ${DRAIN_TIMEOUT}s — ${success_n}/${ok_count} succeeded. Raise DRAIN_TIMEOUT, add workers (make scale-workers N=4), or look at make logs SERVICE=${workers[0]}"
