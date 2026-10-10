@@ -22,4 +22,7 @@ lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then 
 	@if [ -n "$(DOCKERFILES)" ]; then hadolint $(DOCKERFILES) && echo "hadolint: OK"; else echo "hadolint: no Dockerfiles yet"; fi
 	@if [ -n "$(YAML_FILES)" ]; then yamllint -s $(YAML_FILES) && echo "yamllint: OK"; else echo "yamllint: no YAML yet"; fi
 	@if [ -f compose/Makefile ]; then $(MAKE) -C compose lint; fi
+	@# The docs site is built with --strict so a dead internal link or a page missing from the nav fails here
+	@# rather than on the site. Skipped when mkdocs is not installed (CI always has it; see .github/workflows/docs.yml).
+	@if [ -f mkdocs.yml ]; then 		if command -v mkdocs >/dev/null 2>&1; then mkdocs build --strict --quiet && echo "mkdocs: OK"; 		else echo "mkdocs: not installed, skipped (pip install -r requirements-docs.txt)"; fi; 	fi
 	@echo "lint: OK"
