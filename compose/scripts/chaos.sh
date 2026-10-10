@@ -29,6 +29,9 @@ P="${P:-40}"
 OUTAGE="${OUTAGE:-60}"
 YES="${YES:-}"
 RECOVER_TIMEOUT="${RECOVER_TIMEOUT:-420}"
+# Set by a scenario when an assertion fails: the drill's workflow, executions and files are then left in place so
+# the failure can be inspected instead of being deleted by the cleanup trap.
+KEEP_DRILL="${KEEP_DRILL:-}"
 
 case "${SCENARIO}" in
   worker|redis|main) ;;
@@ -58,6 +61,9 @@ fi
 
 # --- shared state and recovery ------------------------------------------------------------------------------------
 run_id="$(rand_hex 4)"
+# Log windows are anchored to when the drill STARTED: a fixed "--since 420s" looks at the wrong window once the
+# recovery waits have burned more than that — which is exactly when the evidence matters.
+drill_started_at="$(date -u +%Y-%m-%dT%H:%M:%S)"
 wf_id=''
 sched_id=''
 codes_file="$(mktemp "${STATE_DIR}/.chaos-codes.XXXXXX")"
@@ -82,9 +88,14 @@ cleanup() {
   # everything else alone. Volumes, the database and .env are never touched by this script.
   compose up -d --wait --wait-timeout 300 >/dev/null 2>&1 \
     || warn "the stack did not come back healthy by itself — check make status and make doctor"
+  if [[ -n "${KEEP_DRILL}" ]]; then
+    info "KEEP_DRILL: the drill's workflow and files are left in place for inspection"
+    rm -f "${codes_file}" 2>/dev/null || true
+    exit "${rc}"
+  fi
   delete_workflow "${wf_id}"
   delete_workflow "${sched_id}"
-  compose exec -T "${workers[0]}" sh -c "rm -f /home/node/.n8n-files/chaos-${run_id}-*.txt" >/dev/null 2>&1 || true
+  compose exec -T n8n-main sh -c "rm -f /home/node/.n8n-files/chaos-${run_id}-*.txt" >/dev/null 2>&1 || true
   rm -f "${codes_file}" 2>/dev/null || true
   exit "${rc}"
 }
@@ -118,18 +129,22 @@ fire() {   # fire PATH FROM TO — POST ids FROM..TO with P in flight, codes app
       -X POST "$url" -H "Content-Type: application/json" --data "{\"run\":\"$run\",\"id\":\"$i\"}" 2>/dev/null || echo 000
   ' sh "${BASE_URL}/webhook/${1}" "${run_id}" {} "${CURL_TLS[@]}" >>"${codes_file}" || true
 }
+# The n8n_files volume is shared by every n8n service, so the count is read from n8n-main — never from a worker the
+# drill may have just killed. Reading it from the victim is how the first version of this drill reported 0 of 120.
 side_effects() {   # how many distinct files this run produced (one per input id, overwritten by a retry)
   local n
-  n="$(compose exec -T "${workers[0]}" sh -c "ls -1 /home/node/.n8n-files/chaos-${run_id}-*.txt 2>/dev/null | wc -l" 2>/dev/null || true)"
+  n="$(compose exec -T n8n-main sh -c "ls -1 /home/node/.n8n-files/chaos-${run_id}-*.txt 2>/dev/null | wc -l" 2>/dev/null || true)"
   n="${n//[^0-9]/}"
   printf '%s\n' "${n:-0}"
 }
-restart_count() {   # restart_count SERVICE — Docker's restart counter for a compose service
-  local cid n
+# RestartCount is not a reliable signal here — it stayed 0 across a kill plus a policy restart on Docker 29 — so
+# "did it come back" is answered by the container's start time having moved instead.
+started_at() {   # started_at SERVICE — when this service's container last started
+  local cid t
   cid="$(compose ps -q "${1}" 2>/dev/null | head -1)"
-  [[ -n "${cid}" ]] || { printf '0\n'; return 0; }
-  n="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || true)"
-  printf '%s\n' "${n:-0}"
+  [[ -n "${cid}" ]] || { printf 'none\n'; return 0; }
+  t="$(docker inspect -f '{{.State.StartedAt}}' "${cid}" 2>/dev/null || true)"
+  printf '%s\n' "${t:-none}"
 }
 count_status() {   # count_status STATUS -> executions of the drill workflow with that status (paged)
   local status="${1}" cursor='' n=0 page
@@ -154,8 +169,8 @@ scenario_worker() {
     || die "the drill webhook never answered 200 — is the stack healthy?"
   compose exec -T "${victim}" sh -c "rm -f /home/node/.n8n-files/chaos-${run_id}-*.txt" >/dev/null 2>&1 || true
 
-  local before_restarts
-  before_restarts="$(restart_count "${victim}")"
+  local before_started
+  before_started="$(started_at "${victim}")"
   info "firing ${N} jobs, then killing ${victim} while the backlog drains"
   fire "${path}" 1 "${N}"
 
@@ -175,26 +190,37 @@ scenario_worker() {
   local recovered=0
   wait_for "${RECOVER_TIMEOUT}" "all ${N} inputs to have produced their file" all_written && recovered=1
 
-  local effects successes
+  local effects st
   effects="$(side_effects)"
-  successes="$(count_status success)"
+  printf '\n' >&2
+  log "what n8n recorded for the ${N} inputs"
+  for st in success error crashed running waiting; do
+    printf '         %-10s %s\n' "${st}" "$(count_status "${st}")" >&2
+  done
+
   printf '\n' >&2
   log "worker drill (TC-008)"
   check "every input produced its side effect (${effects}/${N}) — no job was lost" test "${recovered}" = 1
   check "exactly one side effect per input (${effects} files for ${N} inputs) — retries did not duplicate" \
     test "${effects}" -le "${N}"
-  check "${victim} was restarted by Docker (restart count ${before_restarts} -> $(restart_count "${victim}"))" \
-    test "$(restart_count "${victim}")" -gt "${before_restarts}"
-  check "${victim} is healthy again" wait_for 180 "${victim} healthy" test_service_healthy "${victim}"
-  check "${survivor} kept working through the kill" test "$(jobs_logged "${survivor}")" -gt 0
-  info "executions recorded: ${successes} success for ${N} inputs — anything above ${N} is Bull re-running a stalled job, which is expected (PLAN §2.9: workflows must be idempotent)"
+  check "${victim} came back (started ${before_started} -> $(started_at "${victim}"))" \
+    test "$(started_at "${victim}")" != "${before_started}"
+  # A worker's healthcheck has start_period 300s, so give recovery the same budget the service itself asks for.
+  check "${victim} is healthy again" wait_for "${RECOVER_TIMEOUT}" "${victim} healthy" test_service_healthy "${victim}"
+  check "${survivor} kept working through the kill ($(jobs_logged "${survivor}") jobs)" \
+    test "$(jobs_logged "${survivor}")" -gt 0
+  info "more executions than inputs means Bull re-ran a stalled job — expected, and why PLAN §2.9 tells users to keep workflows idempotent"
+  if (( SMOKE_FAILED > 0 )); then
+    KEEP_DRILL=1
+    warn "assertions failed — keeping workflow ${wf_id} and the files under /home/node/.n8n-files/chaos-${run_id}-* so you can inspect them"
+  fi
 }
 test_service_healthy() {
   [[ "$(service_health "${1}" 2>/dev/null || true)" == "healthy" ]]
 }
 jobs_logged() {   # jobs_logged SERVICE — jobs of this drill's workflow that this worker started
   local n
-  n="$(compose logs --no-color --since "${RECOVER_TIMEOUT}s" "${1}" 2>/dev/null \
+  n="$(compose logs --no-color --since "${drill_started_at}" "${1}" 2>/dev/null \
         | grep -F "\"workflowId\":\"${wf_id}\"" | grep -c 'started execution' || true)"
   printf '%s\n' "${n:-0}"
 }
