@@ -6,6 +6,33 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+### Security
+
+### Templates
+
+### Docs
+
+---
+
+## [0.1.0] — 2026-10-10
+
+First tagged release: the Compose target (M0) complete except its acceptance test. Everything below was built
+and verified between 2026-10-07 and 2026-10-10.
+
+**Tested with n8n:** 2.42.4 (with `n8nio/runners:2.42.4`), alongside Caddy 2.11.7, Postgres 18.6, Valkey 9.1.2.
+Verified on Ubuntu 24.04 (Docker 29.9.0 / Compose 5.6.0) and on GitHub Actions `ubuntu-24.04`; the bootstrap
+matrix covers Ubuntu 24.04/26.04, Debian 13 and Rocky/AlmaLinux 9/10.
+
+**Not yet verified:** TC-025 — the timed fresh-host quickstart followed by three outside testers — and with it
+route A's real ACME path on a public host. That is why this release is marked pre-release.
+
+
+### Added
 - Documentation site (S9, 2026-10-10): MkDocs Material at `mkdocs.yml`, published to GitHub Pages by `.github/workflows/docs.yml` (builds with `--strict` on every docs PR, deploys on `main`; `mkdocs-material` pinned in `requirements-docs.txt`). New pages: `index`, `quickstart` and its Vietnamese translation `quickstart.vi`, `architecture` (with a mermaid topology diagram), `configuration` (every `.env` setting, grouped, with what it costs to get wrong), `security` (what is hardened by default plus a pre-handover checklist), `operations/scaling`, `operations/rebuild-vps`, `faq` (built from the verified entries in the bug log) and `contributing`. Root `make lint` now runs `mkdocs build --strict` when mkdocs is installed, so a dead internal link fails the lint rather than the site.
 - Load test and chaos drills (S8, 2026-10-10): `make loadtest [N=200] [P=20] [MODE=async|sync]` bursts webhooks through the pool and reports the HTTP histogram, send/drain/end-to-end timing, executions per minute, the peak queue depth (read live from Valkey, because n8n's Prometheus gauge only refreshes every 20 s) and the per-worker split. `make chaos SCENARIO=worker|redis|main [N=] [OUTAGE=] [YES=1]` breaks one part of a running stack and asserts the documented behaviour (TC-008/009/010), restoring every service through its exit trap and keeping the evidence — deactivated, never left published — when an assertion fails. New fixtures `wf-webhook-async.json` (answers when queued, so a backlog can build), `wf-chaos-idempotent.json` (one file per input id, so a retry overwrites instead of duplicating) and `wf-schedule-tick.json`. `docs/operations/chaos-drills.md`. Measured on a 2 vCPU / 7.7 GB host with 2 workers at concurrency 10: ~850 executions/min, a 200-job burst absorbed in 14 s, peak backlog 161. Tested with n8n: 2.42.4.
 - Upgrades (S7, 2026-10-09): `make upgrade [N8N_VERSION=x]` — checks with nothing changed (running version from the container label and n8n's own version record, stable release, no downgrade, majors only with ALLOW_MAJOR=1), pull + label check while n8n serves, stop + drain, pre-upgrade backup (failure → old version back), n8n-main alone for the migrations, then the rest, verification (versions + smoke on the core services); `RESUME=1`; without N8N_VERSION it applies the pin a `git pull` brought. `make rollback` — images only when no migration ran (no data lost), else the pre-upgrade backup is fetched and verified while n8n serves, then restored; `ROLLBACK_CONFIRM` whenever data would be lost, `ABORT=1`, `FROM=`. Version guard on make up / restart / scale-workers / restore. State in `compose/.upgrade/` (state, history, run logs). CI `upgrade` job (2.41.7 → pin: forced failure, rollback, upgrade); the weekly job upgrades from the pin to the latest stable n8n. `docs/operations/upgrade-rollback.md`.

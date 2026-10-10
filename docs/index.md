@@ -103,7 +103,7 @@ the clock, and exits 1 on any failure. `make up` runs preflight again itself, pu
 starts everything with `--wait`, and ends with the health table and the login URL.
 
 Read [Quickstart](quickstart.md) before running it: it covers DNS and ports, what to put in a password
-manager before anything else, and the local variant that needs no public domain. 
+manager before anything else, and the local variant that needs no public domain.
 
 ## Where to go next
 
@@ -127,10 +127,12 @@ manager before anything else, and the local variant that needs no public domain.
 
 ## Status
 
-The Compose kit runs and is documented through the load and chaos drills; it has not been tagged
-`v0.1.0`, and the timed fresh-host quickstart with outside testers is still outstanding. Treat it as
-"runs, documented, not yet declared production-ready". Current status and open items live in
-`n8n-kit-HANDOFF.md` in the repository.
+Tagged **v0.1.0** on 2026-10-10, as a pre-release. The Compose kit runs, is documented, and every
+claim on these pages was checked against the code or measured on a real host — but the acceptance test
+is still outstanding: nobody outside the project has followed the quickstart on a fresh host with a
+stopwatch, and route A's real Let's Encrypt path has never been walked (every verified run so far used
+an internal CA). Treat it as "runs, documented, not yet independently reproduced". Current status and
+open items live in `n8n-kit-HANDOFF.md` in the repository.
 
 Bug reports and questions go through the
 [issue templates](https://github.com/nhhandevops/n8n-prod-kit/issues); questions about n8n itself belong

@@ -2,10 +2,14 @@
 
 Which n8n versions each kit version was tested with, where, and how. A row is added whenever the n8n pin in
 `compose/versions.env` changes or a kit release is tagged. "Smoke" means the full `make smoke` suite (TC-003…006,
-TC-017 part) passed; "bootstrap" means `make bootstrap-test` passed for the listed distributions.
+TC-017 part) passed; "chaos" means all three `make chaos` drills passed (TC-008/009/010); "bootstrap" means
+`make bootstrap-test` passed for the listed distributions. A real public host with Let's Encrypt is **not** yet
+in this table — every row so far used an internal CA.
 
 | Kit | n8n (+ runners) | Caddy | Postgres | Valkey | Tested on | Date | Result |
 |---|---|---|---|---|---|---|---|
+| 0.1.0 | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | Ubuntu 24.04.4 VM (Docker 29.9.0, Compose 5.6.0; ports 80/443, internal CA, 2 vCPU / 7.7 GB) | 2026-10-10 | smoke ✅ 9/9 · chaos ✅ worker/redis/main · loadtest ✅ (200-job burst in 14 s, ~850 exec/min) · bootstrap ✅ |
+| 0.1.0 | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | GitHub Actions ubuntu-24.04 (ports 80/443, internal CA, mirrored images) | 2026-10-10 | lint ✅ · smoke ✅ ×2 + restore · upgrade drill ✅ (2.41.7 → pin, forced failure, rollback) · docs build ✅ |
 | 0.1.0-dev | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | Ubuntu 26.04 VM (Docker 29.5, Compose 5.1; ports 8080/8443, internal CA) | 2026-10-08 | smoke ✅ · bootstrap ✅ (Ubuntu 24.04/26.04, Debian 13, Rocky 9/10, Alma 9) |
 | 0.1.0-dev | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | GitHub Actions ubuntu-24.04 (Docker 28.0, Compose 2.38; ports 80/443, internal CA, images from ghcr.io / public.ecr.aws mirrors) | 2026-10-08 | smoke ✅ ×2 (run 37724038543, 171 s incl. init + up + doctor) |
 
