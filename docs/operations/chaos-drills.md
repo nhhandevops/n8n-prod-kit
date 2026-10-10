@@ -151,7 +151,9 @@ waits `OUTAGE` seconds, and starts it again. Asserts:
   again" *is* the reconnect signal)
 - every job queued before the outage completes afterwards — AOF kept the queue
 
-Measured: Valkey stopped with 321 jobs waiting; 337 completed after it came back; nothing lost.
+Measured on the final run: Valkey stopped with 318 jobs waiting; **303 were still in the wait list the moment
+it came back, before any worker had reconnected** — that is the AOF evidence, not an inference from throughput —
+and 320 completed afterwards. Nothing was lost.
 
 Raise `N` if the drill warns that nothing was queued at the stop — on a fast host the workers drain the burst
 before the stop lands, and then the outage has nothing to protect.

@@ -1,0 +1,97 @@
+site_name: n8n Production Kit
+site_description: >-
+  Production-grade self-hosted n8n in 15 minutes: queue mode, automatic TLS, encrypted off-host backups with
+  weekly restore tests, monitoring, and upgrades that roll back.
+site_url: https://nhhandevops.github.io/n8n-prod-kit/
+repo_url: https://github.com/nhhandevops/n8n-prod-kit
+repo_name: nhhandevops/n8n-prod-kit
+edit_uri: edit/main/docs/
+copyright: MIT licensed. n8n is a trademark of n8n GmbH; this project is not affiliated with it.
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Bắt đầu nhanh (Tiếng Việt): quickstart.vi.md
+  - Architecture: architecture.md
+  - Configuration: configuration.md
+  - Security: security.md
+  - Operations:
+      - Backup and restore: operations/backup-restore.md
+      - Upgrade and rollback: operations/upgrade-rollback.md
+      - Monitoring and alerts: operations/monitoring.md
+      - Scaling: operations/scaling.md
+      - Chaos drills: operations/chaos-drills.md
+      - Rebuild a host: operations/rebuild-vps.md
+      - RHEL-family hosts: operations/rhel-hosts.md
+  - Compatibility: compat.md
+  - FAQ: faq.md
+  - Contributing: contributing.md
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  # Mermaid diagrams (architecture.md) are rendered client-side by Material's own loader.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/nhhandevops/n8n-prod-kit
+      name: The kit on GitHub
+
+# `mkdocs build --strict` turns warnings into errors, which is how CI runs it: a broken internal link or a page
+# missing from the nav fails the build rather than shipping a dead link to the site.
+strict: true
