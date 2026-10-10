@@ -16,6 +16,8 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 ### Templates
 
 ### Docs
+- `docs/runbook.md` — a hands-on runbook for a dev/test host: every shipped feature in the order it makes sense to learn it, written for someone new to Docker, queue mode, certificates and backups-as-a-practice. Six parts (inspection tools · the edge, the editor and a first webhook · backups and restore · upgrades, scaling and the chaos drills · monitoring and alerts · a sign-off sheet), each feature presented as *what it is · why you care · do this · what you should see · what it proves · if it goes wrong*, and each part mapped to the acceptance tests it verifies (TC-002…TC-018, TC-026). Written by five agents reading the scripts, then each part attacked by a verifier whose only job was to find commands, flags and output the repo does not support.
+- `n8n-kit-PROD-PLAN.md` (repository root) — the production rollout, **parked** on purpose: the project stays on a disposable dev host until §1's three conditions are met. Holds the production-versus-dev configuration diff (every key that must change, every key to decide consciously, and the ones not to touch), an eight-phase rollout where each phase ends in a gate, the go-live checklist, the go-live risk register, and an **improvement ledger** that scores every open item as `(harm × likelihood × reach) ÷ effort` so "what should I fix first" is answered by the table rather than by memory. §6 lists what triggers an update to it.
 
 ---
 

@@ -187,6 +187,7 @@ Clearing that is the next job.
 
 | Next | Where |
 |---|---|
+| A guided pass over every feature, with the commands and what each one proves | [Runbook](runbook.md) |
 | An off-host backup target, and a restore you have actually tested | [Backup and restore](operations/backup-restore.md) |
 | Prometheus, Grafana, Loki and alerting (`COMPOSE_PROFILES=monitoring`) | [Monitoring](operations/monitoring.md) |
 | Moving to a new n8n release, and undoing it | [Upgrade and rollback](operations/upgrade-rollback.md) |

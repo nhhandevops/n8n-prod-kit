@@ -44,6 +44,7 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Bắt đầu nhanh (Tiếng Việt): quickstart.vi.md
+  - Runbook (hands-on): runbook.md
   - Architecture: architecture.md
   - Configuration: configuration.md
   - Security: security.md
