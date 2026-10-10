@@ -51,6 +51,6 @@ case "${result}" in
     ok "n8n files volume ${volume}: owner ${result#fixed-from-} -> 1000 (the Read/Write Files node can write again)"
     ;;
   *)
-    warn "could not check or fix the ownership of ${volume} — workflows writing to /home/node/.n8n-files may fail with EACCES (make doctor explains)"
+    warn "could not check or fix the ownership of ${volume} — workflows writing to /home/node/.n8n-files will fail with EACCES. Check with: docker compose exec n8n-main sh -c 'ls -ld /home/node/.n8n-files' (owner must be 1000), then re-run make up"
     ;;
 esac

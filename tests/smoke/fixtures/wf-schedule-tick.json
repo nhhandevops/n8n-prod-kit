@@ -17,5 +17,5 @@
     }
   ],
   "connections": { "Schedule": { "main": [[{ "node": "Code", "type": "main", "index": 0 }]] } },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveDataErrorExecution": "all", "saveManualExecutions": true }
 }

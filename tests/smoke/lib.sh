@@ -68,6 +68,28 @@ case "${TLS_MODE}" in
     ;;
 esac
 
+# --- stack state ------------------------------------------------------------------------------------------------------
+# `docker compose ps` without --all hides stopped/missing containers, and its {{.State}} is the container state
+# ("running"), never the health status — so the obvious `ps | awk '$2 != "running"'` check can only ever see a
+# healthy stack. Health comes from service_health (missing/none/starting/healthy/unhealthy), run state from inspect.
+unhealthy_services() {   # one service name per line; empty output means every container is running and healthy
+  local svc cid status health
+  while read -r svc; do
+    [[ -n "${svc}" ]] || continue
+    cid="$(compose ps -aq "${svc}" 2>/dev/null | head -1)"
+    status=''
+    [[ -n "${cid}" ]] && status="$(docker inspect -f '{{.State.Status}}' "${cid}" 2>/dev/null || true)"
+    health="$(service_health "${svc}" 2>/dev/null || true)"
+    if [[ "${status}" != "running" ]] || { [[ "${health}" != "healthy" && "${health}" != "none" ]]; }; then
+      printf '%s
+' "${svc}"
+    fi
+  done < <(compose ps -a --format '{{.Service}}' 2>/dev/null | sort -u)
+}
+stack_healthy() {
+  [[ -z "$(unhealthy_services)" ]]
+}
+
 # --- checks ----------------------------------------------------------------------------------------------------------
 SMOKE_FAILED=0
 check() {
