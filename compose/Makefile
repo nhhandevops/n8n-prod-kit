@@ -152,8 +152,8 @@ scale-workers: ## Set the worker count: make scale-workers N=4  (1..16; N=1 park
 
 # --- drills --------------------------------------------------------------------------------------------------------
 
-loadtest: ## Push N webhooks through the pool and time the drain: make loadtest [N=200] [P=20] [KEEP=1]
-	@N="$(N)" P="$(P)" KEEP="$(KEEP)" DRAIN_TIMEOUT="$(DRAIN_TIMEOUT)" $(KIT_DIR)/scripts/loadtest.sh
+loadtest: ## Burst N webhooks through the pool and watch the queue drain: make loadtest [N=200] [P=20] [MODE=async|sync] [KEEP=1]
+	@N="$(N)" P="$(P)" MODE="$(MODE)" KEEP="$(KEEP)" DRAIN_TIMEOUT="$(DRAIN_TIMEOUT)" $(KIT_DIR)/scripts/loadtest.sh
 
 # --- dev TLS -----------------------------------------------------------------------------------------------------------
 

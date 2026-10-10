@@ -3,9 +3,15 @@
 # watch the queue drain. It is the measurement half of S8 (the chaos drills reuse it) and the "200 test webhooks"
 # step of the demo script.
 #
-# What it does: publishes its own `kit-smoke-load-<nonce>` workflow (the fixture the smoke suite uses, and the same
-# name prefix, so a later `make smoke` cleans up anything this leaves behind), waits for the pool to register it,
-# fires N POSTs with P in flight, samples the queue depth while they run, then waits for N successful executions.
+# What it does: publishes its own `kit-smoke-load-<nonce>` workflow (same name prefix as the smoke suite, so a later
+# `make smoke` cleans up anything this leaves behind), waits for the pool to register it, fires N POSTs with P in
+# flight, samples the queue depth while they run, then waits for N successful executions.
+#
+# MODE=async (default) uses a webhook that answers as soon as the job is queued — a real inbound burst, and the only
+# shape that can build a backlog: the senders race ahead of the workers, the queue rises, then it drains. That is
+# step 6 of the demo script. MODE=sync holds each response until its workflow has finished (responseMode lastNode),
+# which measures end-to-end latency per request but can never queue more than P jobs — with P at or below
+# WORKER_REPLICAS x WORKER_CONCURRENCY no job ever waits, so its peak depth is 0 by construction.
 #
 # What it reports: a histogram of HTTP codes, wall clock for the send and drain phases, requests/s, executions/min,
 # the peak queue depth and the per-worker split — the numbers behind the sizing table. A slow run on a small host
@@ -27,6 +33,7 @@ source "${SCRIPT_DIR}/../../tests/smoke/lib.sh"
 
 N="${N:-200}"
 P="${P:-20}"
+MODE="${MODE:-async}"
 KEEP="${KEEP:-}"
 # Queue depth is read from Valkey, not from n8n's Prometheus gauge: that gauge only refreshes every
 # N8N_METRICS_QUEUE_METRICS_INTERVAL seconds (20 by default), so sampling it faster just re-reads a stale number.
@@ -47,6 +54,11 @@ fi
 if [[ ! "${SAMPLE_INTERVAL}" =~ ^[0-9]+$ ]] || (( SAMPLE_INTERVAL < 1 )); then
   die "SAMPLE_INTERVAL must be a positive number of seconds (got '${SAMPLE_INTERVAL}')"
 fi
+case "${MODE}" in
+  async) fixture=wf-webhook-async.json ;;
+  sync)  fixture=wf-webhook-echo.json ;;
+  *)     die "MODE must be async (answer when queued — builds a backlog) or sync (answer when finished), got '${MODE}'" ;;
+esac
 
 # --- the stack has to be up before anything here means something -----------------------------------------------------
 not_running="$(compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$2 != "running" { print $1 }' || true)"
@@ -95,7 +107,7 @@ trap cleanup EXIT
 # --- publish the workflow under test -----------------------------------------------------------------------------------
 nonce="$(rand_hex 6)"
 path="kit-smoke-load-${nonce}"
-api POST /api/v1/workflows "$(workflow_from_fixture wf-webhook-echo.json "kit-smoke-load-${nonce}" "${path}")"
+api POST /api/v1/workflows "$(workflow_from_fixture "${fixture}" "kit-smoke-load-${nonce}" "${path}")"
 wf_id="$(req_body | jq -r '.id // empty')"
 [[ -n "${wf_id}" ]] || die "could not create the load-test workflow (HTTP ${REQ_STATUS}): $(req_body | head -c 200)"
 api POST "/api/v1/workflows/${wf_id}/activate"
@@ -127,7 +139,7 @@ count_executions() {   # count_executions STATUS -> how many executions of this 
 }
 base_success="$(count_executions success)"
 base_error="$(count_executions error)"
-info "load test: N=${N} P=${P} -> ${BASE_URL}/webhook/${path} (${#workers[@]} workers, drain budget ${DRAIN_TIMEOUT}s)"
+info "load test: N=${N} P=${P} MODE=${MODE} -> ${BASE_URL}/webhook/${path} (${#workers[@]} workers, drain budget ${DRAIN_TIMEOUT}s)"
 
 # --- sample the real queue depth from Valkey while the run proceeds ----------------------------------------------
 # A single bounded loop inside the container: killing a backgrounded `compose exec` does not reliably stop the
@@ -202,6 +214,10 @@ printf '         throughput         %s executions/min end to end\n' \
   "$(( total_elapsed > 0 ? success_n * 60 / total_elapsed : success_n ))" >&2
 printf '         peak queue depth   %s waiting (%s samples of %s, %ss apart)\n' \
   "${peak}" "${samples:-0}" "${wait_key}" "${SAMPLE_INTERVAL}" >&2
+if (( peak == 0 )) && [[ "${MODE}" == "sync" ]]; then
+  printf '         note               MODE=sync holds each response until its execution finishes, so at most P=%s jobs\n' "${P}" >&2
+  printf '                            exist at once and none of them waits. Use MODE=async to build a backlog.\n' >&2
+fi
 
 if (( drain_rc != 0 )); then
   fail "the queue did not drain within ${DRAIN_TIMEOUT}s — ${success_n}/${ok_count} succeeded. Raise DRAIN_TIMEOUT, add workers (make scale-workers N=4), or look at make logs SERVICE=${workers[0]}"
