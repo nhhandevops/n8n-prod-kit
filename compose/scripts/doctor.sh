@@ -201,10 +201,16 @@ fi
 
 # ---------------------------------------------------------------------------------------------------------------------
 section "host"
-docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
-pct="$(df --output=pcent "${docker_root}" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"
+# The default goes on the captured value, never inside the substitution: docker info can print an empty line before it
+# fails, and `$(… || echo /var/lib/docker)` then yields both outputs as one unusable path (same fix as preflight.sh).
+docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '[:space:]' || true)"
+docker_root="${docker_root:-/var/lib/docker}"
+# `tr` exits 0 on empty input, so the old `|| echo 0` never fired and an unreadable path looked like a 0 %-used disk.
+pct="$(df --output=pcent "${docker_root}" 2>/dev/null | tail -1 | tr -dc '0-9' || true)"
 if sim lowdisk; then pct=93; fi
-if (( pct >= 90 )); then
+if [[ -z "${pct}" ]]; then
+  flag_fail "disk: cannot read usage under ${docker_root} — check it by hand: df -h ${docker_root}"
+elif (( pct >= 90 )); then
   flag_fail "disk ${pct}% used under ${docker_root} — Postgres and Valkey stop writing at 100%: prune images (docker image prune -a), lower EXECUTIONS_DATA_MAX_AGE, or add space"
 elif (( pct >= 80 )); then
   flag_warn "disk ${pct}% used under ${docker_root} — plan space before it reaches 90% (docker system df shows what Docker holds)"

@@ -183,12 +183,25 @@ for port in "${http_port}" "${https_port}"; do
 done
 
 # --- resources -------------------------------------------------------------------------------------------------------
-docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
-free_gb="$(df -BG --output=avail "${docker_root}" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"
-if (( free_gb >= 10 )); then
-  ok "disk: ${free_gb} GB free under ${docker_root}"
+# The data directory is only knowable while the daemon answers. `$(docker info … || echo /var/lib/docker)` put BOTH
+# outputs in the path (docker info can print an empty line before it fails), which made df fail and the check report a
+# bogus "0 GB free" on top of the real docker failure — the default therefore goes on the captured value.
+docker_root_note=""
+if [[ -z "${docker_version}" ]]; then
+  docker_root="/var/lib/docker"
+  docker_root_note=" (assumed — the docker daemon is unreachable, see above)"
 else
-  flag_fail "disk: only ${free_gb} GB free under ${docker_root} (need >= 10) — prune images (docker system prune) or add space"
+  docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '[:space:]' || true)"
+  docker_root="${docker_root:-/var/lib/docker}"
+fi
+# `tr` exits 0 on empty input, so the old `|| echo 0` never fired: a df that failed left this empty, not 0.
+free_gb="$(df -BG --output=avail "${docker_root}" 2>/dev/null | tail -1 | tr -dc '0-9' || true)"
+if [[ -z "${free_gb}" ]]; then
+  flag_fail "disk: cannot read free space under ${docker_root}${docker_root_note} — check it by hand: df -h ${docker_root}"
+elif (( free_gb >= 10 )); then
+  ok "disk: ${free_gb} GB free under ${docker_root}${docker_root_note}"
+else
+  flag_fail "disk: only ${free_gb} GB free under ${docker_root}${docker_root_note} (need >= 10) — prune images (docker system prune) or add space"
 fi
 ram_mb="$(awk '/^MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)"
 if (( monitoring_on )) && (( ram_mb < 5000 )); then
