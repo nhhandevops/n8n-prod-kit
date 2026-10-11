@@ -125,29 +125,84 @@ _(none)_
 
 ## 4. How to resume on a new machine
 
-**Any machine** (Linux host, WSL2 distro or Linux VM; always work on a Linux filesystem, never a Windows share — chmod 600 and LF line endings matter):
+**What is the same on every host, and what is not.** Every image is pinned by digest in `compose/versions.env`, so the stack that comes up is the same software on Ubuntu 24.04, Ubuntu 26.04, Debian 13, Rocky 9 or a WSL2 distro — n8n 2.42.4 with matching runners, Postgres 18, Valkey 9.1, Caddy 2.11. Only two things vary by machine: **how Docker gets installed**, which `scripts/bootstrap-host.sh` handles per distro family, and **the dev tools `make lint` needs**, which no distribution ships at the versions CI pins. Work 4.1 → 4.3 in order on any host; 4.4 is the traps that belong to a family or a release rather than to the kit.
+
+Always work on a Linux filesystem — never a Windows share or `/mnt/c`. `chmod 600` on `.env` and LF line endings both matter.
+
+#### 4.1 Host prep — any supported Linux, any version
 
 ```bash
-# 0. Docker missing? On Ubuntu 24.04/26.04, Debian 12/13, Rocky/Alma/CentOS Stream/Oracle/RHEL 9–10:
-#    sudo scripts/bootstrap-host.sh            (after cloning; or: curl -fsSL https://raw.githubusercontent.com/nhhandevops/n8n-prod-kit/main/scripts/bootstrap-host.sh | sudo bash)
-git clone https://github.com/nhhandevops/n8n-prod-kit && cd n8n-prod-kit      # existing clone: git pull
-# Dev tools, per host: `make lint` needs shellcheck 0.11.0 (CI pins it — apt's build reports different codes), yamllint,
-#   hadolint 2.15.1, jq, make; `make init` needs `age` (without it, it falls back to building the backup image, which
-#   needs a working docker); gh for CI/releases. bootstrap-host.sh installs none of these — it only sets up the host.
+git clone https://github.com/nhhandevops/n8n-prod-kit && cd n8n-prod-kit    # existing clone: git pull
+sudo scripts/bootstrap-host.sh      # Docker Engine + Compose plugin, make, jq, git, vm.overcommit_memory=1, docker group
+#  without a clone: curl -fsSL https://raw.githubusercontent.com/nhhandevops/n8n-prod-kit/main/scripts/bootstrap-host.sh | sudo bash -s -- --yes
+```
+
+Then **log out and back in.** `docker` group membership only applies to a new login session; without it `make init` dies at its age-key step (its fallback runs a container), `make preflight` reports the daemon unreachable, and `make trust-ca` fails on the socket. All three were hit on a fresh host on 2026-10-10. The script is idempotent — a second run changes nothing, in about a second.
+
+The script reads `/etc/os-release` and decides the family itself: **apt** for ubuntu/debian and derivatives (matched on `UBUNTU_CODENAME`, so Mint and Pop resolve to their Ubuntu base), **dnf** for rhel/centos/rocky/almalinux/ol major 9 or 10. It then prints either `detected <PRETTY_NAME> … — a verified target` or a warning that the release is not kit-verified and that Docker must serve an index for that codename. **Read that line: on a host version nobody here has tried, it is the authoritative answer.** An unsupported distribution exits 2. What has actually been tested is in `docs/compat.md` — the stack end to end on Ubuntu 24.04 and 26.04, and the install path weekly in containers for Ubuntu 24.04/26.04, Debian 13, Rocky 9/10 and AlmaLinux 9.
+
+#### 4.2 Dev tools — per host, and the bootstrap script installs none of them
+
+`make lint` is part of the definition of done, so a machine without these cannot finish a session. **Pin shellcheck and hadolint to CI's versions:** a distribution build of shellcheck reports different codes and will disagree with CI.
+
+```bash
+# apt hosts (Ubuntu 24.04 / 26.04, Debian 12 / 13, derivatives)
+sudo apt-get update && sudo apt-get install -y make jq git curl age yamllint python3-venv
+# dnf hosts (Rocky / AlmaLinux / CentOS Stream / Oracle / RHEL 9-10) — age and yamllint come from EPEL
+sudo dnf install -y epel-release && sudo dnf install -y make jq git curl age yamllint python3-pip
+```
+
+```bash
+# shellcheck v0.11.0 + hadolint v2.15.1, sha256-verified, exactly as .github/workflows/ci.yml does it (x86_64)
+curl -fsSL -o /tmp/shellcheck.tar.xz https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+echo '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  /tmp/shellcheck.tar.xz' | sha256sum -c -
+tar -xJf /tmp/shellcheck.tar.xz -C /tmp shellcheck-v0.11.0/shellcheck
+sudo install -m 755 /tmp/shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck
+curl -fsSL -o /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-x86_64
+echo 'c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507  /tmp/hadolint' | sha256sum -c -
+sudo install -m 755 /tmp/hadolint /usr/local/bin/hadolint
+```
+
+On **arm64** take each release's `aarch64` asset and its own sha256 from the release page — the two hashes above are x86_64 only.
+
+For the strict docs build that `make lint` runs when mkdocs is present:
+
+```bash
+python3 -m venv ~/.venvs/mkdocs && ~/.venvs/mkdocs/bin/pip install -r requirements-docs.txt
+mkdir -p ~/.local/bin && ln -sf ~/.venvs/mkdocs/bin/mkdocs ~/.local/bin/mkdocs     # or put the venv on PATH
+```
+
+The venv is not optional on Ubuntu 24.04+ or Debian 12+: pip refuses to install into the system Python (PEP 668). `requirements-docs.txt` carries hashes, so pip verifies every wheel. Without mkdocs, `make lint` says it skipped that build, and the PR's `docs` job runs it anyway. `gh` (CI, releases) comes from GitHub's own apt/dnf repository. `age` is only needed by `make init`, which otherwise falls back to building the kit's backup image — and that needs a working Docker, so it is not a way around 4.1.
+
+#### 4.3 Bring a dev stack up — identical on every host
+
+```bash
 make lint                                     # repo + compose: shellcheck, yamllint, compose config, caddy validate x12
 cd compose
 make init DOMAIN=n8n.localtest.me             # add HTTP_PORT=8080 HTTPS_PORT=8443 if 80/443 are taken on this machine
-make up && make status && make doctor         # ~2–5 min on first pull; expect 11 services healthy and doctor "no problems"
-make trust-ca                                 # trust the dev CA on this host; prints the Windows certutil line for a browser
+make up && make status && make doctor         # ~2-5 min on first pull; expect 11 services healthy and doctor "no problems"
+make trust-ca                                 # trust the dev CA here; prints the Windows certutil line for a browser
+make smoke                                    # 9/9; 09-monitoring skips while COMPOSE_PROFILES is empty
 # Terraform (from M2): cd terraform/aws && cp terraform.tfvars.example terraform.tfvars && terraform init
 ```
 
-Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — dev data is disposable, never copy a dev `.env` between machines (a production `.env`/encryption key lives only in the password manager). If 127.0.0.1 is not where the stack runs (VM, remote host), add `<host-ip> n8n.localtest.me kuma.n8n.localtest.me` to the browser machine's hosts file.
+`docs/runbook.md` walks every feature on exactly this stack, with a sign-off sheet at the end — the fastest way to find out whether a new machine really works, and the first thing to do on one.
+
+#### 4.4 Traps that belong to the host, not to the kit
+
+| Host | Watch for |
+|---|---|
+| any | the `docker` group re-login (4.1); ports 80/443 already taken → `HTTP_PORT=` / `HTTPS_PORT=` at `make init`, which folds the port into `PUBLIC_URL`; a browser on another machine needs `<host-ip> n8n.localtest.me kuma.n8n.localtest.me` in its own hosts file; Docker Hub's anonymous pull quota (100/h per IP) bites shared addresses — `docker login`, or the ghcr.io / public.ecr.aws mirrors CI uses |
+| Ubuntu 24.04 / 26.04, Debian 12 / 13 | Docker must publish an apt index for the codename in `/etc/os-release` (24.04 `noble`, 26.04 `resolute`); PEP 668 blocks system-wide pip (4.2) |
+| Rocky / Alma / CentOS Stream / Oracle / RHEL 9-10 | SELinux enforcing needs `:z` on bind mounts (shipped) and firewalld must allow http/https (the bootstrap script does it); `age` and `yamllint` need EPEL; **never yet run on real hardware** — `docs/operations/rhel-hosts.md`, and a blocker in the production plan if production is EL |
+| WSL2 | `systemd=true` in `/etc/wsl.conf`; clock drift after the Windows host sleeps (`sudo hwclock -s`; `make doctor` checks skew); Windows may hold 80/443 invisibly from inside WSL; `wsl --shutdown` stops the stack and `make up` resumes it |
+| Windows or macOS as the *browser* only | `make trust-ca` prints the commands to run there; never edit the repo through a share |
+
+Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — dev data is disposable, and a dev `.env` is never copied between machines (a production `.env` and its encryption key live only in the password manager, never in the repo and never in a chat).
 
 **This laptop (Windows 10 + VMware VM `server1`):** everything runs in the VM — `ssh k8svm` or VS Code → Remote-SSH → k8svm. Repo at `~/src/n8n-prod-kit`; `.env` exists (the dev stack — monitoring + kuma, n8n 2.42.4, checkout on `main` — was UP when the VM was shut down on 2026-10-09; Docker starts it again on boot (`restart: unless-stopped`), check with `make status`; test owner `owner@example.com` / `KitSmoke123!`): `cd ~/src/n8n-prod-kit/compose && make up`. Ports 8080/8443 (80/443 belong to other projects on the VM); the Windows hosts entry is in place. If containers on the default bridge ever get "No route to host": `sudo ip addr add 172.17.0.1/16 dev docker0 && sudo ip link set docker0 up` (see `warning_bug_and_solutions.md`).
 
-**Claude Code ↔ the dev n8n (this laptop, 2026-10-09):** n8n's instance MCP access is on in the VM dev stack (owner setting, auto-expose new workflows) and Claude Code has it as the user-scope MCP server `n8n-dev` (`https://n8n.localtest.me:8443/mcp-server/http`, bearer = n8n's MCP API key, stored only in `~/.claude.json`). It needs the Windows user variable `NODE_EXTRA_CA_CERTS=%USERPROFILE%
-8nkit-dev-root.crt` (the kit's dev CA; a new dev CA after `make clean` means copying `~/n8nkit-root.crt` again). New key: n8n → Settings → MCP access → rotate, then `claude mcp remove n8n-dev --scope user` + `claude mcp add --transport http --scope user n8n-dev <url> --header "Authorization: Bearer <key>"`. Uses the Max plan's Claude Code limits, not API credits.
+**Claude Code ↔ the dev n8n (this laptop, 2026-10-09):** n8n's instance MCP access is on in the VM dev stack (owner setting, auto-expose new workflows) and Claude Code has it as the user-scope MCP server `n8n-dev` (`https://n8n.localtest.me:8443/mcp-server/http`, bearer = n8n's MCP API key, stored only in `~/.claude.json`). It needs the Windows user variable `NODE_EXTRA_CA_CERTS=%USERPROFILE%\n8nkit-dev-root.crt` (the kit's dev CA; a new dev CA after `make clean` means copying `~/n8nkit-root.crt` again). New key: n8n → Settings → MCP access → rotate, then `claude mcp remove n8n-dev --scope user` + `claude mcp add --transport http --scope user n8n-dev <url> --header "Authorization: Bearer <key>"`. Uses the Max plan's Claude Code limits, not API credits.
 
 **Secrets (password manager only):** `n8nkit/demo-vps-ssh`, `n8nkit/backup-bucket`, `n8nkit/age-private-key`, `n8nkit/aws-sandbox`, `n8nkit/alert-telegram`. None of these ever go in the repo.
 
