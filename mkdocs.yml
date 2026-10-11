@@ -77,6 +77,12 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.tabbed:
       alternate_style: true
+  # `- [ ]` items are checkboxes, not the literal text "[ ]". The runbook is worked through with a terminal
+  # open and doubles as a test sheet, so its 84 steps have to look tickable; clickable_checkbox lets a reader
+  # tick them while they work (browser-local, not saved across a reload).
+  - pymdownx.tasklist:
+      custom_checkbox: true
+      clickable_checkbox: true
   # Mermaid diagrams (architecture.md) are rendered client-side by Material's own loader.
   - pymdownx.superfences:
       custom_fences:
