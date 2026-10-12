@@ -929,6 +929,32 @@ services:
       - label:disable
     cap_drop:
       - ALL
+    # cAdvisor registers its Docker integration ONCE, at start, with a 10 s timeout, and never retries. After a host reboot
+    # dockerd is busy starting every container; the registration times out ("Registration of the docker container factory
+    # failed … context deadline exceeded") and cAdvisor runs on, healthy, without container names or compose labels —
+    # every per-container panel and the container alerts go blind (build VM, 2026-10-12). So: start it, look for a
+    # compose-labelled container in its own /metrics, and exit when none shows up within 2 min — restart: unless-stopped
+    # starts it again once dockerd answers. ($$ is a literal $ for Compose.)
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        /usr/bin/entrypoint.sh "$$@" &
+        pid=$$!
+        trap 'kill $$pid 2>/dev/null; wait $$pid; exit 0' TERM INT
+        i=0
+        while [ $$i -lt 24 ]; do
+          sleep 5
+          if wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -q 'container_label_com_docker_compose_project="'; then
+            wait $$pid
+            exit $$?
+          fi
+          i=$$((i + 1))
+        done
+        echo "cadvisor: no Docker container labelled after 2 min (Docker integration not registered) - exiting to be restarted" >&2
+        kill $$pid
+        exit 1
+      - cadvisor
     command:
       - --docker_only=true
       - --housekeeping_interval=30s

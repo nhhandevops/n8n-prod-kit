@@ -13,6 +13,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 
 ### Fixed
 - Raising `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above 30 s had no effect: the 40 s `stop_grace_period` was hard-coded, so Docker killed the worker first. Preflight and doctor now refuse a stop window shorter than the timeout + 10 s.
+- Monitoring: after a busy host reboot cAdvisor could start before dockerd answered, lose its Docker integration for good and keep reporting "healthy" without any container labels (blind per-container panels and alerts). A startup watchdog now restarts it until the integration registers.
 
 ### Security
 
