@@ -459,7 +459,12 @@ make -C compose restart SERVICE=n8n-worker-1
 the stack again on boot; check with `make -C compose status`. The exception is a container you stopped or
 killed yourself: `docker stop` and `docker kill` both cancel that container's restart manager, so it stays
 down until the next `make up`. A drill measured such a container down for 14 minutes with a restart count of
-0.
+0. Two things to expect when the host was **off for a while**, both seen on the build VM after 63 hours off
+(2026-10-12): the nightly backup did not run while it was down, so `make doctor` FAILs with `last successful
+backup to /backups/local was 63 h ago` and, with the monitoring profile, the `BackupMissing` alert fires —
+both clear after `make -C compose backup-now`. And a busy boot (every container starting at once) can be slow:
+the first `make status` may show `starting` for a few minutes. With the monitoring profile, cAdvisor waits for
+Docker by itself and restarts until it sees the containers (smoke 09 checks it).
 
 !!! danger
 
