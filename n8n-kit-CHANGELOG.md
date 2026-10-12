@@ -9,6 +9,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 - `N8N_STOP_GRACE_PERIOD` (`.env`, default 40): Docker's stop window for every n8n container, generated workers included. `make doctor` measures the p99 execution duration of the last 7 days and warns when it reaches `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` (PROD-PLAN D-2).
 
 ### Changed
+- n8n 2.42.4 → **2.42.6** (+ `n8nio/runners:2.42.6`): two patch releases, no database migrations; tested by CI's upgrade drill (2.41.7 → 2.42.6, rollback, upgrade) and, on 2026-10-09, upgraded and rolled back (images only) on the build VM (PROD-PLAN D-14).
 
 ### Fixed
 - Raising `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above 30 s had no effect: the 40 s `stop_grace_period` was hard-coded, so Docker killed the worker first. Preflight and doctor now refuse a stop window shorter than the timeout + 10 s.

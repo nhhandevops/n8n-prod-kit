@@ -281,7 +281,7 @@ host needs nothing but a different `.env`.
 
 `versions.env` holds an image, a tag and a digest per service, so every `make up` starts the exact bytes that were
 tested — a tag can be re-pushed, a digest cannot. `make pin` rewrites the `*_DIGEST` lines; do not edit them by hand.
-The core pins are n8n 2.42.4 with runners 2.42.4, Postgres 18.6-alpine, Valkey 9.1.2-alpine and Caddy 2.11.7-alpine;
+The core pins are n8n 2.42.6 with runners 2.42.6, Postgres 18.6-alpine, Valkey 9.1.2-alpine and Caddy 2.11.7-alpine;
 the monitoring images are pinned in the same file. n8n and its runners image **must** share `N8N_VERSION` — the kit's
 version lock, which `make doctor` checks.
 

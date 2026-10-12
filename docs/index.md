@@ -9,7 +9,7 @@ explained where it is set.
 
 The kit is a repository you clone onto a VPS, not a product you install. `compose/.env` holds your
 settings and secrets, `make` is the operator interface, and the scripts behind each target do only what
-a person could type by hand. The current version pins **n8n 2.42.4** with matching task runners,
+a person could type by hand. The current version pins **n8n 2.42.6** with matching task runners,
 **Postgres 18**, **Valkey 9.1** and **Caddy 2.11** — [Compatibility](compat.md) records what was tested
 where.
 

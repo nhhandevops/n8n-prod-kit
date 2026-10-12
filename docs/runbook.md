@@ -1594,8 +1594,18 @@ gives the rollback up and starts the new version again on its unchanged database
 
 ### D5. Exercise: upgrade one patch release, then roll it back
 
-Practise on this shape: 2.42.6 added no migrations over 2.42.4, so the rollback takes the `images` path and loses
-nothing — the kit's hand-off notes record that exact pair being upgraded and rolled back on the build VM.
+Practise on a newer **patch** release of the minor your stack runs (2.42.x): patch releases usually add no
+migrations, so the rollback takes the `images` path and loses nothing — the kit's hand-off notes record 2.42.4 →
+2.42.6 being upgraded and rolled back that way on the build VM. Find the newest stable release and compare it with
+your pin (`grep N8N_VERSION compose/versions.env`):
+
+```bash
+gh api repos/n8n-io/n8n/releases/latest --jq .tag_name      # or https://github.com/n8n-io/n8n/releases
+```
+
+If it is a newer patch of the same minor, use it as `<version>` below. If your pin already *is* the newest stable
+release, there is nothing to practise on yet — write "skipped: pin is the newest release" on the sign-off sheet and
+come back when n8n publishes the next patch (CI's `upgrade` job walks the same path on every push meanwhile).
 [Compatibility](compat.md) lists what the kit pins and where it was tested.
 
 - [ ] Confirm the stack is healthy first.
@@ -1607,7 +1617,7 @@ make -C compose status
 - [ ] Upgrade. Budget 10 to 15 minutes, of which about a minute is downtime.
 
 ```bash
-make -C compose upgrade N8N_VERSION=2.42.6
+make -C compose upgrade N8N_VERSION=<version>
 ```
 
 Read the plan before answering the confirm. It ends with `If anything fails: make rollback returns to` your current
