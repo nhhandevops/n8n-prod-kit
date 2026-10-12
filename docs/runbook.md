@@ -1800,7 +1800,8 @@ executions had finished their write before the kill landed.
 What the operator does about it, in order:
 
 - Drain instead of killing. `docker stop` sends SIGTERM, the polite stop signal, which runs n8n's graceful shutdown;
-  set `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your slowest normal execution. `make upgrade` already drains this way.
+  set `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your slowest normal execution — `make doctor` prints the measured p99 — and
+  `N8N_STOP_GRACE_PERIOD` at least 10 s above it (Docker's own window). `make upgrade` already drains this way.
 - Run two or more workers, so something is alive to sweep the orphans.
 - Give critical workflows an Error Workflow — the only automatic hook that still fires on this path.
 - Make replays safe: key side effects on something from the input, so a re-run overwrites instead of duplicating.

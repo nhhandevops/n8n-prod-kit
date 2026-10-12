@@ -162,6 +162,7 @@ worker dies ([Chaos drills](operations/chaos-drills.md)).
 | `EXECUTIONS_TIMEOUT_MAX` | `3600` | highest timeout a workflow may set itself | a workflow needs longer |
 | `N8N_CONCURRENCY_PRODUCTION_LIMIT` | `-1` | global production cap | leave it: any other value overrides `--concurrency` on **every** worker |
 | `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | seconds n8n waits for running executions on SIGTERM | see below |
+| `N8N_STOP_GRACE_PERIOD` | `40` | seconds Docker waits before it kills an n8n container; at least the timeout above + 10 | see below |
 
 **Pruning is global and oldest-first**, which surprises people: there is no per-workflow equivalent, so when the count
 cap is reached the oldest rows go, whichever workflow they belong to. A burst of test traffic therefore pushes real
@@ -180,10 +181,12 @@ treats it as an operator stop.
 
 So drain rather than kill: `docker stop`, or `make upgrade`, which waits out running executions for
 `UPGRADE_DRAIN_TIMEOUT` (300 s) and then hands the stragglers this grace period. Set the timeout above your p99
-execution time and give critical workflows an Error Workflow. The n8n services' compose `stop_grace_period` is 40 s —
-deliberately above the 30 s default, so Docker never SIGKILLs an execution n8n would have finished — and it lives in
-`docker-compose.yml`, so raise it whenever you raise this knob. A `crashed` execution may already have done its side
-effect, so keep replays idempotent; [Chaos drills](operations/chaos-drills.md) measures all of this.
+execution time — `make doctor` measures that p99 from the executions of the last 7 days and warns when it reaches the
+timeout — and give critical workflows an Error Workflow. Docker has its own window, `N8N_STOP_GRACE_PERIOD` (40 s): it
+must outlast the timeout by at least 10 seconds, because n8n needs a moment to cancel what is left and exit, so raise
+the two together (`make preflight` and `make doctor` fail when they do not fit; every n8n container, generated workers
+included, uses it). A `crashed` execution may already have done its side effect, so keep replays idempotent;
+[Chaos drills](operations/chaos-drills.md) measures all of this.
 
 ## 5 Security
 

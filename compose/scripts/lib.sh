@@ -329,6 +329,28 @@ backup_path_problem() {
 }
 
 # ---------------------------------------------------------------------------------------------
+# shutdown_window_problem   why the two n8n stop windows in .env do not fit together (prints the reason;
+# prints nothing when they do). N8N_GRACEFUL_SHUTDOWN_TIMEOUT is how long n8n lets running executions
+# finish on a stop; N8N_STOP_GRACE_PERIOD is how long Docker waits before it SIGKILLs the container.
+# Docker's window must outlast n8n's by 10 s (n8n cancels what is left and exits ~2 s after its own
+# timer), or raising the timeout changes nothing: the kill comes first. Defaults 30 / 40.
+# ---------------------------------------------------------------------------------------------
+shutdown_window_problem() {
+  local graceful stop
+  graceful="$(env_get N8N_GRACEFUL_SHUTDOWN_TIMEOUT)"
+  graceful="${graceful:-30}"
+  stop="$(env_get N8N_STOP_GRACE_PERIOD)"
+  stop="${stop:-40}"
+  if [[ ! "${graceful}" =~ ^[0-9]+$ || ! "${stop}" =~ ^[0-9]+$ ]]; then
+    printf 'N8N_GRACEFUL_SHUTDOWN_TIMEOUT (%s) and N8N_STOP_GRACE_PERIOD (%s) must be whole seconds\n' "${graceful}" "${stop}"
+  elif (( stop < graceful + 10 )); then
+    printf 'N8N_STOP_GRACE_PERIOD=%s is less than N8N_GRACEFUL_SHUTDOWN_TIMEOUT (%s) + 10 — Docker would kill n8n before it finished draining, so the timeout means nothing past %s s; set N8N_STOP_GRACE_PERIOD=%s in .env, then make up\n' \
+      "${stop}" "${graceful}" "${stop}" "$((graceful + 10))"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------------------------
 # is_dev_domain DOMAIN   exit 0 when DOMAIN can never get a public certificate: *.localtest.me
 # (and localtest.me itself, both resolve to 127.0.0.1), localhost / *.localhost, *.local, *.test,
 # *.internal, *.home.arpa, and IPv4 literals. init.sh switches such domains to TLS_MODE=internal,

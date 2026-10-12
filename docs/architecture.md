@@ -169,8 +169,9 @@ workers' networks on purpose: a user workflow can make an HTTP request to anythi
 
 Every container runs with `restart: unless-stopped`, `no-new-privileges`, a memory limit from `MEM_LIMIT_*` in `.env`, and json-file logs capped at 20 MB × 5. Every container of the core stack also drops all capabilities (`cap_drop: [ALL]`) and runs on a read-only root filesystem — for the five n8n processes the tmpfs write set was measured with `docker diff` after a real workload. The optional `uptime-kuma` container is the one service without those last two. Startup order is `postgres`/`valkey` → `main`
 → webhooks and workers → runners, so database migrations run exactly once, on main, before anything else
-connects. The n8n processes get `stop_grace_period: 40s`, above the 30-second
-`N8N_GRACEFUL_SHUTDOWN_TIMEOUT` default, because Compose's 10 seconds would SIGKILL a worker mid-execution.
+connects. The n8n processes get a Docker stop window of `N8N_STOP_GRACE_PERIOD` (40 s), above the 30-second
+`N8N_GRACEFUL_SHUTDOWN_TIMEOUT` default, because Compose's 10 seconds would SIGKILL a worker mid-execution; the two
+are raised together and preflight refuses a stop window shorter than the timeout + 10 s.
 
 ## What is deliberately not here
 

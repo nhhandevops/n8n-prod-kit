@@ -57,4 +57,19 @@ version_lock_ok() {
   done < <(docker ps --filter "label=com.docker.compose.project=${project}" --format '{{.ID}} {{.Label "com.docker.compose.service"}}')
 }
 check "every n8n process runs the pinned n8n ${pinned} (version label + digest)" version_lock_ok
+
+# Docker's stop window of every n8n container is N8N_STOP_GRACE_PERIOD (generated workers included) — the setting that
+# lets N8N_GRACEFUL_SHUTDOWN_TIMEOUT actually take effect (PROD-PLAN D-2)
+want_stop="$(env_get N8N_STOP_GRACE_PERIOD)"
+want_stop="${want_stop:-40}"
+stop_window_ok() {
+  local cid svc t project
+  project="$(_kit_project_name)"
+  while read -r cid svc; do
+    [[ "${svc}" == n8n-* && "${svc}" != *-runners ]] || continue
+    t="$(docker inspect --format '{{.Config.StopTimeout}}' "${cid}")"
+    [[ "${t}" == "${want_stop}" ]] || { fail "  ${svc}: Docker stop window ${t:-default} s, expected ${want_stop} s"; return 1; }
+  done < <(docker ps --filter "label=com.docker.compose.project=${project}" --format '{{.ID}} {{.Label "com.docker.compose.service"}}')
+}
+check "every n8n container gets ${want_stop} s to stop (N8N_STOP_GRACE_PERIOD)" stop_window_ok
 finish

@@ -55,8 +55,9 @@ x-n8n-base: &n8n-base
   # unless-stopped (not on-failure): survives host reboots and keeps retrying after a DB/Redis outage; `make down` still stops it for good.
   restart: unless-stopped
   # N8N_GRACEFUL_SHUTDOWN_TIMEOUT (default 30 s, .env) is how long n8n waits for running executions on SIGTERM; Compose's default
-  # grace is 10 s, which would SIGKILL mid-execution. 40 s = n8n's budget + margin. Raise both together if you raise the .env knob.
-  stop_grace_period: 40s
+  # grace is 10 s, which would SIGKILL mid-execution. N8N_STOP_GRACE_PERIOD (default 40 s, .env) is Docker's window: it must
+  # outlast n8n's by >= 10 s (preflight/doctor fail otherwise), or raising the timeout changes nothing — the kill comes first.
+  stop_grace_period: ${N8N_STOP_GRACE_PERIOD:-40}s
   # The image already runs as uid 1000 (`node`); no `user:` override, so the shared volumes keep one consistent owner.
   security_opt:
     - no-new-privileges:true

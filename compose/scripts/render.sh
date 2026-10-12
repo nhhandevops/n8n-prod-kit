@@ -81,7 +81,7 @@ IFS= read -r -d '' worker_template <<'YAML' || true
     # --- x-n8n-base ---
     image: ${N8N_IMAGE}:${N8N_VERSION}@${N8N_DIGEST:?run make pin}
     restart: unless-stopped
-    stop_grace_period: 40s
+    stop_grace_period: ${N8N_STOP_GRACE_PERIOD:-40}s
     security_opt:
       - no-new-privileges:true
     cap_drop:

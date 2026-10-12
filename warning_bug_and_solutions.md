@@ -2,6 +2,14 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-12 · Raising `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` past 30 s changed nothing: Docker's stop window was hard-coded
+
+- **Symptom:** PROD-PLAN D-2 (the top of the improvement ledger), `.env.example`, `docs/faq.md` and `docs/runbook.md` all said "set `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your p99 execution time". Doing only that, a worker stopped by `make up`, `make upgrade` or a reboot was still SIGKILLed 40 s after the stop request, whatever the timeout said — the executions still running died as `crashed` and were not retried.
+- **Root cause:** `stop_grace_period: 40s` was a literal in `docker-compose.yml` (`x-n8n-base`) and in render.sh's worker template. Only a comment in the compose file and one sentence in `docs/configuration.md` said to raise it too — which meant editing a tracked file (the next `git pull` conflicts) and missed workers 3..N (generated with their own 40 s).
+- **How to verify:** `docker inspect --format '{{.Config.StopTimeout}}' <n8n container>` equals `N8N_STOP_GRACE_PERIOD`; smoke 01 asserts it for every n8n container; `make preflight` with `N8N_GRACEFUL_SHUTDOWN_TIMEOUT=60` and no stop window must FAIL.
+- **Fix:** new `.env` key `N8N_STOP_GRACE_PERIOD` (default 40) used by every n8n container, generated workers included (`stop_grace_period: ${N8N_STOP_GRACE_PERIOD:-40}s`); lib.sh `shutdown_window_problem` — preflight and doctor fail when the window is shorter than the timeout + 10 s (n8n cancels what is left and exits ~2 s after its own timer); doctor measures the p99 wall time of the last 7 days' executions from the database and warns when it reaches the timeout, so "above the measured p99" is a check instead of advice. Docs and PROD-PLAN corrected.
+- **Date:** 2026-10-12
+
 ## 2026-10-10 · A killed worker's in-flight executions are LOST, not retried (n8n 2.0 removed Bull's stalled retry)
 
 - **Symptom:** `make chaos SCENARIO=worker` fired 120 inputs and SIGKILLed a worker mid-backlog. Result: 110 success, **10 crashed**, 0 error — still crashed 30 minutes later. Ten is exactly one worker's concurrency. PLAN §2.9 claimed "Bull marks the job stalled and re-queues it; execution retried".

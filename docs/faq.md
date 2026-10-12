@@ -145,7 +145,8 @@ environment variable brings it back. Work that was still *queued* is safe — an
 Measured on the kit's own stack with 120 inputs: 110 succeeded, 10 crashed, 0 errored.
 
 What to do: stop workers with `docker stop` (or `make upgrade`, which drains) and set
-`N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your p99 execution time; run at least two workers, because the
+`N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your p99 execution time (`make doctor` measures it), with
+`N8N_STOP_GRACE_PERIOD` at least 10 s above that; run at least two workers, because the
 stalled sweep only runs inside a surviving worker; give critical workflows an Error Workflow, the only
 automatic hook that still fires; and keep workflows replay-safe. A `crashed` execution may *already*
 have done its side effect — in one drill 112 successes and 8 crashes had produced 114 files — so treat

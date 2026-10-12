@@ -48,6 +48,8 @@ if (( ${#key} >= 32 )); then
 else
   flag_fail "N8N_ENCRYPTION_KEY is missing or shorter than 32 chars — every credential depends on it; restore it from your password manager (never generate a new one over an existing database)"
 fi
+window_problem="$(shutdown_window_problem)"
+if [[ -n "${window_problem}" ]]; then flag_fail "${window_problem}"; fi
 domain="$(env_get DOMAIN)"; tls_mode="$(env_get TLS_MODE)"; http_port="$(env_get HTTP_PORT)"; https_port="$(env_get HTTPS_PORT)"
 http_port="${http_port:-80}"; https_port="${https_port:-443}"
 if grep -qE '^[[:space:]]*N8N_ENDPOINT_[A-Z_]+=' .env; then
@@ -258,6 +260,20 @@ if [[ "$(service_health postgres)" == "healthy" ]]; then
     flag_warn "executions: ${exec_count} rows, oldest ${oldest_h} h > 2 x EXECUTIONS_DATA_MAX_AGE (${max_age} h) — pruning seems stalled (main prunes hourly; check make logs SERVICE=n8n-main for 'prun')"
   else
     ok "executions: ${exec_count} rows, oldest ${oldest_h} h (prune=${prune:-true}, max age ${max_age} h)"
+  fi
+  # A stop gives running executions N8N_GRACEFUL_SHUTDOWN_TIMEOUT; whatever runs longer is cancelled and never retried.
+  # Measured, not guessed: p99 wall time of the executions that finished in the last 7 days (a Wait node's pause counts).
+  graceful="$(env_get N8N_GRACEFUL_SHUTDOWN_TIMEOUT)"; graceful="${graceful:-30}"
+  p99="$(pg "select count(*) || '|' || coalesce(ceil(percentile_cont(0.99) within group (order by extract(epoch from (\"stoppedAt\" - \"startedAt\"))))::int, 0) from execution_entity where \"startedAt\" > now() - interval '7 days' and \"stoppedAt\" is not null")"
+  p99_n="${p99%%|*}"; p99_s="${p99##*|}"
+  if [[ ! "${p99_n}" =~ ^[0-9]+$ || ! "${p99_s}" =~ ^[0-9]+$ || ! "${graceful}" =~ ^[0-9]+$ ]]; then
+    flag_warn "execution times: could not measure the p99 duration"
+  elif (( p99_n == 0 )); then
+    ok "execution times: nothing finished in the last 7 days to measure"
+  elif (( p99_s >= graceful )); then
+    flag_warn "execution times: p99 ${p99_s} s over the last 7 days (${p99_n} runs) >= N8N_GRACEFUL_SHUTDOWN_TIMEOUT ${graceful} s — a stop or an upgrade cuts such runs and n8n does not retry them: raise it above the p99 (and N8N_STOP_GRACE_PERIOD to at least that + 10), then make up. Wait-node pauses count as duration — if they dominate, judge for yourself"
+  else
+    ok "execution times: p99 ${p99_s} s over the last 7 days (${p99_n} runs) < N8N_GRACEFUL_SHUTDOWN_TIMEOUT ${graceful} s"
   fi
 else
   flag_warn "postgres not healthy — database checks skipped"

@@ -70,6 +70,14 @@ case "${tls_mode}" in
   acme | acme-staging | internal) ok "TLS_MODE=${tls_mode}" ;;
   *) flag_fail "TLS_MODE='${tls_mode}' is not one of acme | acme-staging | internal" ;;
 esac
+window_problem="$(shutdown_window_problem)"
+if [[ -n "${window_problem}" ]]; then
+  flag_fail "${window_problem}"
+else
+  graceful="$(env_get N8N_GRACEFUL_SHUTDOWN_TIMEOUT)"
+  stop_window="$(env_get N8N_STOP_GRACE_PERIOD)"
+  ok "n8n stop windows: n8n drains ${graceful:-30} s, Docker waits ${stop_window:-40} s"
+fi
 if [[ "${http_port}" == "${https_port}" ]]; then
   flag_fail "HTTP_PORT and HTTPS_PORT are both ${http_port} — they must differ"
 fi

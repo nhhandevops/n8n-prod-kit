@@ -61,7 +61,8 @@ setting, and [Configuration](docs/configuration.md) explains the reasoning.
 | `ACME_EMAIL` | `dev@example.com` | a mailbox someone reads | it is where expiry warnings go |
 | `BACKUP_REMOTES` | `/backups/local` | at least one off-host target **and** the local one, e.g. `"r2:your-bucket/prod /backups/local"` | a backup on the same disk as the database is not a backup. Every listed target must succeed for the backup to count |
 | `UI_PROTECT` | `off` | `on`, with `UI_ALLOW_CIDR` and `UI_BASIC_AUTH_USER`/`_HASH` | otherwise the editor — and the credential store behind it — is one password away from the internet. Webhooks, forms, MCP and the health routes stay open by design |
-| `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | above your p99 execution duration | this is the window a worker gets to finish before it is cut. Work still running past it dies as `crashed` and **is not retried** (§8 risk 1) |
+| `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | above your p99 execution duration (`make doctor` prints it) | this is the window a worker gets to finish before it is cut. Work still running past it dies as `crashed` and **is not retried** (§8 risk 1) |
+| `N8N_STOP_GRACE_PERIOD` | `40` | the timeout above + at least 10 | Docker's window before it SIGKILLs the container. Shorter than the timeout + 10 and the timeout is a lie — `make preflight` refuses it |
 | `EXECUTIONS_TIMEOUT` | `-1` (no limit) | a real number of seconds | one stuck execution otherwise holds a concurrency slot for ever |
 | `COMPOSE_PROFILES` | empty | `monitoring,kuma` | you cannot operate what you cannot see. Needs roughly 4 vCPU / 8 GB — size the host for it, do not bolt it on later |
 | `KUMA_ENABLED` | `off` | `on`, plus a public DNS record for `kuma.DOMAIN` | the outside view: it notices what an internal check cannot |
@@ -274,7 +275,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 
 | # | Improvement | H | L | R | E | Score | Band |
 |---|---|---|---|---|---|---|---|
-| D-2 | Raise `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above the measured p99 execution duration | 4 | 4 | 3 | 1 | **48** | blocker |
+| D-2 | Raise `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above the measured p99 execution duration (and `N8N_STOP_GRACE_PERIOD` with it) — the kit side shipped 2026-10-12: the knob is real now and `make doctor` measures the p99; what remains is setting it on the production host | 4 | 4 | 3 | 1 | **48** | blocker |
 | D-1 | Test an off-host backup target end to end (bucket, token, `make backup-now`, `make restore-test`) | 5 | 3 | 3 | 1 | **45** | blocker |
 | D-3 | `UI_PROTECT=on` with an allow-list and basic auth, verified from outside | 4 | 4 | 2 | 1 | **32** | blocker |
 | D-4 | Prove the alert path on the production host (fire one, resolve it) | 4 | 4 | 2 | 1 | **32** | blocker |
@@ -301,9 +302,10 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | D-25 | Grafana on its own hostname instead of sharing the n8n origin | 3 | 2 | 1 | 2 | **3** | later |
 
 **What the table is saying:** seven of the ten blockers are an hour or less of work each, and five of them
-are configuration rather than code. The cheapest meaningful improvement available is D-2 — one number in
+are configuration rather than code. The cheapest meaningful improvement available is D-2 — two numbers in
 `.env` — because the kit's one genuinely unrecoverable failure mode is a worker being cut off
-mid-execution, and that number is the whole of the mitigation.
+mid-execution, and those numbers are the whole of the mitigation. (Until 2026-10-12 it was one number that could not
+work on its own: Docker's 40 s stop window was hard-coded, so raising the timeout past 30 s changed nothing.)
 
 Scores are re-derived, not inherited: when the kit changes, Harm and Effort move. Shipping D-17, for
 instance, lowers the effort behind D-5 and raises nothing.
@@ -358,4 +360,5 @@ The expensive resource is not money. It is the hour in P4.
 
 | Date | Change |
 |---|---|
+| 2026-10-12 | D-2: working it showed the knob alone could not work — Docker's `stop_grace_period` was a hard-coded 40 s, so an `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above 30 was cut by a SIGKILL anyway. New `.env` key `N8N_STOP_GRACE_PERIOD` (all n8n containers, generated workers included), preflight/doctor enforce timeout + 10 ≤ window, doctor measures the p99. §2 gained the row; D-2 stays a blocker until it is set on the production host. |
 | 2026-10-10 | Created and parked at kit v0.1.0 (n8n 2.42.4). Dev/test is the current phase and `docs/runbook.md` is the thing being worked. §5 seeded with 25 scored items from `n8n-kit-HANDOFF.md` §2 and §5, `warning_bug_and_solutions.md`, and `docs/security.md`. |
