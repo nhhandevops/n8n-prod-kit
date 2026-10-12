@@ -2,6 +2,14 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-12 · Three runbook commands could not be pasted: a literal `\n` where a line continuation belonged
+
+- **Symptom:** walking `docs/runbook.md` Part B on the build VM: B6's two `docker compose … exec` commands (and D's `stop n8n-webhook-1 n8n-webhook-2`) read `--env-file .env \n   exec -T …` — on screen a backslash-n, in a shell a stray `n` argument, so the command fails.
+- **Root cause:** each was meant as `\` + newline (a shell line continuation); the newline had been written as the two characters `\n` when the page was generated. Origin not recorded; the same class as the "heredoc backslash collapse" this project has hit before.
+- **How to verify:** `grep -c -F ' \n ' docs/runbook.md` → 0.
+- **Fix:** the three lines now end in a real continuation; the fixed commands were run on the VM (`node` / `1000`).
+- **Date:** 2026-10-12
+
 ## 2026-10-12 · Raising `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` past 30 s changed nothing: Docker's stop window was hard-coded
 
 - **Symptom:** PROD-PLAN D-2 (the top of the improvement ledger), `.env.example`, `docs/faq.md` and `docs/runbook.md` all said "set `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your p99 execution time". Doing only that, a worker stopped by `make up`, `make upgrade` or a reboot was still SIGKILLed 40 s after the stop request, whatever the timeout said — the executions still running died as `crashed` and were not retried.

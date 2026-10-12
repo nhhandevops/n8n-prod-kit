@@ -837,14 +837,16 @@ image lacks.
       repository root:
 
 ```bash
-(cd compose && docker compose --env-file versions.env --env-file .env \n   exec -T n8n-worker-1 sh -c 'ls -ld /home/node/.n8n-files')
+(cd compose && docker compose --env-file versions.env --env-file .env \
+   exec -T n8n-worker-1 sh -c 'ls -ld /home/node/.n8n-files')
 ```
 
 **What you should see.** One line whose owner column reads `node` — the image's uid-1000 user — and not `root`. If
 you would rather see the number, ask for it directly; `1000` is exactly what `files-perms.sh` compares against:
 
 ```bash
-(cd compose && docker compose --env-file versions.env --env-file .env \n   exec -T n8n-worker-1 sh -c 'stat -c %u /home/node/.n8n-files')
+(cd compose && docker compose --env-file versions.env --env-file .env \
+   exec -T n8n-worker-1 sh -c 'stat -c %u /home/node/.n8n-files')
 ```
 
 `files-perms.sh` itself stays quiet when there is nothing to fix, and prints
@@ -2050,7 +2052,8 @@ per rule: the first message leaves 30 seconds after a group starts firing, a gro
       Expect `WebhookPoolDown` within about 3 minutes — 15 s scrape, 30 s evaluation, 1 m `for:`, 30 s grouping:
 
 ```bash
-(cd compose && docker compose --env-file versions.env --env-file .env \n   stop n8n-webhook-1 n8n-webhook-2)
+(cd compose && docker compose --env-file versions.env --env-file .env \
+   stop n8n-webhook-1 n8n-webhook-2)
 ```
 
 - [ ] Bring them back and wait for the resolved message:
