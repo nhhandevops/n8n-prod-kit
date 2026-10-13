@@ -12,12 +12,14 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 - n8n 2.42.4 → **2.42.6** (+ `n8nio/runners:2.42.6`): two patch releases, no database migrations; tested by CI's upgrade drill (2.41.7 → 2.42.6, rollback, upgrade) and, on 2026-10-09, upgraded and rolled back (images only) on the build VM (PROD-PLAN D-14).
 
 ### Fixed
+- Smoke 09 failed on any stack idle for more than an hour: an idle n8n writes almost no logs, and the Loki check looked back a fixed hour. It now looks back to the newest line Docker holds for any n8n container (at least 1 h).
 - `make upgrade` no longer warns `UPDATED … the tag was re-pushed or the version changed` about the n8n and runners digests it moves on purpose; `pin.sh` reports them as `[ OK ] N8N: <old> -> <new>`. A digest that changes at the same version (a re-pushed tag) still warns.
 - `make doctor` no longer warns about cAdvisor after a busy reboot when every restart was its startup watchdog doing its job (checked against the watchdog's own log lines); any other restart still warns.
 - Raising `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above 30 s had no effect: the 40 s `stop_grace_period` was hard-coded, so Docker killed the worker first. Preflight and doctor now refuse a stop window shorter than the timeout + 10 s.
 - Monitoring: after a busy host reboot cAdvisor could start before dockerd answered, lose its Docker integration for good and keep reporting "healthy" without any container labels (blind per-container panels and alerts). A startup watchdog now restarts it until the integration registers.
 
 ### Security
+- `make detach-recovery-key` says on screen that it shows the secret itself and reminds you to clear the scrollback afterwards; runbook C4 adds the step. On the build VM a detach screen was pasted into a chat right after the key had been stored safely.
 
 ### Templates
 

@@ -1048,12 +1048,15 @@ make -C compose detach-recovery-key
 
 - [ ] Copy the whole `AGE-SECRET-KEY-1...` line into a new entry named `n8nkit/age-recovery-key`.
 - [ ] Paste it back when asked (input is hidden), then type `shred` at the last prompt.
+- [ ] Clear the terminal afterwards. The banner showed the secret itself, so this screen must not be copied into a
+      chat, a ticket or a screenshot when you ask for help — on 2026-10-13 that is exactly how the build VM's new
+      recovery key ended up in a chat transcript, one step after it had been stored safely.
 
 **What you should see.** A red framed banner headed `RECOVERY KEY — copy the AGE-SECRET-KEY-1… line into your
 password manager (entry n8nkit/age-recovery-key)`, then `Now paste the key back FROM the password manager (input
 hidden), then Enter:`, then `[ OK ] the copy in your password manager is the recovery key`, and finally
-`[ OK ] recovery key removed from this host (public key stays in .env: BACKUP_AGE_RECOVERY_PUBLIC_KEY)`
-(`compose/scripts/detach-recovery-key.sh`). `make -C compose doctor` then says `recovery key
+`[ OK ] recovery key removed from this host (public key stays in .env: BACKUP_AGE_RECOVERY_PUBLIC_KEY)` followed by
+a reminder that the key is still in the terminal's scrollback (`compose/scripts/detach-recovery-key.sh`). `make -C compose doctor` then says `recovery key
 detached (private half off-host; backups are still encrypted to it)`.
 
 **What it proves.** Your password manager holds a key that really opens your backups — verified while the

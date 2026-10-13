@@ -42,7 +42,8 @@ if [[ "${file_pub}" != "${expected}" ]]; then
 fi
 
 banner_red "RECOVERY KEY — copy the AGE-SECRET-KEY-1… line into your password manager (entry n8nkit/age-recovery-key)" "" \
-  "$(grep -E '^AGE-SECRET-KEY-' "${file}")" "" "Without it, backups cannot be restored on another host once this one is lost."
+  "$(grep -E '^AGE-SECRET-KEY-' "${file}")" "" "Without it, backups cannot be restored on another host once this one is lost." \
+  "This screen shows the secret itself: never copy it into a chat, ticket or screenshot."
 printf 'Now paste the key back FROM the password manager (input hidden), then Enter: ' >&2
 pasted=''
 read -rs pasted </dev/tty || pasted=''
@@ -68,3 +69,4 @@ else
   rm -f "${file}"
 fi
 ok "recovery key removed from this host (public key stays in .env: BACKUP_AGE_RECOVERY_PUBLIC_KEY)"
+info "the key is still in this terminal's scrollback — clear it (clear, then close the window) before sharing this screen"

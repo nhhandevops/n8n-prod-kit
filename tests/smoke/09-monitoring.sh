@@ -95,13 +95,34 @@ if ! rules_ok; then
 fi
 
 # --- Loki (queried through Grafana's data source proxy) -------------------------------------------------------------
-loki_has() {   # loki_has 'LOGQL'
+loki_has() {   # loki_has 'LOGQL' [SINCE] — any line in the last SINCE (a Loki duration, default 1h)
   req GET /grafana/api/datasources/proxy/uid/loki/loki/api/v1/query_range -u "${gf_auth}" -G \
-    --data-urlencode "query=${1}" --data-urlencode "limit=5" --data-urlencode "since=1h"
+    --data-urlencode "query=${1}" --data-urlencode "limit=5" --data-urlencode "since=${2:-1h}"
   [[ "${REQ_STATUS}" == 200 ]] && jq -e '.data.result | length > 0' <<<"$(req_body)" >/dev/null
 }
-check "Loki holds n8n's logs (<= 90 s; an idle n8n-main logs rarely, so any n8n process, last hour)" wait_for 90 "n8n logs in Loki" loki_has '{service=~"n8n-.*"}'
-check "n8n's JSON log level became a label" wait_for 30 "level label" loki_has '{service=~"n8n-.*", level=~".+"}'
+# An idle n8n writes almost nothing — on the build VM no n8n container logged a line for 3.5 hours (2026-10-13) — so a
+# fixed "last hour" failed on any quiet stack while Loki held every line. Look back at least an hour, and far enough to
+# include the newest line Docker itself holds for any n8n container (plus 5 minutes), capped at Loki's default 30-day
+# query limit: the check stays "Loki has what Docker has", without needing traffic.
+n8n_log_window() {
+  local svc cid ts epoch newest=0 age
+  while read -r svc; do
+    [[ "${svc}" == n8n-* ]] || continue
+    cid="$(compose ps -q "${svc}" 2>/dev/null | head -1)"
+    [[ -n "${cid}" ]] || continue
+    ts="$(docker logs --tail 1 --timestamps "${cid}" 2>&1 | awk 'NR == 1 { print $1 }')"
+    epoch="$(date -d "${ts}" +%s 2>/dev/null || echo 0)"
+    if (( epoch > newest )); then newest="${epoch}"; fi
+  done < <(compose ps --format '{{.Service}}' 2>/dev/null)
+  age=$(( $(date +%s) - newest + 300 ))
+  if (( newest == 0 || age < 3600 )); then age=3600; fi
+  if (( age > 720 * 3600 )); then age=$(( 720 * 3600 )); fi
+  printf '%ss\n' "${age}"
+}
+n8n_window="$(n8n_log_window)"
+check "Loki holds n8n's logs (<= 90 s; any n8n process, back to the newest line Docker holds: since=${n8n_window})" \
+  wait_for 90 "n8n logs in Loki" loki_has '{service=~"n8n-.*"}' "${n8n_window}"
+check "n8n's JSON log level became a label" wait_for 30 "level label" loki_has '{service=~"n8n-.*", level=~".+"}' "${n8n_window}"
 check "Loki holds Caddy's access log" wait_for 30 "caddy logs" loki_has '{service="caddy"}'
 # 03-08 just called the n8n API with X-N8n-Api-Key: Caddy's access log drops request headers, so no key reaches Loki
 req GET /grafana/api/datasources/proxy/uid/loki/loki/api/v1/query_range -u "${gf_auth}" -G \

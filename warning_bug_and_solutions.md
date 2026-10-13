@@ -2,6 +2,30 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-13 · `make smoke ONLY=09` failed on an idle stack: n8n had logged nothing for 3.5 hours
+
+- **Symptom:** after the admin-password rotation on the build VM (10:06 UTC), `make smoke ONLY=09` — runbook step E7 — failed `Loki holds n8n's logs (<= 90 s; … last hour)` and `n8n's JSON log level became a label`. Every other check passed, Caddy's access log was in Loki.
+- **Root cause:** the test, not the stack. No n8n container had written a line since 06:33 (`docker logs --since 1h` → 0 lines for all five), and the check looked back a fixed hour. Loki held everything: the same query over 6 h returned 5000 lines. Any stack quiet for more than an hour fails E7; the full suite hid it, because 03–08 make n8n log just before 09 runs.
+- **How to verify:** on an idle stack `make smoke ONLY=09` passes and the check names the window it used (`since=13683s` on the build VM); on a busy stack the window stays 1 h.
+- **Fix:** `tests/smoke/09-monitoring.sh` looks back at least an hour, and far enough to include the newest line Docker itself holds for any n8n container plus 5 minutes (capped at Loki's default 30-day query limit) — still "Loki has what Docker has", without needing traffic. Shellcheck clean; run against the idle stack before committing.
+- **Date:** 2026-10-13
+
+## 2026-10-13 · The dev VM had no usable recovery key: the 2026-10-08 copy was never kept, and the new key's detach screen went into a chat
+
+- **Symptom:** asked to confirm the offline recovery key (runbook C9, ledger D-7), An could not find it. A pattern search for `AGE-SECRET-KEY-1` over the laptop's Desktop, Documents, Downloads, `D:\Non-work`, Claude Code's local session history and the VM's home (file names only, never contents) found no copy. A new key was made and detached the same day — and the terminal output of `make detach-recovery-key`, red banner included, was then pasted into the build chat.
+- **Root cause:** `make detach-recovery-key` prints the key once and checks that the copy pasted back matches; it cannot know whether that copy lives somewhere durable or in a clipboard and a temporary note, which is what happened on 2026-10-08. The second slip: the banner shows the secret itself, and sharing "what my terminal said" carried it along.
+- **How to verify:** on the VM, the check from HANDOFF (2026-10-13): read the key at a hidden prompt, compare `age-keygen -y` with `BACKUP_AGE_RECOVERY_PUBLIC_KEY` in `.env`, and decrypt the newest bundle with it (`MATCH` + `DECRYPT OK`). Before the detach the new key file opened the new bundle (`db.dump`, `key-bundle.env`, `manifest.json`) and failed on an older one (`no identity matched any of the recipients`) — as it must.
+- **Fix:** a new key — `age-keygen -o secrets/age-recovery-key.txt`, `.env` updated (the old `.env` kept off-repo on the VM), `make up`, `make backup-now`, then the detach by An with the password manager open (paste-back matched, shredded). The exposure was accepted on the dev VM until R2 (HANDOFF §3), and the R2 step now begins by making another key. The detach banner now says `This screen shows the secret itself: never copy it into a chat, ticket or screenshot`, and the last line reminds you to clear the scrollback — tested in a scratch directory with a throwaway key; runbook C4 says the same.
+- **Date:** 2026-10-13
+
+## 2026-10-13 · The whole `server1` `.env` went through a chat — Grafana and Uptime Kuma admin passwords rotated
+
+- **Symptom:** to ask a question about the age keys, `cat compose/.env` was pasted into the build chat: every secret of the dev stack in one message.
+- **Root cause:** `.env` is the one file that holds every secret, and printing it is the obvious way to show "what is in there". Safe alternative: `sed -E 's/=.+/=<set>/' compose/.env | grep -v '^#' | grep .` — key names, no values.
+- **How to verify:** the old passwords are refused (Grafana API 401, Kuma `login` ok=false) and the new ones from `.env` work: `make up` reloads Grafana's provisioning with it, `make doctor` reads Grafana's alerts and finds Kuma's admin, smoke 09 passes.
+- **Fix:** rotated the two passwords reachable from the network. Grafana: `grafana cli admin reset-admin-password --password-from-stdin` inside the container (`GF_SECURITY_ADMIN_PASSWORD` only applies when Grafana creates its database). Uptime Kuma: log in over its socket.io API from inside the container and send `changePassword {currentPassword, newPassword}`, the event its UI sends (the kit's `kuma-setup.sh` already talks to Kuma this way). Both ran first as a dry run that "changed" each password to its current value, then for real with new random values in `make init`'s formats; `.env` was written only after the new password worked and the old one failed. The Telegram token goes through @BotFather (HANDOFF §2, item 1). The internal secrets (`N8N_ENCRYPTION_KEY`, Postgres, Valkey, runners token) stay on this dev VM and must never be reused for production.
+- **Date:** 2026-10-13
+
 ## 2026-10-13 · After the `redis` chaos drill: worker-restart warnings and a `ContainerRestarting` alert (expected, now documented)
 
 - **Symptom:** after runbook D8 on the build VM, `make doctor` warned `n8n-worker-1/2: healthy but restarted 2x since creation` and the same (1x) for both runner sidecars, and Grafana's `ContainerRestarting` alert fired (it notifies Telegram). Correction the same day, from Grafana's alert history and An's Telegram: the drill also fires the **critical** `WebhookPoolDown` (06:24:40, about 2 min into the outage) and `WorkerPoolDown` (06:25:40), both resolved once Valkey was back — real pages. Nothing in the runbook or `docs/operations/chaos-drills.md` said to expect any of it.
