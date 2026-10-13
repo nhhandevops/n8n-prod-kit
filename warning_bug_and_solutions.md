@@ -2,6 +2,38 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-13 · After the `redis` chaos drill: worker-restart warnings and a `ContainerRestarting` alert (expected, now documented)
+
+- **Symptom:** after runbook D8 on the build VM, `make doctor` warned `n8n-worker-1/2: healthy but restarted 2x since creation` and the same (1x) for both runner sidecars, and Grafana's `ContainerRestarting` alert fired (it notifies Telegram). Nothing in the runbook or `docs/operations/chaos-drills.md` said to expect it.
+- **Root cause:** n8n's worker gives up on Redis after 10 s (`Lost Redis connection. Trying to reconnect in 1s... (0s/10s)`) and exits; `restart: unless-stopped` starts it again — twice per worker during the drill's 60 s Valkey outage, and once per runner sidecar with it. `ContainerRestarting` fires on more than two container starts per project in 15 minutes. Both are the recovery working. Side finding: this drill *does* exercise the restart policy (the process exits on its own), which the `worker` drill cannot (`docker kill` cancels the policy) — part of what ledger D-24 asks for.
+- **How to verify:** `docker inspect -f '{{.RestartCount}}'` on a worker after the drill; `docker logs` of it shows the 10 s countdown; the alert resolves 15 minutes after the last start.
+- **Fix:** documentation only — runbook D8 now says what the drill leaves behind and why. Doctor still warns on worker restarts on purpose: on a real instance a restarting worker is worth a look.
+- **Date:** 2026-10-13
+
+## 2026-10-13 · `make doctor` warned about cAdvisor after every busy reboot — the watchdog's own restart
+
+- **Symptom:** after the build VM rebooted on 2026-10-13 (04:33 UTC, other projects starting at the same time), `make doctor` printed `[warn] cadvisor: healthy but restarted 1x since creation — check: make logs SERVICE=cadvisor SINCE=24h` on every run.
+- **Root cause:** not a fault. The 2026-10-12 startup watchdog did its job: cAdvisor came up blind, the watchdog exited it at 04:36:35 (`cadvisor: no Docker container labelled after 2 min …`), Docker restarted it, and the second start registered the Docker factory. Doctor counts `RestartCount` for the container's whole life, so the designed recovery read as a problem until the container was recreated.
+- **How to verify:** on a stack whose cAdvisor restarted only through the watchdog, `make doctor` prints `[ OK ] cadvisor: running/healthy — restarted Nx by its startup watchdog …`; any restart without a matching watchdog line in `docker logs` (or one whose line was rotated away) still warns.
+- **Fix:** doctor compares cAdvisor's restart count with the number of watchdog exits in its log and passes only when every restart is accounted for. This is also the first proof of the watchdog after a real reboot, not a drill.
+- **Date:** 2026-10-13
+
+## 2026-10-13 · `make upgrade` warned "UPDATED … the tag was re-pushed or the version changed" on every normal upgrade
+
+- **Symptom:** runbook D5 (`make upgrade N8N_VERSION=2.42.7` on the build VM) printed two `[warn] N8N: UPDATED sha256:… -> sha256:… — the tag was re-pushed or the version changed` lines (n8n and runners) in its stage-0 checks. The upgrade was fine; the warning was noise on exactly the path every operator takes.
+- **Root cause:** `pin.sh` warns whenever a resolved digest differs from the stored one. `make upgrade` resolves the target by running `pin.sh` with `N8N_VERSION=<target>` on a copy of `versions.env`, so the n8n and runners digests always change — by design. `pin.sh` already knew the version had moved (it prints `N8N_VERSION: x -> y` itself) but did not use that when reporting digests.
+- **How to verify:** in a scratch copy, `PIN_FILE=<copy> PIN_ONLY="N8N RUNNERS" N8N_VERSION=<newer> compose/scripts/pin.sh` prints `[ OK ] N8N: <old> -> <new>, now sha256:…`; run again → `unchanged`; overwrite `N8N_DIGEST` with another digest at the same version → still `[warn] N8N: UPDATED …` (a genuinely re-pushed tag). All three checked on 2026-10-13.
+- **Fix:** `pin.sh` remembers the version it moved away from and reports the n8n and runners digests of that move as `[ OK ]`; every other digest change still warns.
+- **Date:** 2026-10-13
+
+## 2026-10-13 · Runbook Part C's commands rendered as plain text: single-backtick code fences
+
+- **Symptom:** walking `docs/runbook.md` Part C on the build VM: each command (C4 to C10, 13 blocks) sat between lines holding a single backtick (`` `bash `` … `` ` ``) instead of a fenced block. MkDocs renders that as inline text in a paragraph — no code box, no copy button — and a reader copying it gets the stray backticks too. Parts A, B, D and E were fine.
+- **Root cause:** the page was generated with the three-backtick fences collapsed to one, only in Part C; present since the page was created (4a23cb2). Same family as the literal `\n` fixed on 2026-10-12 and the "heredoc backslash collapse" this project knows.
+- **How to verify:** `grep -c -E '^`[a-z]*$' docs/runbook.md` → 0, and every part has an even number of ```` ``` ```` lines (Part C: 26). No other markdown file in the repository has the pattern.
+- **Fix:** the 26 fence lines in Part C turned into proper ```` ``` ```` fences; the commands themselves were run on the VM unchanged.
+- **Date:** 2026-10-13
+
 ## 2026-10-12 · Three runbook commands could not be pasted: a literal `\n` where a line continuation belonged
 
 - **Symptom:** walking `docs/runbook.md` Part B on the build VM: B6's two `docker compose … exec` commands (and D's `stop n8n-webhook-1 n8n-webhook-2`) read `--env-file .env \n   exec -T …` — on screen a backslash-n, in a shell a stray `n` argument, so the command fails.

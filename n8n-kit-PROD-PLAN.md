@@ -290,7 +290,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | D-13 | TC-025: three outside testers walk the quickstart | 3 | 5 | 3 | 3 | **15** | next (and an M0 gate) |
 | D-14 | ~~Move the n8n pin to the current patch release (CI's upgrade drill tests the move)~~ — **done 2026-10-12**: pin 2.42.6 (PR #11), the dev stack upgraded with `make upgrade` | 2 | 3 | 2 | 1 | **12** | done |
 | D-15 | Idempotency keys wherever a replay would double a side effect | 4 | 3 | 3 | 3 | **12** | next |
-| D-16 | `docs/sizing.md` — needs a second data point from a 4 vCPU host | 2 | 3 | 3 | 2 | **9** | next |
+| D-16 | `docs/sizing.md` — needs a second data point from a 4 vCPU host (the 2026-10-13 run on the 4 vCPU `server1` does not count: intake-bound at 8–10 req/s while other projects held load 6–26 — it needs a quiet host) | 2 | 3 | 3 | 2 | **9** | next |
 | D-17 | `make rotate-recovery-key` (today a detached recovery key can only be replaced by hand) | 4 | 2 | 2 | 2 | **8** | next |
 | D-18 | A fresh Telegram bot token; `/revoke` the one exposed in a build chat | 2 | 3 | 1 | 1 | **6** | later |
 | D-19 | Add `n8n_files` (and a decision on `n8n_data`) to the backup bundle | 3 | 2 | 2 | 2 | **6** | later |
@@ -298,7 +298,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | D-21 | A dedicated non-superuser Postgres role for n8n | 3 | 2 | 2 | 3 | **4** | later |
 | D-22 | Pause the Bull queue during `make upgrade`'s drain to shorten downtime | 2 | 3 | 2 | 3 | **4** | later |
 | D-23 | `make chaos` in the weekly workflow (too slow for per-PR) | 2 | 2 | 2 | 2 | **4** | later |
-| D-24 | A `crash` scenario that SIGKILLs the container's host PID, to exercise `restart: unless-stopped` for real | 2 | 2 | 2 | 2 | **4** | later |
+| D-24 | A `crash` scenario that SIGKILLs the container's host PID, to exercise `restart: unless-stopped` for real (partly shown 2026-10-13: in the `redis` drill the workers exit after 10 s without Redis and the policy restarts them — a crash of n8n's own process is still untested) | 2 | 2 | 2 | 2 | **4** | later |
 | D-25 | Grafana on its own hostname instead of sharing the n8n origin | 3 | 2 | 1 | 2 | **3** | later |
 
 **What the table is saying:** seven of the ten blockers are an hour or less of work each, and five of them
@@ -360,5 +360,6 @@ The expensive resource is not money. It is the hour in P4.
 
 | Date | Change |
 |---|---|
+| 2026-10-13 | Runbook C–E walked on the dev host. n8n 2.42.7 became stable on 2026-10-12 and D5 upgraded to it and rolled back cleanly, so D-14 comes round again (move the pin in a PR). D-16: the 4 vCPU run on the shared VM was intake-bound under other projects' load — still needs a quiet host. D-24: the `redis` drill already exercises the restart policy for workers. |
 | 2026-10-12 | D-2: working it showed the knob alone could not work — Docker's `stop_grace_period` was a hard-coded 40 s, so an `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above 30 was cut by a SIGKILL anyway. New `.env` key `N8N_STOP_GRACE_PERIOD` (all n8n containers, generated workers included), preflight/doctor enforce timeout + 10 ≤ window, doctor measures the p99. §2 gained the row; D-2 stays a blocker until it is set on the production host. D-14 done the same day (pin 2.42.6, PR #11); its row stays in §5, marked done. |
 | 2026-10-10 | Created and parked at kit v0.1.0 (n8n 2.42.4). Dev/test is the current phase and `docs/runbook.md` is the thing being worked. §5 seeded with 25 scored items from `n8n-kit-HANDOFF.md` §2 and §5, `warning_bug_and_solutions.md`, and `docs/security.md`. |

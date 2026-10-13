@@ -1042,9 +1042,9 @@ it back *from* your password manager, checks the paste really is that key, then 
 
 - [ ] Run it, with the password manager open:
 
-`bash
+```bash
 make -C compose detach-recovery-key
-`
+```
 
 - [ ] Copy the whole `AGE-SECRET-KEY-1...` line into a new entry named `n8nkit/age-recovery-key`.
 - [ ] Paste it back when asked (input is hidden), then type `shred` at the last prompt.
@@ -1083,17 +1083,17 @@ container's `GENERIC_TIMEZONE`, not UTC — while the timestamp in the bundle's 
 - [ ] Take a labelled backup. The backup itself is about 5 s on a dev-sized database
       (`n8n-kit-HANDOFF.md`); the `make` wrapper adds a few seconds for the one-shot container it starts:
 
-`bash
+```bash
 make -C compose backup-now NAME=before-drill
-`
+```
 
 - [ ] Look at what landed. `make init` with a dev domain sets `BACKUP_REMOTES=/backups/local`, which is the
       directory `compose/backups` on the VM (`compose/docker-compose.yml`). Adjust the path below if
       your clone is not at `~/n8n-prod-kit`:
 
-`bash
+```bash
 ls -l ~/n8n-prod-kit/compose/backups/manual/
-`
+```
 
 In order, the script validates `BACKUP_REMOTES`, the retention numbers and the two age public keys (a mistake
 there must alert, not silently stop every nightly backup); takes one shared lock so backups, restore tests and
@@ -1104,8 +1104,10 @@ through `age` to both recipients; deletes the plaintext dump; copies the bundle 
 
 **What you should see.** Lines from inside the backup container carry a UTC timestamp before `[ OK ]` or
 `[info]`; host-side lines do not. Expect one line per target,
-`[ OK ] /backups/local/manual/<name>.tar.age (<bytes> bytes)`, then `[ OK ] backup complete: ...`, and as the
-last line `BACKUP OK <name> <bytes>` (`compose/backup/backup.sh`).
+`[ OK ] /backups/local/manual/<name>.tar.age (<bytes> bytes)`, then the two closing lines
+`[ OK ] backup complete: ...` and `BACKUP OK <name> <bytes>` (`compose/backup/backup.sh`). They can appear in
+either order: the first goes to stderr and the second to stdout, and the terminal interleaves the two streams (on
+the build VM on 2026-10-13, `BACKUP OK` came first).
 
 **What it proves.** The database dumps, both recipients are configured, and every target accepted the file.
 Success is strict: one failed target means exit non-zero with `backup incomplete: N of M remote(s) failed`,
@@ -1127,15 +1129,15 @@ so you can name one in a restore.
 
 - [ ] List everything:
 
-`bash
+```bash
 make -C compose backups
-`
+```
 
 - [ ] Or list one target only, which is also how you work around a target you cannot reach:
 
-`bash
+```bash
 make -C compose backups FROM=/backups/local
-`
+```
 
 **What you should see.** One line per stored copy: the target, then `<directory>/<file name>`
 (`compose/backup/restore.sh`). A `daily` bundle that was also copied to `monthly/` appears twice, under
@@ -1172,15 +1174,15 @@ failed: *"a backup that does not restore is not a backup"* (`compose/scripts/doc
 - [ ] Run it. Its default "latest" mode also enforces freshness, so if the stack has been off for a day or
       more, take a `make -C compose backup-now` first:
 
-`bash
+```bash
 make -C compose restore-test
-`
+```
 
 - [ ] Or test one named bundle instead of the newest, which skips the freshness check:
 
-`bash
+```bash
 make -C compose restore-test BACKUP=n8n-<timestamp>-manual-before-drill
-`
+```
 
 In "latest" mode it downloads, decrypts and sha256-verifies the newest bundle on **each** target — so a copy
 that rotted on one target alone is found — and fails when any of them is older than `RESTORE_TEST_MAX_AGE_HOURS`
@@ -1199,9 +1201,9 @@ the repository records no measured figure for this command. No `make` target pri
 the `backup_state` volume, which is named after your project (`COMPOSE_PROJECT_NAME` in `compose/.env`, default
 `n8nkit`). The mount is read-only and the container runs as the uid that wrote the file:
 
-`bash
+```bash
 docker run --rm -v n8nkit_backup_state:/state:ro n8nkit/backup:local cat /state/restore-test.json
-`
+```
 
 `make -C compose doctor` summarises it as `restore test passed N day(s) ago`, or `no restore test has run yet —
 make restore-test (weekly from cron)`.
@@ -1233,25 +1235,26 @@ stack, so the first time you type `make restore` is not during an incident.
 - [ ] Note a workflow you can afford to lose, then take a fresh backup. Re-using the label from C5 is fine: the
       UTC timestamp in the name makes every bundle unique, and `latest` picks the newer one.
 
-`bash
+```bash
 make -C compose backup-now NAME=before-drill
-`
+```
 
 - [ ] In the n8n UI, delete that workflow. Confirm until it no longer appears in the list.
 - [ ] Check the bundle is there and will be chosen as `latest`:
 
-`bash
+```bash
 make -C compose backups
-`
+```
 
-- [ ] Restore it, and answer the one prompt with `y`. No measured time for `make restore` on a 2 vCPU VM is
-      recorded in the repository, so plan for a few minutes rather than seconds: the comparable CI step took
-      about 1.5 minutes (`n8n-kit-HANDOFF.md`), and the script then waits up to 600 s for the stack to report
-      healthy (`compose/scripts/restore.sh`).
+- [ ] Restore it, and answer the one prompt with `y`. Plan for a few minutes rather than seconds: on the
+      4 vCPU build VM, heavily loaded by other projects (load average about 13), it took 168 s on 2026-10-13 —
+      about 55 s to stop n8n and take the safety backup, 7 s to restore into the staging database, and the rest
+      waiting for the stack to report healthy, which the script allows up to 600 s for
+      (`compose/scripts/restore.sh`). The comparable CI step took about 1.5 minutes (`n8n-kit-HANDOFF.md`).
 
-`bash
+```bash
 make -C compose restore BACKUP=latest
-`
+```
 
 - [ ] Reload the UI. The workflow is back. Open a credential and check it does not error — that is the
       encryption key having survived the round trip.
@@ -1351,12 +1354,12 @@ One `BACKUP_REMOTES` line naming a local directory, an external disk and a bucke
 ([Configuration](configuration.md)); type, provider, ACL and the `NO_CHECK_BUCKET` flag that bucket-scoped
 tokens need are already in `compose/docker-compose.yml`. Quote the list, because it contains a space:
 
-`ini
+```ini
 BACKUP_REMOTES="/backups/local r2:n8n-backups/dev"
 RCLONE_CONFIG_R2_ACCESS_KEY_ID=...
 RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=...
 RCLONE_CONFIG_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-`
+```
 
 - [ ] Edit `compose/.env`, then `make -C compose up`. The scheduled job renders its crontab at container start,
       so the nightly backup only picks up a new target once the container has been recreated.
@@ -1384,9 +1387,9 @@ whether anything is in that volume at all. The volume name is your project name 
 (`COMPOSE_PROJECT_NAME` in `compose/.env`, default `n8nkit`), the mount is read-only, and the listing works
 because `make up` leaves that directory owned by n8n's uid at mode 0755:
 
-`bash
+```bash
 docker run --rm -v n8nkit_n8n_files:/files:ro n8nkit/backup:local ls -la /files
-`
+```
 
 **What you should see.** An empty listing is the comfortable answer: nothing outside Postgres is at risk. A
 non-empty one is a decision you now make consciously — copy that volume separately, because putting it in the
@@ -1800,6 +1803,16 @@ not lose it. Under `main drill (TC-010)`:
 `every webhook answered 200 across the restart (…) — the pool is independent of main` and
 `the schedule trigger resumed on its own`. Measured: 40 of 40 webhooks at 200; Valkey stopped with 318 jobs waiting
 and 303 were still in the wait list when it came back.
+
+**Expect two leftovers from the `redis` drill.** A worker that loses Valkey logs
+`Lost Redis connection. Trying to reconnect in 1s... (0s/10s)`, gives up after 10 s and exits, and Docker's restart
+policy starts it again — twice per worker during the 60 s outage on the build VM (2026-10-13), and once for each
+runner sidecar with it. So afterwards `make doctor` warns `n8n-worker-N: healthy but restarted Nx since creation`, and
+Grafana's `ContainerRestarting` alert (more than two container starts in 15 minutes) fires and sends its Telegram
+message. Both are the recovery working, not a fault: the alert resolves by itself after 15 minutes, while doctor's
+counter stays until the containers are next recreated. It also makes this the drill that does exercise
+`restart: unless-stopped` for real — the process exits on its own — which the `worker` drill cannot (the second
+finding below).
 
 **What it proves.** The recovery behaviour the kit claims is behaviour you have watched — including the two places
 where it is worse than you would guess.

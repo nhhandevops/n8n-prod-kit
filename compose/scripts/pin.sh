@@ -118,10 +118,14 @@ fi
 # --- pin: network resolution ----------------------------------------------------------------------------------
 need_cmd curl jq
 
+# moved_from_n8n_version: the version this run moved away from, so a new N8N/RUNNERS digest is reported as the
+# expected result of the move (make upgrade does this on every run), not as a warning about a re-pushed tag.
+moved_from_n8n_version=''
 if [[ -n "${requested_n8n_version}" ]]; then
   current_n8n_version="$(env_get N8N_VERSION "${versions_file}")"
   if [[ "${requested_n8n_version}" != "${current_n8n_version}" ]]; then
     env_set N8N_VERSION "${requested_n8n_version}" "${versions_file}"
+    moved_from_n8n_version="${current_n8n_version}"
     info "N8N_VERSION: ${current_n8n_version} -> ${requested_n8n_version} (n8n and runners)"
   fi
 fi
@@ -307,6 +311,8 @@ for key in "${pin_keys[@]}"; do
     changed=$((changed + 1))
     if [[ -z "${old_digest}" ]]; then
       ok "${key}: pinned ${new_digest} (via ${via})"
+    elif [[ -n "${moved_from_n8n_version}" && "${version_var}" == "N8N_VERSION" ]]; then
+      ok "${key}: ${moved_from_n8n_version} -> ${version}, now ${new_digest} (via ${via})"
     else
       warn "${key}: UPDATED ${old_digest} -> ${new_digest} (via ${via}) — the tag was re-pushed or the version changed"
     fi

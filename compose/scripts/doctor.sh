@@ -151,8 +151,17 @@ for svc in "${services[@]}"; do
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${cid}")"
   restarts="$(docker inspect --format '{{.RestartCount}}' "${cid}")"
   if sim unhealthy && [[ "${svc}" == "n8n-worker-2" ]]; then state=running; health=unhealthy; fi
+  # cAdvisor's startup watchdog (docker-compose.yml) exits on purpose when Docker was not ready at boot, so Docker
+  # restarts it: those restarts are the recovery working. Only restarts beyond the watchdog's own exits warn (a rotated
+  # log can only lower the count, so the check errs towards warning).
+  watchdog_exits=0
+  if [[ "${svc}" == "cadvisor" ]] && (( restarts > 0 )); then
+    watchdog_exits="$(docker logs "${cid}" 2>&1 | grep -c 'cadvisor: no Docker container labelled after' || true)"
+  fi
   if [[ "${state}" == "running" && ( "${health}" == "healthy" || "${health}" == "none" ) ]]; then
-    if (( restarts > 0 )); then
+    if (( restarts > 0 && watchdog_exits >= restarts )); then
+      ok "${svc}: ${state}/${health} — restarted ${restarts}x by its startup watchdog (Docker was not ready at boot; that restart is the fix working)"
+    elif (( restarts > 0 )); then
       flag_warn "${svc}: healthy but restarted ${restarts}x since creation — check: make logs SERVICE=${svc} SINCE=24h"
     else
       ok "${svc}: ${state}/${health}"
