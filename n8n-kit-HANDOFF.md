@@ -105,11 +105,16 @@ the screen.
 
    ```bash
    cd ~/src/n8n-prod-kit/compose
+   cp -p .env ~/env.bak-before-r2                      # undo copy (holds secrets; delete when done)
    age-keygen -o secrets/age-recovery-key.txt && chmod 600 secrets/age-recovery-key.txt
    sed -i "s|^BACKUP_AGE_RECOVERY_PUBLIC_KEY=.*|BACKUP_AGE_RECOVERY_PUBLIC_KEY=$(age-keygen -y secrets/age-recovery-key.txt)|" .env
    cd .. && make -C compose up && make -C compose backup-now NAME=new-recovery-key
+   age -d -i compose/secrets/age-recovery-key.txt "$(ls -t compose/backups/manual/*.tar.age | head -1)" | tar -tf -
    make -C compose detach-recovery-key      # key into the password manager; paste this screen nowhere
    ```
+
+   The `age -d … | tar -tf -` line must list `db.dump key-bundle.env manifest.json` — the new key opens the new
+   backup — before the detach shreds the file. Afterwards `clear` and close the terminal window.
 
    Then the bucket: dash.cloudflare.com → R2 Object Storage (it
    asks for a payment method once; the free tier is far more than the kit needs) → Create bucket `n8n-backups` →
@@ -299,7 +304,7 @@ make smoke                                    # 9/9; 09-monitoring skips while C
 
 Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — dev data is disposable, and a dev `.env` is never copied between machines (a production `.env` and its encryption key live only in the password manager, never in the repo and never in a chat).
 
-**This laptop (Windows 10 + VMware VM `server1`):** everything runs in the VM — `ssh k8svm` or VS Code → Remote-SSH → k8svm. Repo at `~/src/n8n-prod-kit`; `.env` exists (the dev stack — monitoring + kuma, n8n 2.42.4, checkout on `main` — was UP when the VM was shut down on 2026-10-09; Docker starts it again on boot (`restart: unless-stopped`), check with `make status`; test owner `owner@example.com` / `KitSmoke123!`): `cd ~/src/n8n-prod-kit/compose && make up`. Ports 8080/8443 (80/443 belong to other projects on the VM); the Windows hosts entry is in place. If containers on the default bridge ever get "No route to host": `sudo ip addr add 172.17.0.1/16 dev docker0 && sudo ip link set docker0 up` (see `warning_bug_and_solutions.md`).
+**This laptop (Windows 10 + VMware VM `server1`):** everything runs in the VM — `ssh k8svm` or VS Code → Remote-SSH → k8svm. Repo at `~/src/n8n-prod-kit`; `.env` exists (the dev stack — monitoring + kuma, n8n 2.42.4, checkout on `main` — was UP when the VM was shut down on 2026-10-09; Docker starts it again on boot (`restart: unless-stopped`), check with `make status`; test owner `owner@example.com`, password in `compose/.smoke/owner.env` on the VM): `cd ~/src/n8n-prod-kit/compose && make up`. Ports 8080/8443 (80/443 belong to other projects on the VM); the Windows hosts entry is in place. If containers on the default bridge ever get "No route to host": `sudo ip addr add 172.17.0.1/16 dev docker0 && sudo ip link set docker0 up` (see `warning_bug_and_solutions.md`).
 
 **Claude Code ↔ the dev n8n (this laptop, 2026-10-09):** n8n's instance MCP access is on in the VM dev stack (owner setting, auto-expose new workflows) and Claude Code has it as the user-scope MCP server `n8n-dev` (`https://n8n.localtest.me:8443/mcp-server/http`, bearer = n8n's MCP API key, stored only in `~/.claude.json`). It needs the Windows user variable `NODE_EXTRA_CA_CERTS=%USERPROFILE%\n8nkit-dev-root.crt` (the kit's dev CA; a new dev CA after `make clean` means copying `~/n8nkit-root.crt` again). New key: n8n → Settings → MCP access → rotate, then `claude mcp remove n8n-dev --scope user` + `claude mcp add --transport http --scope user n8n-dev <url> --header "Authorization: Bearer <key>"`. Uses the Max plan's Claude Code limits, not API credits.
 
@@ -356,7 +361,7 @@ Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — de
 - **2026-10-07:** S0–S3 shipped in one day (repo public, compose core running, doctor/scale/read-only, bootstrap matrix green on GitHub). Lesson: hand-author in the main loop; big agent fan-outs die on the 5-hour session limit. Next: S4 smoke suite + CI.
 
 ## 7. Questions for An (AI agents: add here instead of guessing)
-- Browser check wanted when convenient (this laptop): in the VM `make -C ~/src/n8n-prod-kit/compose up`; on Windows `scp k8svm:~/n8nkit-root.crt $env:USERPROFILE\Downloads\` then (admin) `certutil -addstore -f ROOT $env:USERPROFILE\Downloads\n8nkit-root.crt`, open https://n8n.localtest.me:8443/ and log in as owner@example.com / KitSmoke123! (test owner created by the S2 verification; `make clean` wipes it).
+- Browser check (this laptop), as of 2026-10-13: trust the dev CA with `certutil -user -addstore Root "C:\Users\Admin\n8nkit-dev-root.crt"` (that file is the VM's current CA — same fingerprint as `compose/secrets/dev-root.crt`; it was not yet in the Windows store), open https://n8n.localtest.me:8443/ and log in as `owner@example.com` with the password in `compose/.smoke/owner.env` on the VM. (The password that stood here before 2026-10-13 no longer works.) The browser steps themselves are the open rows of the sign-off sheet in §2 Next up.
 - **Open (2026-10-12):** the Cloudflare R2 bucket `n8n-backups` + a token scoped to it (steps: §2 Next up, item 2). The Telegram bot + chat id exist since S6; its token needs rotating (item 1).
 - ~~Runbook Part C on `server1` or on a throwaway stack?~~ → `server1` (2026-10-13). ~~Is the offline recovery key (detached 2026-10-08) in the password manager?~~ → it was not; a new one was made and detached on 2026-10-13 (§2 Done).
 - ~~Did both Telegram messages of the alert drill arrive?~~ → yes (An, 2026-10-13). They also showed the `redis` chaos drill pages `WebhookPoolDown` and `WorkerPoolDown` (critical) — now in runbook D8.

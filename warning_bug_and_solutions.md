@@ -2,6 +2,14 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-13 · Two stale instructions: the owner password in HANDOFF §7, and Kuma monitor URLs without the port
+
+- **Symptom:** writing An's step list for the remaining browser steps: HANDOFF §7 gave a login password for `owner@example.com` that no longer matches the instance (the one in `compose/.smoke/owner.env` differs), and runbook E5's monitor URLs (`https://n8n.localtest.me/healthz` …) fail from inside the Kuma container on the build VM with `EPROTO`.
+- **Root cause:** §7 recorded the S2 test owner's password and was never updated when the owner changed; E5 is written for a host on 443, and on the build VM port 443 belongs to another project's proxy, so a URL without `:8443` reaches the wrong service.
+- **How to verify:** `grep SMOKE_OWNER_EMAIL compose/.smoke/owner.env` names the owner and the file holds its password; from inside the Kuma container, `https://n8n.localtest.me:8443/healthz`, `/healthz/webhook` and `/` answer 200 with certificate checking on (Kuma has `NODE_EXTRA_CA_CERTS=/certs/dev-root.crt`), the same URL without the port fails.
+- **Fix:** §7 points at `compose/.smoke/owner.env` and holds no password; E5 says to add a non-443 `HTTPS_PORT` to the URLs. Also: the laptop's `n8nkit-dev-root.crt` is the VM's current CA (same fingerprint), but it was not in the Windows trust store — §7 now has the one-line `certutil -user -addstore Root` for it.
+- **Date:** 2026-10-13
+
 ## 2026-10-13 · An interrupted command had already changed the VM, and the agent reported that nothing had run
 
 - **Symptom:** An wrote "new recovery key first"; the agent read it as "replace the exposed recovery key now" and started the replacement over SSH. An stopped the tool call, and the agent twice told An that nothing had run. A read-only check minutes later showed otherwise: a new key pair (`age1dsrp…`) with its private half on the VM, `.env` pointing at it (changed 10:24:13 UTC), `make up` done and a backup taken with it (10:26:56 UTC).

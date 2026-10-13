@@ -24,6 +24,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 ### Templates
 
 ### Docs
+- Runbook E5: on a host whose `HTTPS_PORT` is not 443, Uptime Kuma's monitor URLs need the port (on the build VM the URLs without it reached another project's proxy and failed with `EPROTO`).
 - Runbook walked on the build VM through Parts C, D and E (2026-10-13; the browser steps, C1, C9 and C10 wait on An): Part C's 13 command blocks were single-backtick fences rendered as plain text — now real code blocks; C5 says the two closing lines can appear in either order; C8 records a measured `make restore` (168 s on the loaded 4 vCPU build VM); D8 says what the `redis` drill
   leaves behind: it pages `WebhookPoolDown` and `WorkerPoolDown` (critical) and `ContainerRestarting`, and doctor warns about the
   worker restarts — the restart policy working; silence the alerts first if you do not want the pages.
