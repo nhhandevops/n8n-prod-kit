@@ -279,7 +279,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | D-1 | Test an off-host backup target end to end (bucket, token, `make backup-now`, `make restore-test`) — **done on the dev VM 2026-10-13** (R2; the restore test restored the R2 copy); the production host needs its own bucket and token, tested the same way | 5 | 3 | 3 | 1 | **45** | blocker |
 | D-3 | `UI_PROTECT=on` with an allow-list and basic auth, verified from outside | 4 | 4 | 2 | 1 | **32** | blocker |
 | D-4 | Prove the alert path on the production host (fire one, resolve it) | 4 | 4 | 2 | 1 | **32** | blocker |
-| D-5 | `N8N_ENCRYPTION_KEY` and the recovery key in a password manager, read back once | 5 | 2 | 3 | 1 | **30** | blocker |
+| D-5 | `N8N_ENCRYPTION_KEY` and the recovery key in a password manager, read back once — **rehearsed on the dev VM 2026-10-13** (both in An's password manager, each read back); production's own keys need the same | 5 | 2 | 3 | 1 | **30** | blocker |
 | D-6 | MFA on the owner account; delete test accounts and API keys | 5 | 3 | 2 | 1 | **30** | blocker |
 | D-7 | DR drill: restore on a host that never held the host key (`AGE_KEY` plus `ADOPT_KEY=1`) | 5 | 3 | 3 | 2 | **22** | blocker |
 | D-8 | Host hardening: firewall to 80/443/udp443 plus SSH, keys only, unattended upgrades | 5 | 4 | 2 | 2 | **20** | blocker |
