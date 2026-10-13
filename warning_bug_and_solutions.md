@@ -2,6 +2,22 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-13 · The R2 credentials went through the build chat in a screenshot
+
+- **Symptom:** reporting step 2a ("R2 bucket + token created"), An attached a screenshot of a spreadsheet holding the new R2 account id, API token, Access Key ID, Secret Access Key and endpoint — every credential of the off-site backup target, in the chat. The step list had said to save them in the password manager and type them into the VM at a hidden prompt.
+- **Root cause:** the credentials were kept in a spreadsheet, and the quickest way to show "done" was a picture of it. Third secret through the chat in two days (Telegram token, the dev `.env`, a recovery key's detach screen), each one a natural way to show progress.
+- **How to verify:** what the token can do — read, write and delete objects in `n8n-backups`. What it cannot do: read the backups, which are encrypted to the host key and the recovery key `age1hps4c…`, neither of which went through a chat.
+- **Fix:** deferred by An (HANDOFF §3): delete the token in Cloudflare, create a new one with the same scope, keep the values in the password manager only, set them with the two-key hidden-prompt loop in HANDOFF §2 Next up (item 2), then `make up`, `make backup-now`, `make restore-test`. For reporting a step, the lines to paste are the `[ OK ]` and `RESTORE TEST OK` lines, which carry no secret.
+- **Date:** 2026-10-13
+
+## 2026-10-13 · CI `upgrade` job failed on a docs-only PR: public.ecr.aws "Data limit exceeded"
+
+- **Symptom:** PR #18 (documentation only) — `lint` and `smoke` green, `upgrade` red at "Bring the stack up on it (init, up, doctor)": `caddy Error toomanyrequests: Data limit exceeded`, then the same for `postgres`, three pull attempts, `image pull failed 3 times (registry rate limit? network?)` (run 38386349041).
+- **Root cause:** not the change. CI pulls `caddy` and `postgres` from `public.ecr.aws/docker/library/*` (`tests/ci/up.sh`), whose anonymous downloads are capped per source IP; GitHub's hosted runners share IPs, so the cap is someone else's traffic as much as ours. The `upgrade` job pulls more than `smoke` (an older n8n first, then the pin).
+- **How to verify:** the failed step's log shows `toomanyrequests: Data limit exceeded` only for the `public.ecr.aws` images; a re-run of the failed job a few minutes later on the same commit.
+- **Fix:** re-ran the failed job (`gh run rerun 38386349041 --failed`): the upgrade job passed on the re-run, with lint and smoke, on the same commit. Possible hardening, not done: pull `caddy`/`postgres` from `mirror.gcr.io/library/*` like Grafana/Loki/Alloy (digests stay authoritative, so a diverging mirror fails the pull rather than running something else), or authenticate to ECR Public in CI.
+- **Date:** 2026-10-13
+
 ## 2026-10-13 · Two stale instructions: the owner password in HANDOFF §7, and Kuma monitor URLs without the port
 
 - **Symptom:** writing An's step list for the remaining browser steps: HANDOFF §7 gave a login password for `owner@example.com` that no longer matches the instance (the one in `compose/.smoke/owner.env` differs), and runbook E5's monitor URLs (`https://n8n.localtest.me/healthz` …) fail from inside the Kuma container on the build VM with `EPROTO`.

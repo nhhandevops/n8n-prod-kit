@@ -276,7 +276,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | # | Improvement | H | L | R | E | Score | Band |
 |---|---|---|---|---|---|---|---|
 | D-2 | Raise `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above the measured p99 execution duration (and `N8N_STOP_GRACE_PERIOD` with it) — the kit side shipped 2026-10-12: the knob is real now and `make doctor` measures the p99; what remains is setting it on the production host | 4 | 4 | 3 | 1 | **48** | blocker |
-| D-1 | Test an off-host backup target end to end (bucket, token, `make backup-now`, `make restore-test`) | 5 | 3 | 3 | 1 | **45** | blocker |
+| D-1 | Test an off-host backup target end to end (bucket, token, `make backup-now`, `make restore-test`) — **done on the dev VM 2026-10-13** (R2; the restore test restored the R2 copy); the production host needs its own bucket and token, tested the same way | 5 | 3 | 3 | 1 | **45** | blocker |
 | D-3 | `UI_PROTECT=on` with an allow-list and basic auth, verified from outside | 4 | 4 | 2 | 1 | **32** | blocker |
 | D-4 | Prove the alert path on the production host (fire one, resolve it) | 4 | 4 | 2 | 1 | **32** | blocker |
 | D-5 | `N8N_ENCRYPTION_KEY` and the recovery key in a password manager, read back once | 5 | 2 | 3 | 1 | **30** | blocker |
@@ -292,7 +292,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | D-15 | Idempotency keys wherever a replay would double a side effect | 4 | 3 | 3 | 3 | **12** | next |
 | D-16 | `docs/sizing.md` — needs a second data point from a 4 vCPU host (the 2026-10-13 run on the 4 vCPU `server1` does not count: intake-bound at 8–10 req/s while other projects held load 6–26 — it needs a quiet host) | 2 | 3 | 3 | 2 | **9** | next |
 | D-17 | `make rotate-recovery-key` (today a detached recovery key can only be replaced by hand) | 4 | 2 | 2 | 2 | **8** | next |
-| D-18 | A fresh Telegram bot token; `/revoke` the one exposed in a build chat | 2 | 3 | 1 | 1 | **6** | later |
+| D-18 | ~~A fresh Telegram bot token; `/revoke` the one exposed in a build chat~~ — **done 2026-10-13** (the old token answers `Unauthorized`) | 2 | 3 | 1 | 1 | **6** | done |
 | D-19 | Add `n8n_files` (and a decision on `n8n_data`) to the backup bundle | 3 | 2 | 2 | 2 | **6** | later |
 | D-20 | Report the Postgres `NaN` query upstream | 1 | 3 | 2 | 1 | **6** | later |
 | D-21 | A dedicated non-superuser Postgres role for n8n | 3 | 2 | 2 | 3 | **4** | later |
@@ -360,6 +360,6 @@ The expensive resource is not money. It is the hour in P4.
 
 | Date | Change |
 |---|---|
-| 2026-10-13 | Runbook C–E walked on the dev host. n8n 2.42.7 became stable on 2026-10-12 and D5 upgraded to it and rolled back cleanly, so D-14 comes round again (move the pin in a PR). D-16: the 4 vCPU run on the shared VM was intake-bound under other projects' load — still needs a quiet host. D-24: the `redis` drill already exercises the restart policy for workers. |
+| 2026-10-13 | Runbook C–E walked on the dev host. n8n 2.42.7 became stable on 2026-10-12 and D5 upgraded to it and rolled back cleanly, so D-14 comes round again (move the pin in a PR). D-16: the 4 vCPU run on the shared VM was intake-bound under other projects' load — still needs a quiet host. D-24: the `redis` drill already exercises the restart policy for workers. Evening: D-1 tested on the dev VM against R2 and D-18 done; the R2 token's credentials then went through the chat — replace it before production data goes to that bucket. |
 | 2026-10-12 | D-2: working it showed the knob alone could not work — Docker's `stop_grace_period` was a hard-coded 40 s, so an `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above 30 was cut by a SIGKILL anyway. New `.env` key `N8N_STOP_GRACE_PERIOD` (all n8n containers, generated workers included), preflight/doctor enforce timeout + 10 ≤ window, doctor measures the p99. §2 gained the row; D-2 stays a blocker until it is set on the production host. D-14 done the same day (pin 2.42.6, PR #11); its row stays in §5, marked done. |
 | 2026-10-10 | Created and parked at kit v0.1.0 (n8n 2.42.4). Dev/test is the current phase and `docs/runbook.md` is the thing being worked. §5 seeded with 25 scored items from `n8n-kit-HANDOFF.md` §2 and §5, `warning_bug_and_solutions.md`, and `docs/security.md`. |
