@@ -2,6 +2,14 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-13 · An interrupted command had already changed the VM, and the agent reported that nothing had run
+
+- **Symptom:** An wrote "new recovery key first"; the agent read it as "replace the exposed recovery key now" and started the replacement over SSH. An stopped the tool call, and the agent twice told An that nothing had run. A read-only check minutes later showed otherwise: a new key pair (`age1dsrp…`) with its private half on the VM, `.env` pointing at it (changed 10:24:13 UTC), `make up` done and a backup taken with it (10:26:56 UTC).
+- **Root cause:** interrupting a tool call stops the local side and drops its output; the remote shell had already run most of the script. The agent took "no output" for "no effect". Second cause: a three-word message was read as an instruction to act, not checked first.
+- **How to verify:** after any interrupted remote command, read the state it could have changed before saying anything about it (here: the recovery public key in `.env`, `secrets/`, the undo copies, the newest bundles).
+- **Fix:** reverted on An's request the same hour — `.env` restored from the undo copy taken just before (only the recovery-key line differed), the new private key shredded, `make up`: the backup container encrypts to An's saved key `age1qu4z…` again and `make doctor` says the recovery key is detached. The 10:26 bundle opens with the host key only (dev data). The agent now checks remote state after every interrupt.
+- **Date:** 2026-10-13
+
 ## 2026-10-13 · `make smoke ONLY=09` failed on an idle stack: n8n had logged nothing for 3.5 hours
 
 - **Symptom:** after the admin-password rotation on the build VM (10:06 UTC), `make smoke ONLY=09` — runbook step E7 — failed `Loki holds n8n's logs (<= 90 s; … last hour)` and `n8n's JSON log level became a label`. Every other check passed, Caddy's access log was in Loki.
