@@ -1804,13 +1804,16 @@ not lose it. Under `main drill (TC-010)`:
 `the schedule trigger resumed on its own`. Measured: 40 of 40 webhooks at 200; Valkey stopped with 318 jobs waiting
 and 303 were still in the wait list when it came back.
 
-**Expect two leftovers from the `redis` drill.** A worker that loses Valkey logs
+**Expect pages and leftovers from the `redis` drill.** A worker that loses Valkey logs
 `Lost Redis connection. Trying to reconnect in 1s... (0s/10s)`, gives up after 10 s and exits, and Docker's restart
 policy starts it again — twice per worker during the 60 s outage on the build VM (2026-10-13), and once for each
-runner sidecar with it. So afterwards `make doctor` warns `n8n-worker-N: healthy but restarted Nx since creation`, and
-Grafana's `ContainerRestarting` alert (more than two container starts in 15 minutes) fires and sends its Telegram
-message. Both are the recovery working, not a fault: the alert resolves by itself after 15 minutes, while doctor's
-counter stays until the containers are next recreated. It also makes this the drill that does exercise
+runner sidecar with it. The webhook processors drop out the same way. So with Telegram configured the drill **pages
+you**: the critical `WebhookPoolDown` and `WorkerPoolDown` (on the build VM they fired about 2 and 3 minutes into the
+outage) and the `ContainerRestarting` warning (more than two container starts in 15 minutes), each followed by its
+`RESOLVED` message once Valkey is back. Silence them in Grafana first (Alerting → Silences) if you do not want the
+pages; `make upgrade` does that for itself, `make chaos` does not. Afterwards `make doctor` warns
+`n8n-worker-N: healthy but restarted Nx since creation`. All of it is the recovery working, not a fault: the alerts
+resolve on their own, while doctor's counter stays until the containers are next recreated. It also makes this the drill that does exercise
 `restart: unless-stopped` for real — the process exits on its own — which the `worker` drill cannot (the second
 finding below).
 

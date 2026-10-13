@@ -148,7 +148,7 @@ An's) and D-20 (a draft upstream report; posting it is An's call).
 | D | `chaos` worker / redis / main | ✅ ✅ ✅ |
 | D | `make upgrade`, `make rollback` | ✅ 2.42.6 → 2.42.7 → 2.42.6, images mode |
 | E | monitoring: targets up, three dashboards render | ✅ targets + dashboards provisioned; ⬜ seeing them render — **An** (browser) |
-| E | webhook-pool alert drill | ✅ fired and resolved in Grafana; ⬜ An confirms both Telegram messages (06:31 / 06:33 UTC) |
+| E | webhook-pool alert drill | ✅ fired and resolved; both Telegram messages arrived (An, 2026-10-13: FIRING 13:32, RESOLVED 13:34 local) |
 | E | `make smoke ONLY=09` | ✅ |
 
 Not on the sheet but in the runbook, still open: C1 (copy `N8N_ENCRYPTION_KEY` into the password manager — D-5),
@@ -344,7 +344,7 @@ Each machine gets its OWN `.env`, `secrets/` and volumes from `make init` — de
 - Browser check wanted when convenient (this laptop): in the VM `make -C ~/src/n8n-prod-kit/compose up`; on Windows `scp k8svm:~/n8nkit-root.crt $env:USERPROFILE\Downloads\` then (admin) `certutil -addstore -f ROOT $env:USERPROFILE\Downloads\n8nkit-root.crt`, open https://n8n.localtest.me:8443/ and log in as owner@example.com / KitSmoke123! (test owner created by the S2 verification; `make clean` wipes it).
 - **Open (2026-10-12):** the Cloudflare R2 bucket `n8n-backups` + a token scoped to it (steps: §2 Next up, item 2). The Telegram bot + chat id exist since S6; its token needs rotating (item 1).
 - ~~Runbook Part C on `server1` or on a throwaway stack?~~ → `server1` (2026-10-13). **Still open:** is the offline recovery key (detached 2026-10-08) in the password manager? (§2 Next up, item 3.)
-- **Open (2026-10-13):** did both Telegram messages of the alert drill arrive — WebhookPoolDown firing at about 06:31 UTC and resolved at about 06:33 UTC?
+- ~~Did both Telegram messages of the alert drill arrive?~~ → yes (An, 2026-10-13). They also showed the `redis` chaos drill pages `WebhookPoolDown` and `WorkerPoolDown` (critical) — now in runbook D8.
 - ~~Pin which n8n version at start?~~ → **2.42.4** (2.42.3 decided 2026-10-06; 2.42.4 became stable on 2026-10-07 and is pinned).
 - ~~Which S3-compatible backup target for the demo?~~ → **Cloudflare R2** default, AWS S3 for Target B, both supported via `BACKUP_REMOTES`.
 - Where to verify the RHEL path with real SELinux/firewalld (not possible in containers)? Options: small AlmaLinux 9 VM on the laptop's external SSD, or a one-off Rocky 9 VPS. Still open — decide before S9 (the install path is already verified in containers). **Raised in priority 2026-10-10:** An's stated direction is Ubuntu VMware VMs for dev/test and a **RHEL-family OS (CentOS/Rocky/Alma) for long-term production**, so the kit's dnf path and its SELinux `:z` mount labelling are a production concern here, not only a compatibility claim for other users. Decide which rebuild (Rocky 9 and AlmaLinux 9 are the prod-grade ones; CentOS Stream is RHEL's rolling upstream, not a production target) and verify on it before the M0 gate.
