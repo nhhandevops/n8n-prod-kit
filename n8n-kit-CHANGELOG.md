@@ -6,6 +6,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 ## [Unreleased]
 
 ### Added
+- `scripts/new-dev-vm.sh`: a fresh Ubuntu 26.04/24.04 VM to a kit dev host in one run — base packages, clone, `bootstrap-host.sh`, the dev tools at CI's pins (shellcheck, hadolint sha256-checked; yamllint, age, mkdocs, gh), then `dev-host-catchup.sh` under `sg docker` so no log-out is needed.
 - `scripts/dev-host-catchup.sh`: brings a dev/test host that fell behind (or a fresh clone) up to the repository's state — fast-forward pull, `make init` when needed, `make upgrade` when the pin is newer, the monitoring profile (with ≥ 4 vCPU), Telegram and R2 settings at hidden prompts when missing, `make up`, proof of what it configured, the recovery-key detach, then status, doctor and smoke. `--check` is read-only.
 - `N8N_STOP_GRACE_PERIOD` (`.env`, default 40): Docker's stop window for every n8n container, generated workers included. `make doctor` measures the p99 execution duration of the last 7 days and warns when it reaches `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` (PROD-PLAN D-2).
 
