@@ -316,6 +316,27 @@ if [[ "$(service_health postgres)" == "healthy" ]]; then
   else
     ok "executions: time limit ${exec_timeout} s, workflows may set up to ${exec_timeout_max} s"
   fi
+  # An Error Workflow is the only automatic hook left when an execution fails or its worker dies: n8n retries
+  # nothing by itself, and node-level "Retry on Fail" dies with the process that runs it. Two things go wrong in
+  # practice — a published workflow with no handler at all, and a handler that was never published: n8n runs the
+  # PUBLISHED version of an error workflow, so a forgotten Publish disables alerting without a word.
+  # Workflows that carry an Error Trigger themselves are their own handler (n8n's "internal error workflow") and
+  # are not counted as unprotected.
+  wf_published="$(pg "select count(*) from workflow_entity where active and not \"isArchived\"")"
+  wf_no_handler="$(pg "select count(*) from workflow_entity where active and not \"isArchived\" and coalesce(settings->>'errorWorkflow', '') = '' and nodes::text not like '%errorTrigger%'")"
+  wf_dead_handler="$(pg "select count(*) from workflow_entity w where w.active and not w.\"isArchived\" and coalesce(w.settings->>'errorWorkflow', '') <> '' and not exists (select 1 from workflow_entity h where h.id = w.settings->>'errorWorkflow' and h.\"activeVersionId\" is not null and not h.\"isArchived\")")"
+  if [[ "${wf_dead_handler}" =~ ^[0-9]+$ ]] && (( wf_dead_handler > 0 )); then
+    flag_fail "error workflows: ${wf_dead_handler} published workflow(s) point at an Error Workflow that is NOT published (saved but never published, archived, or deleted) — n8n runs the published version, so their failures alert nobody: open the handler and click Publish (docs/operations/error-workflows.md)"
+  fi
+  if [[ ! "${wf_published}" =~ ^[0-9]+$ || ! "${wf_no_handler}" =~ ^[0-9]+$ ]]; then
+    flag_warn "error workflows: could not count the workflows without one"
+  elif (( wf_published == 0 )); then
+    ok "error workflows: no published workflow yet"
+  elif (( wf_no_handler > 0 )); then
+    flag_warn "error workflows: ${wf_no_handler} of ${wf_published} published workflow(s) have no Error Workflow — a failure there is silent and is never retried: import templates/error-handler, publish it, then set it per workflow (Settings → Error Workflow). docs/operations/error-workflows.md"
+  else
+    ok "error workflows: all ${wf_published} published workflow(s) have one (or carry an Error Trigger themselves)"
+  fi
 else
   flag_warn "postgres not healthy — database checks skipped"
 fi
