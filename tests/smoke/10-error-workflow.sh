@@ -105,7 +105,10 @@ worker_logs() {
   done
 }
 logs="$(worker_logs)"
-not_active_lines="$(grep -cF 'is not active and cannot be executed' <<<"${logs}" || true)"
+# matched on this handler's id, not just on the sentence: a previous run of this script would otherwise
+# still be in the 15-minute window and answer for it
+not_active="$(grep -F 'is not active and cannot be executed' <<<"${logs}" || true)"
+not_active_lines="$(grep -cF "${handler_id}" <<<"${not_active}" || true)"
 check "a worker said why (${not_active_lines} x 'is not active and cannot be executed')" \
   test "${not_active_lines}" -ge 1
 
@@ -138,13 +141,26 @@ check "the alert carries the error message" grep -qF 'kit-smoke deliberate failu
 check "the template's one-line summary is there (n8n FAILED: ...)" grep -qF 'n8n FAILED:' <<<"${alert}"
 
 # --- the handler's own execution: mode 'error', on a worker -----------------------------------------------------------
-api GET "/api/v1/executions?workflowId=${handler_id}&limit=5"
-handler_exec="$(req_body | jq -r '.data[0].id // empty')"
-handler_mode="$(req_body | jq -r '.data[0].mode // empty')"
-handler_status="$(req_body | jq -r '.data[0].status // empty')"
+# The alert can reach the collector before the handler's own row is written: the HTTP Request node posts, the
+# collector runs, and only then does the handler finish. So wait for a terminal status instead of reading once.
+handler_exec=''
+handler_mode=''
+handler_status=''
+handler_finished() {
+  api GET "/api/v1/executions?workflowId=${handler_id}&limit=5"
+  handler_exec="$(req_body | jq -r '.data[0].id // empty')"
+  handler_mode="$(req_body | jq -r '.data[0].mode // empty')"
+  handler_status="$(req_body | jq -r '.data[0].status // empty')"
+  [[ "${handler_status}" == "success" || "${handler_status}" == "error" || "${handler_status}" == "crashed" ]]
+}
+check "the handler's own execution finished (<= 60 s)" wait_for 60 "the handler execution to end" handler_finished
 check "the handler ran in mode 'error' (${handler_mode:-none})" test "${handler_mode}" = "error"
 check "the handler execution succeeded (${handler_status:-none})" test "${handler_status}" = "success"
-logs="$(worker_logs)"
-ran_on_worker="$(grep -cF "Worker finished execution ${handler_exec} (" <<<"${logs}" || true)"
-check "a worker executed the handler (execution ${handler_exec:-?})" test "${ran_on_worker}" -ge 1
+ran_on_worker() {
+  local lines
+  lines="$(worker_logs)"
+  grep -qF "Worker finished execution ${handler_exec} (" <<<"${lines}"
+}
+check "a worker executed the handler (execution ${handler_exec:-?})" \
+  wait_for 30 "the worker log line for execution ${handler_exec:-?}" ran_on_worker
 finish
