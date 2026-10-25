@@ -29,7 +29,15 @@ every restore), `pre-upgrade` (S7). Retention prunes only daily/ (`BACKUP_RETENT
 (default 7) newest of either — a clock that jumps ahead cannot empty a remote. Files that do not follow the naming
 scheme are never listed, restored or deleted.
 
-**Not in the bundle:** the `n8n_files` volume (files written by the Read/Write Files node) and the `n8n_data` volume
+**The `n8n_files` volume** (what the Read/Write Files node wrote) travels in the bundle as `n8n-files.tar.gz`, from
+bundle format 2 onwards. It is **optional and skippable**: over `BACKUP_FILES_MAX_MB` (128), short of scratch space, or
+unreadable, and the member is left out with a warning and a reason recorded in the manifest — a files problem never
+fails the database backup. `BACKUP_INCLUDE_FILES=false` turns it off. Two honest limits: the tree is tarred while n8n
+runs, so a file being written at that moment is captured half-written (the database dump is consistent, this is not);
+and a restore **merges** — same-named files are overwritten by the bundle's copy, files the bundle does not have are
+left alone, so the result can be older in some places than others.
+
+**Not in the bundle:** the `n8n_data` volume
 (n8n's settings file, event logs, installed community packages). The kit sets `N8N_REINSTALL_MISSING_PACKAGES=true`, so
 after a restore onto a new host n8n reinstalls every community package the database lists. If workflows keep files in
 `/home/node/.n8n-files`, back that volume up separately.

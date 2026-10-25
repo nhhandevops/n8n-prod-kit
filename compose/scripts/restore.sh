@@ -176,6 +176,10 @@ fi
 compose run --rm --no-deps -T --entrypoint sh n8n-main -c 'rm -f /home/node/.n8n/config' >/dev/null ||
   warn "could not reset n8n's settings file — if n8n-main reports 'Mismatching encryption keys', delete /home/node/.n8n/config in the n8n_data volume"
 
+# The n8n_files tree, when this bundle carries one (format 2). Deliberately here: n8n is stopped, the database
+# swap has succeeded, and the script cannot fail on it — a user-files problem must not stop a restored instance.
+"${KIT_DIR}/scripts/files-restore.sh" || true
+
 info "emptying the job queue (Bull keys n8n:*)"
 # not optional: a job left from the replaced timeline names an execution id the restored database hands out again,
 # so a worker would run a different, new execution a second time

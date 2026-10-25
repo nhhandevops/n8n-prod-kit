@@ -20,7 +20,7 @@ export LC_ALL=C   # byte-wise string comparison: bundle names sort by their UTC 
 STATE_DIR=/state
 WORK_DIR=/work
 AGE_IDENTITY="${AGE_KEY_FILE:-/run/secrets/age-key.txt}"
-BUNDLE_FORMAT=1
+BUNDLE_FORMAT=2   # 1: db.dump + key-bundle.env. 2: adds an optional n8n-files.tar.gz (the n8n_files volume).
 LOCK_FILE="${STATE_DIR}/backup.lock"
 KINDS_RE='(daily|monthly|manual|pre-upgrade|pre-restore)'
 NAME_RE='^n8n-[0-9]{8}T[0-9]{6}Z-(daily|manual|pre-upgrade|pre-restore)(-[a-z0-9.-]+)?\.tar\.age$'
@@ -199,7 +199,8 @@ resolve_bundle() {   # resolve_bundle NAME [FROM]
 # Decrypt + unpack a bundle file into DIR, verify every sha256 listed in its manifest and that the manifest names the
 # file it came from (a renamed copy of an old bundle must not pose as a newer one).
 unpack_bundle() {   # unpack_bundle FILE DIR EXPECTED_NAME
-  local file="${1}" dir="${2}" expected="${3%.tar.age}" f want have
+  local file="${1}" dir="${2}" expected="${3%.tar.age}" f want have format
+  local bs='\'
   [[ -r "${AGE_IDENTITY}" ]] || die "age identity ${AGE_IDENTITY} not readable (run make up — it fixes the permissions)"
   mkdir -p "${dir}"
   age -d -i "${AGE_IDENTITY}" "${file}" | tar -xf - -C "${dir}" || return 1
@@ -209,14 +210,32 @@ unpack_bundle() {   # unpack_bundle FILE DIR EXPECTED_NAME
     fail "the bundle file is called ${expected} but its manifest says '${have}' — renamed or planted file, refusing it"
     return 1
   fi
-  for f in db.dump key-bundle.env; do
+  # A bundle written by a NEWER kit can carry members this one does not know. Warn, never refuse: refusing would
+  # break the case this exists for — an old checkout restoring a current bundle after the host is gone — and every
+  # reader keys off the manifest, so a member it does not recognise is inert.
+  format="$(jq -r '.bundle_format // 1' "${dir}/manifest.json")"
+  if [[ "${format}" =~ ^[0-9]+$ ]] && (( format > BUNDLE_FORMAT )); then
+    warn "bundle format ${format} is newer than this kit understands (${BUNDLE_FORMAT}) — restoring the parts it knows"
+  fi
+  # Verify EVERY member the manifest lists, so format 2's optional n8n-files.tar.gz is covered by the same check
+  # as the two mandatory ones and a swapped, truncated or deleted member is refused whatever it is called.
+  # A format-1 manifest lists exactly db.dump and key-bundle.env, so an old bundle verifies as it always did.
+  while IFS= read -r f; do
+    case "${f}" in
+      '' | . | .. | */* | *"${bs}"* ) fail "the manifest lists '${f}', which is not a plain file name — refusing it"; return 1 ;;
+      *) : ;;
+    esac
+    if [[ ! -s "${dir}/${f}" ]]; then
+      fail "${f}: listed in the manifest but missing from the bundle"
+      return 1
+    fi
     want="$(jq -r --arg f "${f}" '.files[$f].sha256 // empty' "${dir}/manifest.json")"
     have="$(sha256sum "${dir}/${f}" | cut -d' ' -f1)"
     if [[ -z "${want}" || "${want}" != "${have}" ]]; then
       fail "${f}: sha256 mismatch (manifest ${want:-missing}, file ${have})"
       return 1
     fi
-  done
+  done < <(jq -r '.files | keys[]' "${dir}/manifest.json")
 }
 
 bundle_key() {   # the N8N_ENCRYPTION_KEY stored in an unpacked bundle

@@ -350,6 +350,16 @@ elif [[ "$(service_health backup)" != "healthy" ]]; then
 else
   metrics="$(compose exec -T backup cat /state/metrics.prom 2>/dev/null || true)"
   now="$(date +%s)"
+  # Whether the newest bundle carried the n8n_files tree. The member is skippable by design (size cap, scratch
+  # space, an unreadable file), so a tree can quietly stop being backed up while the backup still reports success.
+  if [[ "$(env_get BACKUP_INCLUDE_FILES)" != "false" ]]; then
+    files_inc="$(awk '$1 == "backup_last_files_included" { print $2 }' <<<"${metrics}")"
+    if [[ "${files_inc}" == "0" ]]; then
+      flag_warn "the newest backup left the n8n_files tree out — make logs SERVICE=backup SINCE=48h says why (usually over BACKUP_FILES_MAX_MB, or no scratch space); the database is still backed up"
+    elif [[ "${files_inc}" == "1" ]]; then
+      ok "the newest backup includes the n8n_files tree"
+    fi
+  fi
   for remote in ${backup_remotes}; do
     remote="${remote%/}"
     last="$(awk -v r="backup_last_success_timestamp_seconds{remote=\"${remote}\"}" '$1 == r { print $2 }' <<<"${metrics}")"

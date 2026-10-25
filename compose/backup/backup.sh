@@ -120,6 +120,60 @@ n8n_version="${n8n_version:-${N8N_VERSION:-}}"
     "${n8n_version}" "${DOMAIN:-}" "${server}" "${stamp}" "${BUNDLE_FORMAT}"
 } >"${work}/key-bundle.env"
 chmod 0600 "${work}/key-bundle.env"
+
+# --- the n8n_files tree: optional, bounded, and never fatal (bundle format 2) ----------------------------------------
+# /n8n-files is the n8n_files volume, mounted read-only. It holds whatever the Read/Write Files node wrote, which
+# nothing else in a bundle covers. It is deliberately SKIPPABLE: the database is what a backup exists for, and a tree
+# that is too large, unreadable or busy must not turn a working nightly backup into a failing one. Every skip is
+# recorded in the manifest and warned about, so nobody has to guess later whether a bundle has the files in it.
+stage="n8n files"
+files_member=""
+files_note=""
+if [[ "${BACKUP_INCLUDE_FILES:-true}" != "true" ]]; then
+  files_note="BACKUP_INCLUDE_FILES is not true"
+elif [[ ! -d /n8n-files ]]; then
+  files_note="the n8n_files volume is not mounted in this container"
+elif [[ -z "$(find /n8n-files -type f -print -quit 2>/dev/null || true)" ]]; then
+  files_note="the volume holds no files"
+else
+  files_kb="$(du -sk /n8n-files 2>/dev/null | cut -f1)"
+  files_kb="${files_kb:-0}"
+  max_mb="${BACKUP_FILES_MAX_MB:-128}"
+  free_kb="$(df -Pk /tmp | awk 'NR == 2 { print $4 }')"
+  free_kb="${free_kb:-0}"
+  # Peak scratch need: the gzip beside the tree it reads, plus headroom for the outer tar and the age output.
+  need_kb=$(( files_kb * 2 + 65536 ))
+  if [[ ! "${files_kb}" =~ ^[0-9]+$ || ! "${max_mb}" =~ ^[0-9]+$ ]]; then
+    files_note="could not measure the tree, or BACKUP_FILES_MAX_MB is not a number"
+    warn "n8n files: ${files_note} — left out of the bundle"
+  elif (( files_kb > max_mb * 1024 )); then
+    files_note="the tree is $(( files_kb / 1024 )) MB, over BACKUP_FILES_MAX_MB=${max_mb}"
+    warn "n8n files: ${files_note} — left out of the bundle; raise the cap together with BACKUP_TMPFS_SIZE and MEM_LIMIT_BACKUP, or back that volume up separately"
+  elif (( free_kb < need_kb )); then
+    files_note="only $(( free_kb / 1024 )) MB of scratch free, about $(( need_kb / 1024 )) MB needed"
+    warn "n8n files: ${files_note} — left out of the bundle; raise BACKUP_TMPFS_SIZE and MEM_LIMIT_BACKUP together"
+  elif tar -C /n8n-files -cf - . 2>/dev/null | gzip -c >"${work}/n8n-files.tar.gz"; then
+    files_member=n8n-files.tar.gz
+  else
+    rm -f "${work}/n8n-files.tar.gz"
+    files_note="tar could not read the whole tree"
+    warn "n8n files: ${files_note} — left out of the bundle (a file left unreadable to this container, or changing while it was read?); the database backup is unaffected"
+  fi
+fi
+# Passed to jq through the environment rather than as new --argjson arguments, so the manifest call below keeps its
+# existing shape and an optional member needs no conditional command line.
+if [[ -n "${files_member}" ]]; then
+  files_sha="$(sha256sum "${work}/${files_member}" | cut -d" " -f1)"
+  files_bytes="$(stat -c %s "${work}/${files_member}")"
+  KIT_FILES_ENTRY="$(jq -n --arg s "${files_sha}" --argjson b "${files_bytes}" '{"n8n-files.tar.gz": {sha256: $s, bytes: $b}}')"
+  KIT_FILES_META="$(jq -n --argjson b "${files_bytes}" '{included: true, bytes: $b}')"
+  info "n8n files: included ($(( files_bytes / 1024 )) KB compressed)"
+else
+  KIT_FILES_ENTRY="{}"
+  KIT_FILES_META="$(jq -n --arg n "${files_note}" '{included: false, reason: $n}')"
+fi
+export KIT_FILES_ENTRY KIT_FILES_META
+stage="manifest"
 jq -n --arg name "${name}" --arg kind "${kind}" --arg created "${stamp}" --arg n8n "${n8n_version}" \
   --arg pg "${server}" --arg domain "${DOMAIN:-}" --argjson format "${BUNDLE_FORMAT}" \
   --argjson workflows "${workflows}" --argjson credentials "${credentials}" \
@@ -127,13 +181,17 @@ jq -n --arg name "${name}" --arg kind "${kind}" --arg created "${stamp}" --arg n
   --arg ksum "$(sha256sum "${work}/key-bundle.env" | cut -d' ' -f1)" \
   '{name: $name, kind: $kind, created_at: $created, bundle_format: $format, n8n_version: $n8n, postgres_version: $pg,
     domain: $domain, counts: {workflows: $workflows, credentials: $credentials},
-    files: {"db.dump": {sha256: $dsum, bytes: $dsize}, "key-bundle.env": {sha256: $ksum}}}' >"${work}/manifest.json"
+    n8n_files: ($ENV.KIT_FILES_META | fromjson),
+    files: ({"db.dump": {sha256: $dsum, bytes: $dsize}, "key-bundle.env": {sha256: $ksum}}
+            + ($ENV.KIT_FILES_ENTRY | fromjson))}' >"${work}/manifest.json"
 
 stage="encryption (age)"
 mapfile -t rcpt < <(recipients)
 bundle="${work}/${name}.tar.age"
-tar -C "${work}" -cf - db.dump key-bundle.env manifest.json | age "${rcpt[@]}" -o "${bundle}"
-rm -f "${work}/db.dump"   # the plaintext is no longer needed; frees the tmpfs for the uploads
+members=(db.dump key-bundle.env manifest.json)
+[[ -n "${files_member}" ]] && members+=("${files_member}")
+tar -C "${work}" -cf - "${members[@]}" | age "${rcpt[@]}" -o "${bundle}"
+rm -f "${work}/db.dump" "${work}/n8n-files.tar.gz"   # plaintext no longer needed; frees the tmpfs for the uploads
 bytes="$(stat -c %s "${bundle}")"
 
 # ensure_monthly REMOTE — the current UTC month has a bundle under monthly/ (copies this one when it has none yet)
@@ -203,6 +261,13 @@ duration=$(( $(date +%s) - started ))
   printf 'backup_last_attempt_timestamp_seconds %s\n' "${now}"
   printf 'backup_last_size_bytes %s\nbackup_last_duration_seconds %s\n' "${bytes}" "${duration}"
   printf 'backup_info{name="%s",kind="%s"} 1\n' "${name}" "${kind}"
+  # 1 when the n8n_files tree is in this bundle, 0 when it was skipped or there was nothing to include. doctor
+  # reads it, so a tree that silently stopped being backed up shows up without anyone opening a manifest.
+  if [[ -n "${files_member}" ]]; then
+    printf 'backup_last_files_included 1\n'
+  else
+    printf 'backup_last_files_included 0\n'
+  fi
 } | write_metrics backup
 reported=1
 

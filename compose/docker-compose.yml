@@ -645,6 +645,8 @@ services:
       BACKUP_RETENTION_MIN_KEEP: ${BACKUP_RETENTION_MIN_KEEP:-7}
       BACKUP_NOTIFY_SUCCESS: ${BACKUP_NOTIFY_SUCCESS:-false}
       BACKUP_ALLOW_SINGLE_RECIPIENT: ${BACKUP_ALLOW_SINGLE_RECIPIENT:-false}
+      BACKUP_INCLUDE_FILES: ${BACKUP_INCLUDE_FILES:-true}
+      BACKUP_FILES_MAX_MB: ${BACKUP_FILES_MAX_MB:-128}
       RESTORE_TEST_MAX_AGE_HOURS: ${RESTORE_TEST_MAX_AGE_HOURS:-26}
       BACKUP_AGE_PUBLIC_KEY: ${BACKUP_AGE_PUBLIC_KEY:-}
       BACKUP_AGE_RECOVERY_PUBLIC_KEY: ${BACKUP_AGE_RECOVERY_PUBLIC_KEY:-}
@@ -674,6 +676,9 @@ services:
       # a fetched, decrypted bundle waiting to be restored (make restore), emptied on every exit of make restore
       - backup_work:/work
       - ./secrets/age-key.txt:/run/secrets/age-key.txt:ro,z
+      # read-only: the files member of a bundle is built from here, and restoring the tree is done by a
+      # throw-away root container (scripts/files-restore.sh), never by this uid-70 service.
+      - n8n_files:/n8n-files:ro
       # BACKUP_REMOTES path "/backups/local" = compose/backups on the host; "/backups/external" = BACKUP_LOCAL_PATH
       # (an external disk / NAS mount; defaults to the same directory when unset)
       - ./backups:/backups/local:z

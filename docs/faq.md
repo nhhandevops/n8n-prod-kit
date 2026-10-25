@@ -106,8 +106,9 @@ docker compose --env-file versions.env --env-file .env exec -T n8n-worker-1 sh -
 ```
 
 That tree is the node's whole world (`N8N_RESTRICT_FILE_ACCESS_TO`), and
-`N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES=true` keeps nodes out of `/home/node/.n8n`. Note that the
-`n8n_files` volume is **not** in the backups — back it up separately if workflows keep files there.
+`N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES=true` keeps nodes out of `/home/node/.n8n`. The `n8n_files` volume
+**is** in the backups from bundle format 2 (as `n8n-files.tar.gz`), but only up to `BACKUP_FILES_MAX_MB`; past that it
+is skipped with a warning and the manifest records why, so check `make doctor` rather than assuming.
 
 **A Code node fails with "fetch is not defined" or "process is not defined".**
 
