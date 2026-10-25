@@ -77,7 +77,7 @@ pg_dump, a full tmpfs, encryption, an upload, the monthly copy — sets `backup_
 | `make backups [FROM=remote]` | list every bundle, newest first |
 | `make restore-test [BACKUP=name]` | verify every target's newest bundle and restore the newest into a scratch Postgres — never touches the live DB |
 | `make doctor` | shows the age and last status of the backups per target and the last restore test |
-| `make detach-recovery-key` | prints the recovery key, makes you paste it back from the password manager, then shreds it from the host |
+| `make detach-recovery-key` | points you at the key file (it is never printed on screen), makes you paste the key back from the password manager, then shreds it from the host |
 | `make rotate-recovery-key` | replaces the recovery key: generates a new pair, verifies your copy of it, swaps the public half into `.env`. `KEEP_OLD=1` also keeps the previous key as a recipient on new bundles — for a key you lost, never one that leaked |
 
 The restore test also runs every Sunday 03:00 (`RESTORE_TEST_SCHEDULE`). Per target it downloads, decrypts and

@@ -114,10 +114,12 @@ if [[ "${new_pub}" == "${old_pub}" ]]; then
 fi
 
 # --- paste-back check, while the original still exists ---------------------------------------------------------------
-banner_red "NEW RECOVERY KEY — copy the AGE-SECRET-KEY-1… line into your password manager (entry n8nkit/age-recovery-key)" "" \
-  "$(grep -E '^AGE-SECRET-KEY-' "${file}")" "" \
-  "Keep the OLD entry as well until the bundles above have aged out of retention — they need it." \
-  "This screen shows the secret itself: never copy it into a chat, ticket or screenshot."
+banner_red "NEW RECOVERY KEY — it is in this file, at mode 600:" "" \
+  "    ${KIT_DIR}/${file}" "" \
+  "Open it, copy the AGE-SECRET-KEY-1… line into your password manager (entry n8nkit/age-recovery-key)," \
+  "then come back here. Keep the OLD entry too until the bundles above leave retention — they need it." "" \
+  "The key is deliberately NOT printed on this screen: a terminal keeps scrollback, and a screen like this" \
+  "is how four separate secrets in this project's history ended up in a chat or a screenshot."
 printf 'Now paste the NEW key back FROM the password manager (input hidden), then Enter: ' >&2
 pasted=''
 read -rs pasted </dev/tty || pasted=''
