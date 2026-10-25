@@ -175,17 +175,32 @@ ensure_owner() {
   if [[ -n "${SMOKE_OWNER_EMAIL:-}" && -n "${SMOKE_OWNER_PASSWORD:-}" ]]; then
     return 0
   fi
+  local saved_email='' saved_password=''
   if [[ -f "${STATE_DIR}/owner.env" ]]; then
-    SMOKE_OWNER_EMAIL="$(env_get SMOKE_OWNER_EMAIL "${STATE_DIR}/owner.env")"
-    SMOKE_OWNER_PASSWORD="$(env_get SMOKE_OWNER_PASSWORD "${STATE_DIR}/owner.env")"
-    return 0
+    saved_email="$(env_get SMOKE_OWNER_EMAIL "${STATE_DIR}/owner.env")"
+    saved_password="$(env_get SMOKE_OWNER_PASSWORD "${STATE_DIR}/owner.env")"
   fi
+  # Ask the instance what it is BEFORE trusting the file. compose/.smoke/ survives `make clean`, a recreated
+  # database and a rebuilt host, so a saved owner.env can easily belong to a database that no longer exists —
+  # and taking it on trust made 03-owner fail four checks on a bare 401, with no hint of the real cause. Worse,
+  # it made `make upgrade` fail its verify step on a healthy stack (seen on the dev VM, 2026-10-25).
   req GET /rest/settings
   local first_load
   first_load="$(req_body | jq -r '.data.userManagement.showSetupOnFirstLoad // empty')"
   if [[ "${first_load}" != "true" ]]; then
+    # There IS an owner, so the saved credentials are the only way in; a wrong one fails the next check with
+    # its own message.
+    if [[ -n "${saved_email}" && -n "${saved_password}" ]]; then
+      SMOKE_OWNER_EMAIL="${saved_email}"
+      SMOKE_OWNER_PASSWORD="${saved_password}"
+      return 0
+    fi
     fail "this instance already has an owner but compose/.smoke/owner.env is missing — export SMOKE_OWNER_EMAIL and SMOKE_OWNER_PASSWORD"
     return 1
+  fi
+  # First load: this instance has no owner at all, so anything saved is from a database that is gone.
+  if [[ -n "${saved_email}" ]]; then
+    warn "compose/.smoke/owner.env holds credentials for a database that no longer exists (this instance has no owner yet) — creating a new owner and replacing them"
   fi
   SMOKE_OWNER_EMAIL="smoke-owner@example.com"
   # n8n requires 8+ chars with a digit and an uppercase letter
