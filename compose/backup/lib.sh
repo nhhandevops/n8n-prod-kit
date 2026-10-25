@@ -200,7 +200,6 @@ resolve_bundle() {   # resolve_bundle NAME [FROM]
 # file it came from (a renamed copy of an old bundle must not pose as a newer one).
 unpack_bundle() {   # unpack_bundle FILE DIR EXPECTED_NAME
   local file="${1}" dir="${2}" expected="${3%.tar.age}" f want have format
-  local bs='\'
   [[ -r "${AGE_IDENTITY}" ]] || die "age identity ${AGE_IDENTITY} not readable (run make up — it fixes the permissions)"
   mkdir -p "${dir}"
   age -d -i "${AGE_IDENTITY}" "${file}" | tar -xf - -C "${dir}" || return 1
@@ -222,7 +221,7 @@ unpack_bundle() {   # unpack_bundle FILE DIR EXPECTED_NAME
   # A format-1 manifest lists exactly db.dump and key-bundle.env, so an old bundle verifies as it always did.
   while IFS= read -r f; do
     case "${f}" in
-      '' | . | .. | */* | *"${bs}"* ) fail "the manifest lists '${f}', which is not a plain file name — refusing it"; return 1 ;;
+      '' | . | .. | *[!A-Za-z0-9._-]* ) fail "the manifest lists '${f}', which is not a plain file name — refusing it"; return 1 ;;
       *) : ;;
     esac
     if [[ ! -s "${dir}/${f}" ]]; then
