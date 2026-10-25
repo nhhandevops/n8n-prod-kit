@@ -9,7 +9,7 @@ cd compose
 make chaos SCENARIO=worker          # kill a worker mid-execution        (TC-008)
 make chaos SCENARIO=redis           # take Valkey away for 60 seconds    (TC-009)
 make chaos SCENARIO=main            # restart n8n-main under load        (TC-010)
-```text
+```
 
 Options: `N=` inputs to fire (default 120), `P=` requests in flight (40), `OUTAGE=` seconds Valkey stays down
 (60), `RECOVER_TIMEOUT=` seconds allowed for recovery (420), `YES=1` to skip the confirmation prompt.
@@ -42,7 +42,7 @@ n8n builds its Bull queue with retry switched off, in `packages/cli/src/scaling/
 
 ```js
 const settings = { ...this.globalConfig.queue.bull.settings, maxStalledCount: 0 };
-```text
+```
 
 Bull's stalled sweep runs `if (stalledCount > MAX_STALLED_JOB_COUNT)`. With the limit at `0` the **first**
 stall takes the fail branch: the job is moved to `failed` with `job stalled more than allowable limit` and is
@@ -67,7 +67,7 @@ and the webhook processors never do it. A job is swept once its lock expires and
 
 ```text
 QUEUE_WORKER_LOCK_DURATION 60s  +  QUEUE_WORKER_STALLED_INTERVAL 30s  ≈ 90s
-```text
+```
 
 That matches the measurement: the crashed executions stopped 97 seconds after the kill. So a drill needs to
 wait about 90 seconds longer than a plain drain before the numbers settle — and **a single-worker instance has
@@ -117,7 +117,7 @@ never asked to stop anything:
 
 ```bash
 sudo kill -9 "$(docker inspect -f '{{.State.Pid}}' n8nkit-n8n-worker-1-1)"
-```text
+```
 
 `docker exec <container> kill -9 1` does **not** work: the kernel discards a SIGKILL sent to a PID-namespace
 init from inside that namespace. Only an ancestor namespace — the host — can force it.
@@ -185,6 +185,6 @@ A drill that fails keeps its evidence. The workflow is deactivated but not delet
 make logs SERVICE=n8n-worker-1 | tail -50
 docker compose -p n8nkit exec n8n-main ls -1 /home/node/.n8n-files/
 make status && make doctor
-```text
+```
 
 Clean up when you are done — `make smoke` removes any `kit-smoke-*` workflow, or delete it in the UI.
