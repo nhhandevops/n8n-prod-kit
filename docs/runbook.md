@@ -955,7 +955,7 @@ command, run from inside `compose/`.
 **What it is.** All of n8n's state is in one Postgres database, `n8n` (`compose/docker-compose.yml`):
 workflows, credentials, execution history. Binary data (files passing through a workflow) is in there too,
 because the kit sets `N8N_DEFAULT_BINARY_DATA_MODE: database` (`compose/docker-compose.yml`). A copy of that
-database is therefore a copy of almost your whole instance — C11 lists the two things it leaves out. The
+database is therefore a copy of almost your whole instance — C11 says what a bundle adds to it and what it still leaves out. The
 credentials in it are encrypted with `N8N_ENCRYPTION_KEY` from `compose/.env`: 64 characters that `make init`
 generated once, shared by every n8n process.
 
@@ -1416,24 +1416,39 @@ carries rclone's own last three lines (`compose/backup/backup.sh`).
 
 ### C11. What is not in a backup
 
-**What it is and why you care.** The bundle carries the database and the key. It does **not** carry two Docker
-volumes: `n8n_files` (`/home/node/.n8n-files`, the only tree the Read/Write Files node may touch) and `n8n_data`
-(n8n's settings file, the event log, installed community packages) — `compose/docker-compose.yml`,
-`n8n-kit-HANDOFF.md`.
+**What it is and why you care.** The bundle carries the database, the key, and — from bundle format 2 — the
+`n8n_files` tree as `n8n-files.tar.gz`. It does **not** carry `n8n_data` (n8n's settings file, the event log,
+installed community packages), and that is deliberate: community packages recover by themselves because the kit
+sets `N8N_REINSTALL_MISSING_PACKAGES: "true"`, so n8n reinstalls every package the restored database lists, and
+the settings file is the one thing a restore actively *deletes* so n8n writes a fresh one for the key in `.env`.
 
-**Do this.** Community packages recover by themselves — the kit sets `N8N_REINSTALL_MISSING_PACKAGES: "true"`
-(`compose/docker-compose.yml`), so n8n reinstalls every package the database lists. Files do not, so check
-whether anything is in that volume at all. The volume name is your project name plus `_n8n_files`
-(`COMPOSE_PROJECT_NAME` in `compose/.env`, default `n8nkit`), the mount is read-only, and the listing works
-because `make up` leaves that directory owned by n8n's uid at mode 0755:
+**Why the files member can be absent anyway.** It is skippable on purpose: over `BACKUP_FILES_MAX_MB` (128 by
+default), short of scratch space in the RAM-backed tmpfs, or unreadable, and it is left out — with a warning, and
+a reason recorded in the manifest. The database is what a backup exists for, and a large or busy files tree must
+not turn a working nightly backup into a failing one. `BACKUP_INCLUDE_FILES=false` turns it off entirely.
+
+**Do this.** Ask a bundle what it actually contains, rather than assuming:
+
+```bash
+make -C compose backups
+```
 
 ```bash
 docker run --rm -v n8nkit_n8n_files:/files:ro n8nkit/backup:local ls -la /files
 ```
 
-**What you should see.** An empty listing is the comfortable answer: nothing outside Postgres is at risk. A
-non-empty one is a decision you now make consciously — copy that volume separately, because putting it in the
-bundle is a recorded future change, not something that works today.
+**What you should see.** An empty volume is the comfortable answer — nothing outside Postgres is at risk, and the
+manifest will say `included: false` with the reason `the volume holds no files`. With files in it, a bundle's
+manifest carries `n8n_files: {included: true, bytes: …}` and a sha256 for the member like any other.
+
+**What it proves.** That you know which of your bundles carry the tree and which do not — and `make doctor` tells
+you when the newest one skipped it.
+
+**If it goes wrong.** Two limits worth knowing before you rely on this. The tree is tarred **while n8n runs**, so a
+file a workflow is halfway through writing is captured halfway through; the database dump is consistent, this is
+not. And a restore **merges**: same-named files are overwritten by the bundle's copy, files the bundle does not
+have are left alone. Nothing deletes your files on the strength of an archive, which means a restored tree can be
+older in some places than others. [Backup and restore](operations/backup-restore.md) has both in full.
 
 **If it goes wrong.** `make -C compose up` builds the backup image when it does not exist yet
 (`compose/Makefile:84`) and creates the volume on the first start. An empty listing of a volume you know holds

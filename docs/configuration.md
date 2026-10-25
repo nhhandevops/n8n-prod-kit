@@ -233,6 +233,8 @@ process, and `make doctor` fails on it.
 | `BACKUP_RETENTION_MONTHLY_DAYS` | `365` | the same for `monthly/` | as above |
 | `BACKUP_RETENTION_MIN_KEEP` | `7` | newest bundles retention never deletes at any age, so a clock that jumps ahead cannot empty a remote | rarely |
 | `BACKUP_NOTIFY_SUCCESS` | `false` | Telegram message for successful runs too; failures are always sent | you want daily confirmation |
+| `BACKUP_INCLUDE_FILES` | `true` | put the `n8n_files` tree in each bundle as `n8n-files.tar.gz`; skipped with a warning rather than failing the backup | you back that volume up elsewhere |
+| `BACKUP_FILES_MAX_MB` | `128` | size ceiling for that tree; over it, the member is left out and the manifest records why | your workflows write more than that — raise `BACKUP_TMPFS_SIZE` and `MEM_LIMIT_BACKUP` too |
 | `BACKUP_TMPFS_SIZE` | `1g` | RAM scratch for the dump, the bundle and the restore-test database — about 3× the dump | the dump grows; raise `MEM_LIMIT_BACKUP` with it |
 | `RESTORE_TEST_MAX_AGE_HOURS` | `26` | the restore test fails when a target's newest bundle is older | a non-daily schedule |
 | `RCLONE_CONFIG_R2_*` | empty | R2 access key, secret, endpoint for an `r2:` target | you back up to R2 |

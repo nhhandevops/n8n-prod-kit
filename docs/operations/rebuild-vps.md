@@ -21,8 +21,7 @@ do things in, not a second explanation of them.
 If the recovery key only ever existed on the lost host, its backups cannot be decrypted anywhere else. That is the
 whole reason `make detach-recovery-key` exists, and why a backup without the recovery recipient is refused by default.
 
-**What the bundle does not carry**, and you therefore rebuild by hand: the `n8n_files` volume (files written by the
-Read/Write Files node), Caddy's certificates (ACME simply issues new ones), Grafana's and Uptime Kuma's own databases (Grafana's dashboards, alert rules and contact point are provisioned from files, and `make up` creates Kuma's admin again, but Kuma's monitors have to be re-added),
+**What the bundle does not carry**, and you therefore rebuild by hand: Caddy's certificates (ACME simply issues new ones), Grafana's and Uptime Kuma's own databases (Grafana's dashboards, alert rules and contact point are provisioned from files, and `make up` creates Kuma's admin again, but Kuma's monitors have to be re-added),
 and your `.env` — new secrets are generated below. Community packages come back on their own: the kit sets
 `N8N_REINSTALL_MISSING_PACKAGES=true`, so n8n reinstalls every package the restored database lists.
 
