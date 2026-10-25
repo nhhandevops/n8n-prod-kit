@@ -8,6 +8,7 @@ in this table — every row so far used an internal CA.
 
 | Kit | n8n (+ runners) | Caddy | Postgres | Valkey | Tested on | Date | Result |
 |---|---|---|---|---|---|---|---|
+| 0.1.1-dev | 2.44.6 | 2.11.7 | 18.6 | 9.1.2 | GitHub Actions ubuntu-24.04 (ports 80/443, internal CA, mirrored images) | 2026-10-25 | lint ✅ · smoke ✅ ×2 + restore · upgrade drill ✅ (2.42.7 → pin: one migration, forced failure, restore-path rollback) · docs build ✅ · **no real-host run yet** |
 | 0.1.0 | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | Ubuntu 24.04.4 VM (Docker 29.9.0, Compose 5.6.0; ports 80/443, internal CA, 2 vCPU / 7.7 GB) | 2026-10-10 | smoke ✅ 9/9 · chaos ✅ worker/redis/main · loadtest ✅ (200-job burst in 14 s, ~850 exec/min) · bootstrap ✅ |
 | 0.1.0 | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | GitHub Actions ubuntu-24.04 (ports 80/443, internal CA, mirrored images) | 2026-10-10 | lint ✅ · smoke ✅ ×2 + restore · upgrade drill ✅ (2.41.7 → pin, forced failure, rollback) · docs build ✅ |
 | 0.1.0-dev | 2.42.4 | 2.11.7 | 18.6 | 9.1.2 | Ubuntu 26.04 VM (Docker 29.5, Compose 5.1; ports 8080/8443, internal CA) | 2026-10-08 | smoke ✅ · bootstrap ✅ (Ubuntu 24.04/26.04, Debian 13, Rocky 9/10, Alma 9) |

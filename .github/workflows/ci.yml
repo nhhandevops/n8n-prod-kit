@@ -95,14 +95,20 @@ jobs:
 
   # TC-014 / TC-015 on a fresh runner: the stack starts on the previous n8n minor, then make upgrade (verification
   # failed on purpose) -> make rollback (restores the pre-upgrade backup) -> make upgrade N8N_VERSION=<pin>.
-  # UPGRADE_FROM is pinned, not derived: when versions.env moves to a new minor, move it to the newest stable patch of
-  # the minor before (there must be migrations in between — the drill checks).
+  # UPGRADE_FROM is pinned, not derived: when versions.env moves to a new minor, move it to the newest stable version
+  # that still has at least one database migration between it and the pin — the drill needs one, because the rollback
+  # it exercises is the restore path, which is only taken when a migration ran.
+  # "Newest patch of the previous minor" is the usual answer but NOT always: a minor can ship no migrations at all.
+  # 2.44 is such a minor, so for the 2.44.6 pin this is 2.42.7 and not 2.43.7. Check before changing it, by diffing
+  # the migration directory at the two tags:
+  #   gh api "repos/n8n-io/n8n/contents/packages/@n8n/db/src/migrations/postgresdb?ref=n8n@<from>" --jq '.[].name'
+  # against the same call for the pin, and make sure the pin has more.
   upgrade:
     needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      UPGRADE_FROM: 2.41.7
+      UPGRADE_FROM: 2.42.7
       UPGRADE_TIMEOUT: "900"   # CI migrates in seconds; a hang must end well inside timeout-minutes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
