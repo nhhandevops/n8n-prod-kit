@@ -4,9 +4,13 @@
 #   1. the dev domain goes into /etc/hosts (n8n.localtest.me resolves publicly too; this removes the DNS dependency)
 #   2. images are pulled from registries without Docker Hub's anonymous pull quota (shared runner IPs hit HTTP 429).
 #      The digests in compose/versions.env stay authoritative — the mirrors serve the SAME manifests (verified
-#      2026-10-08: ghcr.io/n8n-io/{n8n,runners}, ghcr.io/valkey-io/valkey, public.ecr.aws/docker/library/{caddy,postgres},
-#      mirror.gcr.io/grafana/{grafana,loki,alloy}), so a mirror that ever diverged would fail the pull instead of running
-#      a different image.
+#      2026-10-08: ghcr.io/n8n-io/{n8n,runners}, ghcr.io/valkey-io/valkey, mirror.gcr.io/grafana/{grafana,loki,alloy};
+#      2026-10-26: mirror.gcr.io/library/{caddy,postgres}), so a mirror that ever diverged would fail the pull instead
+#      of running a different image.
+#      caddy and postgres came from public.ecr.aws/docker/library until 2026-10-26. ECR Public has its own anonymous
+#      limit — a DATA limit, not a pull count — and it is shared across GitHub's runner IPs, so `toomanyrequests:
+#      Data limit exceeded` kept failing jobs on changes that had nothing to do with it (bug log 2026-10-13 and
+#      2026-10-26: four PRs stuck for a day, re-runs included). They now come from the same mirror as Grafana's.
 #   3. the monitoring + kuma profiles are switched on, so CI tests the whole kit (smoke 09)
 # Used by .github/workflows/ci.yml (smoke job) and weekly-latest-n8n.yml. Needs passwordless sudo.
 set -euo pipefail
@@ -29,8 +33,8 @@ cat >>compose/.env <<'ENV'
 N8N_IMAGE=ghcr.io/n8n-io/n8n
 RUNNERS_IMAGE=ghcr.io/n8n-io/runners
 VALKEY_IMAGE=ghcr.io/valkey-io/valkey
-CADDY_IMAGE=public.ecr.aws/docker/library/caddy
-POSTGRES_IMAGE=public.ecr.aws/docker/library/postgres
+CADDY_IMAGE=mirror.gcr.io/library/caddy
+POSTGRES_IMAGE=mirror.gcr.io/library/postgres
 GRAFANA_IMAGE=mirror.gcr.io/grafana/grafana
 LOKI_IMAGE=mirror.gcr.io/grafana/loki
 ALLOY_IMAGE=mirror.gcr.io/grafana/alloy
