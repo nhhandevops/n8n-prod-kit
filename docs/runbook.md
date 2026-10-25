@@ -1068,12 +1068,49 @@ encrypts to, the command stops before printing the key at all and tells you to f
 shredded then either. Running it a second time is harmless: `no secrets/age-recovery-key.txt on this host — the
 recovery key is already detached`, exit 0.
 
-!!! warning
-    A recorded gap: **there is no supported way to rotate a detached recovery key** (`n8n-kit-HANDOFF.md`).
-    `make init FORCE=1` keeps a detached key's public half on purpose, since dropping it would make existing
-    bundles unrestorable. To replace one you work by hand: generate a new age key pair, put the new private half
-    in the password manager, edit `BACKUP_AGE_RECOVERY_PUBLIC_KEY` in `.env`, run `make -C compose up`, and keep
-    the old private key as long as bundles encrypted to it still matter.
+### C4b. Replacing the recovery key: `make rotate-recovery-key`
+
+**What it is.** The other half of C4. A recovery key sometimes has to be replaced — it was exposed in a
+screenshot, or lost, or it is simply old — and `make init FORCE=1` deliberately will not do it: it keeps a
+detached key's public half, because dropping that would leave every existing bundle openable only with this
+host's key.
+
+```bash
+make -C compose rotate-recovery-key
+```
+
+**Why you care.** Read this sentence twice, because it is the whole shape of the problem: **rotation changes
+which key future bundles are encrypted to, and cannot touch the bundles you already have.** Those keep opening
+with the old recovery key (and with this host's key). So the old password-manager entry stays useful until every
+bundle made before the rotation has aged out of `BACKUP_RETENTION_DAILY_DAYS` / `_MONTHLY_DAYS`. The command
+counts those bundles for you and says so.
+
+**What you should see.** A red banner telling you what will and will not change, with that bundle count, and a
+prompt wanting the word `rotate`. Then the new key once, the paste-back check from C4 — same idea, caught while
+the original still exists — and finally the five next steps it prints, which matter in order: `make up` (the
+sidecar keeps the old recipient until it is recreated), `make backup-now`, open the new bundle with the new key
+to prove it works, `make detach-recovery-key`, `make doctor`.
+
+**What it proves.** That the key in your password manager is the key new backups are encrypted to — checked
+before `.env` was touched, not after.
+
+**If it goes wrong.** Every failure before the paste-back leaves `.env` **unchanged** and the new key file on
+disk, so nothing is lost and you simply run it again. If a recovery key file was still on this host (the
+not-yet-detached case) it is renamed to `secrets/age-recovery-key.replaced-<timestamp>.txt` rather than
+destroyed — it is the key your existing bundles need.
+
+!!! danger
+    A leaked recovery key is worse than it looks, and rotating is only half the fix. **Every bundle it can open
+    carries a copy of `N8N_ENCRYPTION_KEY`** in its `key-bundle.env`, so whoever has that key and one old bundle
+    has your credentials. Rotating the recovery key stops them reading *new* backups; it does nothing about the
+    old ones. The complete answer is to rotate `N8N_ENCRYPTION_KEY` too, which is a different and much larger
+    job ([Backup and restore](operations/backup-restore.md)), and to get the old bundles deleted.
+
+!!! tip
+    `KEEP_OLD=1` keeps the old public key as an extra recipient on new bundles. That is for a key you **lost**,
+    where an old key is no threat and one more way in costs nothing. Never use it for a key that leaked — it
+    would encrypt tomorrow's backup to the key you are running away from. `make doctor` warns while it is set,
+    and `make preflight` refuses a malformed one.
 
 ### C5. `make backup-now` — take one and look at it
 

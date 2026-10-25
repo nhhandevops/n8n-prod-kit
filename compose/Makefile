@@ -32,7 +32,7 @@ COMPOSE := docker compose --project-directory $(KIT_DIR) --env-file $(KIT_DIR)/v
 # Variables given on the command line (make init DOMAIN=…) are passed to the scripts as environment — but only when
 # set, so a script's `${VAR:-default}` still sees them as unset otherwise.
 PASS_VARS := DOMAIN ACME_EMAIL HTTP_PORT HTTPS_PORT FORCE CI YES WORKER_REPLICAS SERVICE SINCE NO_COLOR \
-             BACKUP FROM ADOPT_KEY AGE_KEY SKIP_SAFETY_BACKUP \
+             BACKUP FROM ADOPT_KEY AGE_KEY SKIP_SAFETY_BACKUP KEEP_OLD \
              RESUME SMOKE_FAIL ALLOW_MAJOR ALLOW_PRERELEASE FORCE_VERSION PIN_ONLY ROLLBACK_MODE ROLLBACK_CONFIRM \
              UPGRADE_TIMEOUT UPGRADE_DRAIN_TIMEOUT UPGRADE_START_TIMEOUT
 $(foreach v,$(PASS_VARS),$(if $(value $(v)),$(eval export $(v))))
@@ -50,7 +50,7 @@ SINCE ?= 10m
 with_retry = n=0; until $(1); do n=$$((n + 1)); if [[ $$n -ge 3 ]]; then echo "$(2) failed 3 times (registry rate limit? network?) — wait a few minutes and re-run" >&2; exit 1; fi; echo "$(2) failed — retrying in $$((n * 20)) s" >&2; sleep $$((n * 20)); done
 
 .PHONY: help init pin render preflight config up down restart pull ps logs status smoke doctor scale-workers kuma-setup \
-        backup-now backups restore restore-clean restore-test detach-recovery-key upgrade rollback loadtest chaos dev-ca trust-ca lint version \
+        backup-now backups restore restore-clean restore-test detach-recovery-key rotate-recovery-key upgrade rollback loadtest chaos dev-ca trust-ca lint version \
         env-keys clean
 
 help: ## Show this help
@@ -138,6 +138,9 @@ restore-test: ## Verify every target's newest backup, restore the newest into a 
 
 detach-recovery-key: ## Print the offline recovery key once, then shred it from this host
 	@$(KIT_DIR)/scripts/detach-recovery-key.sh
+
+rotate-recovery-key: ## Replace the offline recovery key (new pair, verified, swapped in .env): make rotate-recovery-key [KEEP_OLD=1]
+	@$(KIT_DIR)/scripts/rotate-recovery-key.sh
 
 # --- upgrades ----------------------------------------------------------------------------------------------------------
 

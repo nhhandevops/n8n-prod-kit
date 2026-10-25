@@ -34,7 +34,7 @@ Instructions for AI coding agents (Claude Code, Cursor, …) and a cheat-sheet f
 | `make lint` | shellcheck + hadolint + yamllint over tracked files, then `compose/` lint (compose config, caddy validate x12) |
 | `make bootstrap-test` | run `scripts/bootstrap-host.sh` inside Ubuntu/Debian/Rocky/Alma containers (~5–15 min) |
 
-The Compose kit's targets live in `compose/Makefile` — `make -C compose help`. All shipped: `init`, `pin`, `render`, `preflight`, `config`, `up`, `down`, `restart`, `pull`, `ps`, `logs`, `status`, `smoke`, `doctor`, `scale-workers`, `kuma-setup`, `backup-now`, `backups`, `restore`, `restore-clean`, `restore-test`, `detach-recovery-key`, `upgrade`, `rollback`, `loadtest`, `chaos`, `dev-ca`, `trust-ca`, `lint`, `version`, `env-keys`, `clean`.
+The Compose kit's targets live in `compose/Makefile` — `make -C compose help`. All shipped: `init`, `pin`, `render`, `preflight`, `config`, `up`, `down`, `restart`, `pull`, `ps`, `logs`, `status`, `smoke`, `doctor`, `scale-workers`, `kuma-setup`, `backup-now`, `backups`, `restore`, `restore-clean`, `restore-test`, `detach-recovery-key`, `rotate-recovery-key`, `upgrade`, `rollback`, `loadtest`, `chaos`, `dev-ca`, `trust-ca`, `lint`, `version`, `env-keys`, `clean`.
 
 `make chaos SCENARIO=worker|redis|main` kills or stops containers on purpose. Never run it against a stack you did not create for testing, and read `docs/operations/chaos-drills.md` first — it records what a killed worker actually costs (in-flight executions are lost, not retried) and why `docker kill` does not exercise the restart policy.
 

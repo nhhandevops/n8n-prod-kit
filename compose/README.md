@@ -47,6 +47,7 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make restore-clean` | empty the work volume after an interrupted restore (never needed normally) |
 | `make restore-test` | verify every target's newest backup, restore the newest into a scratch Postgres; weekly from cron |
 | `make detach-recovery-key` | move the offline recovery key into your password manager (paste it back to prove the copy, then shreds) |
+| `make rotate-recovery-key [KEEP_OLD=1]` | replace the offline recovery key: new pair, paste-back check, swapped into `.env`; bundles that already exist still need the OLD key, and it says how many there are |
 | `make upgrade [N8N_VERSION=2.42.6]` | upgrade n8n + runners: pull first, stop and drain, pre-upgrade backup, migrations by n8n-main alone, verify; without a version it applies the pin a `git pull` brought (`make up` refuses to) — see `docs/operations/upgrade-rollback.md` |
 | `make rollback` | undo the last upgrade: images only when no migration ran (no data lost), else the pre-upgrade backup is restored first |
 | `make pin [N8N_VERSION=x]` | resolve image digests into `versions.env` (on a running install, change n8n's version with `make upgrade`) |

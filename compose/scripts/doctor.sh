@@ -57,6 +57,24 @@ if grep -qE '^[[:space:]]*N8N_ENDPOINT_[A-Z_]+=' .env; then
 else
   ok "no N8N_ENDPOINT_* overrides (Caddyfile routing matches n8n's defaults)"
 fi
+rotated_at="$(env_get BACKUP_AGE_RECOVERY_ROTATED_AT)"
+prev_recovery="$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS)"
+if [[ -n "${rotated_at}" ]]; then
+  if [[ -n "${prev_recovery}" ]]; then
+    flag_warn "recovery key rotated ${rotated_at}, and the PREVIOUS key is still a recipient (KEEP_OLD) — clear BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS and make up once the new key is trusted; until then new bundles also open with the key you replaced"
+  else
+    ok "recovery key rotated ${rotated_at} — bundles older than that open only with the PREVIOUS key (keep that password-manager entry while they are inside retention)"
+  fi
+fi
+# Rotating .env is not enough: the sidecar holds its environment from when it was created, so a rotation without
+# make up leaves tonight's backup encrypted to the key that was just replaced. This is the only place that shows it.
+env_recovery="$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)"
+if [[ -n "${env_recovery}" && "$(service_health backup)" == "healthy" ]]; then
+  running_recovery="$(compose exec -T backup printenv BACKUP_AGE_RECOVERY_PUBLIC_KEY 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ -n "${running_recovery}" && "${running_recovery}" != "${env_recovery}" ]]; then
+    flag_fail "the backup sidecar is running with a different recovery key than .env (${running_recovery:0:12}… vs ${env_recovery:0:12}…) — the next scheduled backup would be encrypted to the old one: make up"
+  fi
+fi
 if [[ -f secrets/age-recovery-key.txt ]]; then
   key_age_days=$(( ( $(date +%s) - $(stat -c %Y secrets/age-recovery-key.txt) ) / 86400 ))
   recovery_pub="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint age-keygen \

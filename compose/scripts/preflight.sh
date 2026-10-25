@@ -111,6 +111,16 @@ fi
 if [[ -z "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" && "$(env_get BACKUP_ALLOW_SINGLE_RECIPIENT)" != "true" ]]; then
   flag_fail "BACKUP_AGE_RECOVERY_PUBLIC_KEY is empty — backups would only open with this host's key, which is lost with the host; put the recovery public key back (age-keygen -y <recovery key file>) or set BACKUP_ALLOW_SINGLE_RECIPIENT=true"
 fi
+prev_recovery="$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS)"
+if [[ -n "${prev_recovery}" ]]; then
+  if [[ ! "${prev_recovery}" =~ ^age1[0-9a-z]{20,}$ ]]; then
+    flag_fail "BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS is not an age public key ('${prev_recovery}') — every backup would fail at the age call: fix it or clear it"
+  elif [[ "${prev_recovery}" == "$(env_get BACKUP_AGE_RECOVERY_PUBLIC_KEY)" ]]; then
+    flag_fail "BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS is the same key as BACKUP_AGE_RECOVERY_PUBLIC_KEY — clear it (it exists to carry the key that was REPLACED)"
+  else
+    warn "backups also go to the PREVIOUS recovery key (KEEP_OLD rotation) — clear BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS once the new key is trusted"
+  fi
+fi
 backup_remotes="$(env_get BACKUP_REMOTES)"
 for remote in ${backup_remotes}; do
   remote="${remote%/}"

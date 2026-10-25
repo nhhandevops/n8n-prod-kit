@@ -108,6 +108,10 @@ recipients() {   # age -r arguments for every configured public key
   local -a args=()
   [[ -n "${BACKUP_AGE_PUBLIC_KEY:-}" ]] && args+=(-r "${BACKUP_AGE_PUBLIC_KEY}")
   [[ -n "${BACKUP_AGE_RECOVERY_PUBLIC_KEY:-}" ]] && args+=(-r "${BACKUP_AGE_RECOVERY_PUBLIC_KEY}")
+  # Set only by `make rotate-recovery-key KEEP_OLD=1`: the recovery key that was just replaced, kept as a
+  # recipient so a verified old key still opens new bundles while the new one is being trusted. Deliberately
+  # empty after a plain rotation — a key that leaked must not receive new backups.
+  [[ -n "${BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS:-}" ]] && args+=(-r "${BACKUP_AGE_RECOVERY_PUBLIC_KEY_PREVIOUS}")
   if (( ${#args[@]} == 0 )); then
     die "BACKUP_AGE_PUBLIC_KEY is empty — run make init (it generates the age keys)"
   fi

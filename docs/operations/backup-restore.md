@@ -70,6 +70,7 @@ pg_dump, a full tmpfs, encryption, an upload, the monthly copy — sets `backup_
 | `make restore-test [BACKUP=name]` | verify every target's newest bundle and restore the newest into a scratch Postgres — never touches the live DB |
 | `make doctor` | shows the age and last status of the backups per target and the last restore test |
 | `make detach-recovery-key` | prints the recovery key, makes you paste it back from the password manager, then shreds it from the host |
+| `make rotate-recovery-key` | replaces the recovery key: generates a new pair, verifies your copy of it, swaps the public half into `.env`. `KEEP_OLD=1` also keeps the previous key as a recipient on new bundles — for a key you lost, never one that leaked |
 
 The restore test also runs every Sunday 03:00 (`RESTORE_TEST_SCHEDULE`). Per target it downloads, decrypts and
 sha256-checks the newest bundle and fails when it is older than `RESTORE_TEST_MAX_AGE_HOURS` (26). The newest bundle
@@ -153,6 +154,26 @@ age gives **confidentiality, not origin**: anyone who can write to a backup targ
 - keeps the recovery key off the host (`make detach-recovery-key`).
 
 Scope the bucket tokens to the backup prefix, and keep the external disk away from other users.
+
+### Replacing a recovery key
+
+`make rotate-recovery-key` generates a new pair, makes you paste the new private half back from your password
+manager before `.env` is touched, swaps the public half in, and records `BACKUP_AGE_RECOVERY_ROTATED_AT`. Then
+`make up` — the backup sidecar holds the recipients it was created with, so until it is recreated the next
+scheduled backup still goes to the key you just replaced. `make doctor` fails if the running sidecar and `.env`
+disagree, which is the only place that trap is visible.
+
+What rotation cannot do is re-encrypt the bundles you already have. Those open with the **old** recovery key, so
+keep its password-manager entry until every bundle made before the rotation has left retention; the command counts
+them for you.
+
+If the old key leaked, rotating is half a fix. Every bundle that key opens carries a copy of `N8N_ENCRYPTION_KEY`
+in its `key-bundle.env`, so whoever holds the key and one old bundle holds your credentials. Rotating
+`N8N_ENCRYPTION_KEY` itself is a separate and much larger job — n8n re-encrypts credentials with the key it is
+given, so it means exporting credentials, changing the key, re-importing, and taking a fresh backup — and the old
+bundles should be deleted rather than merely left to age out. `KEEP_OLD=1` exists for the opposite case, a key you
+*lost*: it keeps the previous public key as an extra recipient on new bundles, which is harmless there and wrong
+for a leak.
 
 Known limitation: n8n itself connects as the Postgres superuser the image creates (`POSTGRES_USER`), so a live restore
 runs as superuser. That is safe only after the key check, or after your comparison under `ADOPT_KEY`. A dedicated
