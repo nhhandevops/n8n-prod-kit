@@ -158,8 +158,8 @@ worker dies ([Chaos drills](operations/chaos-drills.md)).
 | `EXECUTIONS_DATA_SAVE_ON_ERROR` | `all` | the same for failed runs | rarely: this is your evidence |
 | `EXECUTIONS_DATA_SAVE_ON_PROGRESS` | `false` | persist after every node — survives a crash mid-run, costs writes | partial progress matters |
 | `EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS` | `true` | keep editor test runs | heavy editor use, small disk |
-| `EXECUTIONS_TIMEOUT` | `-1` | default per-workflow timeout in seconds, `-1` = none | you want a floor under runaways |
-| `EXECUTIONS_TIMEOUT_MAX` | `3600` | highest timeout a workflow may set itself | a workflow needs longer |
+| `EXECUTIONS_TIMEOUT` | `3600` | the limit in seconds every workflow gets unless it sets its own; `-1` = none | a workflow legitimately runs longer than an hour — raise the max too |
+| `EXECUTIONS_TIMEOUT_MAX` | `3600` | highest timeout a workflow may set for itself | you want one workflow to be allowed longer than the rest |
 | `N8N_CONCURRENCY_PRODUCTION_LIMIT` | `-1` | global production cap | leave it: any other value overrides `--concurrency` on **every** worker |
 | `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | seconds n8n waits for running executions on SIGTERM | see below |
 | `N8N_STOP_GRACE_PERIOD` | `40` | seconds Docker waits before it kills an n8n container; at least the timeout above + 10 | see below |

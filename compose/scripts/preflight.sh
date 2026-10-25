@@ -78,6 +78,13 @@ else
   stop_window="$(env_get N8N_STOP_GRACE_PERIOD)"
   ok "n8n stop windows: n8n drains ${graceful:-30} s, Docker waits ${stop_window:-40} s"
 fi
+# A default timeout above the per-workflow ceiling is contradictory: a workflow could not even keep the limit it
+# is handed. Not fatal — n8n is left to resolve it — so this warns rather than refusing the start.
+exec_timeout="$(env_get EXECUTIONS_TIMEOUT)"; exec_timeout="${exec_timeout:--1}"
+exec_timeout_max="$(env_get EXECUTIONS_TIMEOUT_MAX)"; exec_timeout_max="${exec_timeout_max:-3600}"
+if [[ "${exec_timeout}" =~ ^[0-9]+$ && "${exec_timeout_max}" =~ ^[0-9]+$ ]] && (( exec_timeout > exec_timeout_max )); then
+  warn "EXECUTIONS_TIMEOUT ${exec_timeout} s is above EXECUTIONS_TIMEOUT_MAX ${exec_timeout_max} s — raise the max to at least the timeout, or workflows cannot keep the limit they are given"
+fi
 if [[ "${http_port}" == "${https_port}" ]]; then
   flag_fail "HTTP_PORT and HTTPS_PORT are both ${http_port} — they must differ"
 fi

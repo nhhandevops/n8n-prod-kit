@@ -63,7 +63,7 @@ setting, and [Configuration](docs/configuration.md) explains the reasoning.
 | `UI_PROTECT` | `off` | `on`, with `UI_ALLOW_CIDR` and `UI_BASIC_AUTH_USER`/`_HASH` | otherwise the editor — and the credential store behind it — is one password away from the internet. Webhooks, forms, MCP and the health routes stay open by design |
 | `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | above your p99 execution duration (`make doctor` prints it) | this is the window a worker gets to finish before it is cut. Work still running past it dies as `crashed` and **is not retried** (§8 risk 1) |
 | `N8N_STOP_GRACE_PERIOD` | `40` | the timeout above + at least 10 | Docker's window before it SIGKILLs the container. Shorter than the timeout + 10 and the timeout is a lie — `make preflight` refuses it |
-| `EXECUTIONS_TIMEOUT` | `-1` (no limit) | a real number of seconds | one stuck execution otherwise holds a concurrency slot for ever |
+| `EXECUTIONS_TIMEOUT` | `3600` (one hour, since 2026-10-25) | your own ceiling, from the p99 `make doctor` measures | one stuck execution otherwise holds a worker concurrency slot until that worker restarts. An hour is the kit default, not an answer for your workload |
 | `COMPOSE_PROFILES` | empty | `monitoring,kuma` | you cannot operate what you cannot see. Needs roughly 4 vCPU / 8 GB — size the host for it, do not bolt it on later |
 | `KUMA_ENABLED` | `off` | `on`, plus a public DNS record for `kuma.DOMAIN` | the outside view: it notices what an internal check cannot |
 | `ALERT_TELEGRAM_BOT_TOKEN` / `_CHAT_ID` | empty | a **fresh** bot from @BotFather | the token used while building the monitoring profile was pasted into a build chat; revoke it with `/revoke` and issue a new one for production |
@@ -285,7 +285,7 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 | D-8 | Host hardening: firewall to 80/443/udp443 plus SSH, keys only, unattended upgrades | 5 | 4 | 2 | 2 | **20** | blocker |
 | D-9 | Route A: real Let's Encrypt on a real public host (`acme-staging` first) | 4 | 5 | 2 | 2 | **20** | blocker |
 | D-10 | If production is RHEL-family: SELinux-enforcing plus firewalld run on real hardware | 4 | 5 | 2 | 2 | **20** | blocker (conditional) |
-| D-11 | `EXECUTIONS_TIMEOUT` from `-1` to a real ceiling | 3 | 3 | 2 | 1 | **18** | next |
+| D-11 | ~~`EXECUTIONS_TIMEOUT` from `-1` to a real ceiling~~ — **kit side done 2026-10-25**: the shipped default is 3600 s, `make doctor` warns when it is `-1` or at/below the measured p99, and preflight warns when it exceeds `EXECUTIONS_TIMEOUT_MAX`. What remains is per-host: existing `.env` files keep `-1` (including the dev VM), and production picks its own number | 3 | 3 | 2 | 1 | **18** | next (per host) |
 | D-12 | An Error Workflow on every workflow whose failure must not be silent — the only hook that survives a killed worker | 4 | 3 | 3 | 2 | **18** | next |
 | D-13 | TC-025: three outside testers walk the quickstart | 3 | 5 | 3 | 3 | **15** | next (and an M0 gate) |
 | D-14 | ~~Move the n8n pin to the current stable release (CI's upgrade drill tests the move)~~ — **done 2026-10-12** (pin 2.42.6, PR #11) and again **2026-10-25** (pin 2.44.6): 24 migrations in the span, so this one is a restore-path rollback, not images-only. The dev stack still runs 2.42.6 — `make -C compose upgrade` applies the new pin, and `make up` refuses to | 2 | 3 | 2 | 1 | **12** | done (recurs) |
