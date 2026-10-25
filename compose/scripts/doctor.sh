@@ -284,6 +284,20 @@ if [[ "$(service_health postgres)" == "healthy" ]]; then
   else
     ok "execution times: p99 ${p99_s} s over the last 7 days (${p99_n} runs) < N8N_GRACEFUL_SHUTDOWN_TIMEOUT ${graceful} s"
   fi
+  # EXECUTIONS_TIMEOUT is the only thing that ends a hung execution: n8n never retries or cancels one by itself,
+  # so without a ceiling it holds a worker concurrency slot until that worker restarts. Compose defaults the key
+  # to -1 when it is absent from .env, so an empty read is read as -1 here too.
+  exec_timeout="$(env_get EXECUTIONS_TIMEOUT)"; exec_timeout="${exec_timeout:--1}"
+  exec_timeout_max="$(env_get EXECUTIONS_TIMEOUT_MAX)"; exec_timeout_max="${exec_timeout_max:-3600}"
+  if [[ "${exec_timeout}" == "-1" ]]; then
+    flag_warn "executions: no time limit (EXECUTIONS_TIMEOUT=-1) — a run that hangs holds a worker slot until that worker restarts, and n8n ends it for you only if this is set: put a ceiling above your p99 in .env (3600 is the kit default), then make up"
+  elif [[ ! "${exec_timeout}" =~ ^[0-9]+$ ]]; then
+    flag_warn "executions: EXECUTIONS_TIMEOUT='${exec_timeout}' is neither -1 nor a number of seconds — fix it in .env, then make up"
+  elif [[ "${p99_n}" =~ ^[0-9]+$ ]] && (( p99_n > 0 )) && [[ "${p99_s}" =~ ^[0-9]+$ ]] && (( exec_timeout <= p99_s )); then
+    flag_warn "executions: EXECUTIONS_TIMEOUT ${exec_timeout} s is at or below the measured p99 ${p99_s} s — it is cutting work that normally finishes: raise it (and EXECUTIONS_TIMEOUT_MAX to at least the same), then make up"
+  else
+    ok "executions: time limit ${exec_timeout} s, workflows may set up to ${exec_timeout_max} s"
+  fi
 else
   flag_warn "postgres not healthy — database checks skipped"
 fi
