@@ -41,9 +41,12 @@ if [[ "${file_pub}" != "${expected}" ]]; then
   die "${file} does not belong to BACKUP_AGE_RECOVERY_PUBLIC_KEY in .env (${expected:-empty}) — fix .env first (make doctor shows the right value); nothing was shredded"
 fi
 
-banner_red "RECOVERY KEY — copy the AGE-SECRET-KEY-1… line into your password manager (entry n8nkit/age-recovery-key)" "" \
-  "$(grep -E '^AGE-SECRET-KEY-' "${file}")" "" "Without it, backups cannot be restored on another host once this one is lost." \
-  "This screen shows the secret itself: never copy it into a chat, ticket or screenshot."
+banner_red "RECOVERY KEY — it is in this file, at mode 600:" "" \
+  "    ${KIT_DIR}/${file}" "" \
+  "Open it, copy the AGE-SECRET-KEY-1… line into your password manager (entry n8nkit/age-recovery-key)," \
+  "then come back here. Without it, backups cannot be restored once this host is gone." "" \
+  "The key is deliberately NOT printed on this screen: a terminal keeps scrollback, and a screen like this" \
+  "is how four separate secrets in this project's history ended up in a chat or a screenshot."
 printf 'Now paste the key back FROM the password manager (input hidden), then Enter: ' >&2
 pasted=''
 read -rs pasted </dev/tty || pasted=''
