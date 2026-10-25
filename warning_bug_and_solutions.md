@@ -2,6 +2,14 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-10-26 · ECR Public's data limit stalled four PRs for a day — CI's caddy and postgres now come from mirror.gcr.io
+
+- **Symptom:** PRs #28, #30, #31 and #32 all had `lint`, the docs build and SonarCloud green while `smoke` and `upgrade` failed, on changes that touch neither: ` caddy Error toomanyrequests: Data limit exceeded`, then the same for `postgres`, three pull attempts, `image pull failed 3 times (registry rate limit? network?)`. Re-running the failed jobs a day later failed the same way, so nothing was merging.
+- **Root cause:** `tests/ci/up.sh` pulled `caddy` and `postgres` from `public.ecr.aws/docker/library` to avoid Docker Hub's anonymous *pull-count* quota. ECR Public has its own anonymous limit, and it is a **data** limit rather than a pull count — a different thing from the Hub 429s the override was written for, and it is shared across GitHub's runner IPs, so the cap is other people's traffic as much as ours. This was already diagnosed on 2026-10-13, where the hardening was written down and not applied.
+- **How to verify:** the failing step is "Bring the stack up on it", and only the `public.ecr.aws` images appear in the error — every ghcr.io and mirror.gcr.io image pulls fine in the same job. That the mirror can serve them instead: `curl -sI -H 'Accept: application/vnd.oci.image.index.v1+json,…' https://mirror.gcr.io/v2/library/caddy/manifests/<CADDY_DIGEST>` answers **200** anonymously, and the same for `library/postgres` with `POSTGRES_DIGEST` — checked against the digests pinned in `compose/versions.env` (2026-10-26).
+- **Fix:** both images now come from `mirror.gcr.io/library/*`, the mirror the Grafana images already use. The digests in `versions.env` stay authoritative, so a mirror that ever diverged fails the pull instead of running a different image — the property that makes swapping registries safe at all.
+- **Date:** 2026-10-26
+
 ## 2026-10-13 · The R2 credentials went through the build chat in a screenshot
 
 - **Symptom:** reporting step 2a ("R2 bucket + token created"), An attached a screenshot of a spreadsheet holding the new R2 account id, API token, Access Key ID, Secret Access Key and endpoint — every credential of the off-site backup target, in the chat. The step list had said to save them in the password manager and type them into the VM at a hidden prompt.
