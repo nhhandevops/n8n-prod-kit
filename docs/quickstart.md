@@ -76,7 +76,7 @@ config` parses) and prints a red banner.
 | `N8N_ENCRYPTION_KEY` | `compose/.env` — reveal it with `grep '^N8N_ENCRYPTION_KEY=' .env` | Every credential stored in Postgres becomes unreadable. A backup without this key restores a database you cannot use. |
 | The recovery age key | `compose/secrets/age-recovery-key.txt` | Encrypted backups could then only be opened on this host — exactly the host a disaster takes away. |
 
-Put both in a password manager, then run `make detach-recovery-key`: it prints the recovery key once, makes
+Put both in a password manager, then run `make detach-recovery-key`: it names the file holding the recovery key — never printing the key itself, because a terminal keeps scrollback — makes
 you paste it back to prove the copy, and shreds it from the host. `make doctor` warns once it has sat here
 for more than seven days.
 

@@ -1026,7 +1026,7 @@ recipients — a backup only the lost host can open is not a recovery plan.
 ### C4. `make detach-recovery-key` — getting the recovery key off the host
 
 **What it is.** `make init` wrote the recovery private key to `compose/secrets/age-recovery-key.txt`. While it
-sits there it protects nothing: whoever takes the VM takes it too. This command prints it once, makes you paste
+sits there it protects nothing: whoever takes the VM takes it too. This command points you at the file holding it (never printing the key on screen), makes you paste
 it back *from* your password manager, checks the paste really is that key, then shreds the file.
 
 **Why you care.** Once that file is more than seven days old, `make -C compose doctor` warns, in these words:
@@ -1086,7 +1086,7 @@ bundle made before the rotation has aged out of `BACKUP_RETENTION_DAILY_DAYS` / 
 counts those bundles for you and says so.
 
 **What you should see.** A red banner telling you what will and will not change, with that bundle count, and a
-prompt wanting the word `rotate`. Then the new key once, the paste-back check from C4 — same idea, caught while
+prompt wanting the word `rotate`. Then the path of the file holding the new key — not the key itself — the paste-back check from C4, same idea, caught while
 the original still exists — and finally the five next steps it prints, which matter in order: `make up` (the
 sidecar keeps the old recipient until it is recreated), `make backup-now`, open the new bundle with the new key
 to prove it works, `make detach-recovery-key`, `make doctor`.
