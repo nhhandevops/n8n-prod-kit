@@ -861,7 +861,7 @@ files there ([Backup and restore](operations/backup-restore.md)).
 
 ### 7. `make smoke`: the automated version of everything you just did
 
-**What it is.** Nine scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
+**What it is.** Ten scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
 did by hand, and look inside containers only where the outside cannot see. They run in order and stop at the
 first failure, because later ones build on earlier ones (04 creates the workflow 05 inspects).
 
@@ -876,6 +876,7 @@ first failure, because later ones build on earlier ones (04 creates the workflow
 | `07-backup` | A backup lands encrypted on every `BACKUP_REMOTES` target, decrypts, its sha256s verify, its key bundle carries the running encryption key, and its metric is fresh. |
 | `08-restore-test` | Every remote's newest bundle verifies and the newest restores into a scratch Postgres inside the backup container. The live database is never touched. |
 | `09-monitoring` | The monitoring profile end to end. Skipped when `COMPOSE_PROFILES` does not list `monitoring`. |
+| `10-error-workflow` | A workflow that fails on purpose reaches an Error Workflow built from `templates/error-handler/`: unpublished it never runs, published it runs in mode `error` on a worker and the alert names the workflow, the node and the message ([Error workflows](operations/error-workflows.md)). |
 
 **Why you care.** Checking all of this by hand is most of an afternoon, and you would not do it again after every
 small change. The suite does it unattended and in the same order every time, which is what turns "it still works"
@@ -1891,7 +1892,9 @@ What the operator does about it, in order:
   set `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your slowest normal execution — `make doctor` prints the measured p99 — and
   `N8N_STOP_GRACE_PERIOD` at least 10 s above it (Docker's own window). `make upgrade` already drains this way.
 - Run two or more workers, so something is alive to sweep the orphans.
-- Give critical workflows an Error Workflow — the only automatic hook that still fires on this path.
+- Give critical workflows an Error Workflow — the only automatic hook that still fires on this path. The kit ships
+  one to import (`templates/error-handler/`); [Error workflows](operations/error-workflows.md) has the install
+  steps, what the handler receives, and the four ways to end up with one that never fires.
 - Make replays safe: key side effects on something from the input, so a re-run overwrites instead of duplicating.
 
 Second: **`docker kill` does not exercise the restart policy at all.** Docker cancels a container's restart manager

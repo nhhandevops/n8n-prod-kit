@@ -1,0 +1,52 @@
+{
+  "name": "Error handler - Telegram alert",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build one alert line out of the Error Trigger payload.\n//\n// The trigger hands over one of two shapes (verified against n8n 2.44.6,\n// dist/execution-lifecycle/execute-error-workflow.js):\n//   a failed execution   -> { execution: { id, url, error, lastNodeExecuted, mode, retryOf }, workflow: { id, name } }\n//   a trigger that could not even start -> { trigger: { error, mode }, workflow: { id, name } }\n// Both carry `workflow`, only one carries `execution`, so everything below is read defensively.\n//\n// No network and no process env in here: this kit blocks both in Code nodes\n// (N8N_BLOCK_ENV_ACCESS_IN_NODE=true, and the runner sandbox has no egress of its own).\n// Formatting happens here, sending happens in the next node.\nconst data = $input.first().json;\nconst execution = data.execution ?? {};\nconst trigger = data.trigger ?? {};\nconst workflow = data.workflow ?? {};\nconst error = execution.error ?? trigger.error ?? {};\nconst kind = data.execution ? 'execution' : 'trigger';\n\n// Telegram sends plain text here on purpose: no parse_mode, so an error message containing\n// _ * ` or [ cannot turn the alert itself into a 400 from the Telegram API.\nconst oneLine = (value, max) => String(value ?? '').replace(/\\s+/g, ' ').trim().slice(0, max);\nconst nodeName = oneLine(error.node?.name ?? error.node, 80) || oneLine(execution.lastNodeExecuted, 80);\nconst message = oneLine(error.message ?? error.description, 400) || 'no error message';\nconst workflowName = oneLine(workflow.name, 80) || 'unknown workflow';\n\nconst lines = [`n8n FAILED: ${workflowName}`];\nif (nodeName) lines.push(`node: ${nodeName}`);\nlines.push(`error: ${message}`);\nif (kind === 'execution') {\n  const retry = execution.retryOf ? ` (retry of ${execution.retryOf})` : '';\n  lines.push(`execution ${execution.id ?? '?'}${retry}, mode ${execution.mode ?? '?'}`);\n  if (execution.url) lines.push(String(execution.url));\n} else {\n  lines.push(`the trigger could not start (mode ${trigger.mode ?? '?'}) - nothing ran`);\n}\n\nreturn [\n  {\n    json: {\n      kind,\n      workflowId: workflow.id ?? null,\n      workflowName: workflow.name ?? null,\n      executionId: execution.id ?? null,\n      executionUrl: execution.url ?? null,\n      nodeName: nodeName || null,\n      errorName: error.name ?? null,\n      message,\n      mode: execution.mode ?? trigger.mode ?? null,\n      retryOf: execution.retryOf ?? null,\n      stack: oneLine(error.stack, 1000) || null,\n      text: lines.join('\\n'),\n    },\n  },\n];\n"
+      },
+      "name": "Build alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "PUT-YOUR-TELEGRAM-CHAT-ID-HERE",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "name": "Send alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [440, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Error Trigger": { "main": [[{ "node": "Build alert", "type": "main", "index": 0 }]] },
+    "Build alert": { "main": [[{ "node": "Send alert", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 120
+  }
+}
