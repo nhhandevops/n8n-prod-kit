@@ -122,7 +122,7 @@ Two things must leave the host:
 
 1. **`N8N_ENCRYPTION_KEY`**, into a password manager. It encrypts every stored credential; without it a restored
    database is unreadable. `make init` prints a red banner saying so.
-2. **The recovery age key.** `make detach-recovery-key` prints it once, asks you to paste it back *from* the password
+2. **The recovery age key.** `make detach-recovery-key` names the file that holds it rather than printing it, asks you to paste it back *from* the password
    manager (so a truncated copy is caught while the original still exists), checks that it is the key
    `BACKUP_AGE_RECOVERY_PUBLIC_KEY` encrypts to, and only then shreds the file. It is always interactive: `YES=1` and
    `CI=1` are ignored, because shredding the only copy must never happen unattended.

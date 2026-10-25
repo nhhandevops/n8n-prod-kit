@@ -25,6 +25,7 @@ Sections: **Added · Changed · Fixed · Removed · Security · Infra · Templat
 - Monitoring: after a busy host reboot cAdvisor could start before dockerd answered, lose its Docker integration for good and keep reporting "healthy" without any container labels (blind per-container panels and alerts). A startup watchdog now restarts it until the integration registers.
 
 ### Security
+- **`make rotate-recovery-key` and `make detach-recovery-key` no longer print the recovery private key.** Both used to show the `AGE-SECRET-KEY-1…` line inside a red banner, with a warning never to copy it into a chat or a screenshot. On 2026-10-25 a freshly rotated key went into a chat within a minute of being generated, straight past that warning — the fourth secret to travel that way in this project’s own records. A warning ignored four times is a design problem, so the banner now names the mode-600 file that already holds the key and asks the operator to open it, leaving nothing in terminal scrollback to copy. The paste-back verification is unchanged, so a truncated copy is still caught while the original exists. There is deliberately no flag to print it: `cat` is one command away and that makes it an explicit choice rather than the default (PROD-PLAN D-26).
 - `make detach-recovery-key` says on screen that it shows the secret itself and reminds you to clear the scrollback afterwards; runbook C4 adds the step. On the build VM a detach screen was pasted into a chat right after the key had been stored safely.
 
 ### Templates
