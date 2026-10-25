@@ -26,3 +26,15 @@ lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then 
 	@# rather than on the site. Skipped when mkdocs is not installed (CI always has it; see .github/workflows/docs.yml).
 	@if [ -f mkdocs.yml ]; then 		if command -v mkdocs >/dev/null 2>&1; then mkdocs build --strict --quiet && echo "mkdocs: OK"; 		else echo "mkdocs: not installed, skipped (pip install -r requirements-docs.txt)"; fi; 	fi
 	@echo "lint: OK"
+
+# Everything else this kit does lives in compose/Makefile, so `make smoke`, `make restore` or
+# `make rotate-recovery-key` typed at the repository root gets GNU make's bare "No rule to make target",
+# which reads like a broken checkout. It is not: it is a missing -C compose. That cost two round trips on
+# 2026-10-25, so the error now names the command to type instead.
+.DEFAULT:
+	@if [ -f compose/Makefile ] && grep -qE "^$@:" compose/Makefile; then \
+	  printf '"%s" is a Compose-kit target, not a root one. Run:\n\n    make -C compose %s\n\n' "$@" "$@" >&2; \
+	else \
+	  printf 'no "%s" target here. This Makefile has: help, lint, bootstrap-test.\nThe Compose kit has the rest: make -C compose help\n' "$@" >&2; \
+	fi; \
+	exit 2
