@@ -182,7 +182,7 @@ treats it as an operator stop.
 So drain rather than kill: `docker stop`, or `make upgrade`, which waits out running executions for
 `UPGRADE_DRAIN_TIMEOUT` (300 s) and then hands the stragglers this grace period. Set the timeout above your p99
 execution time — `make doctor` measures that p99 from the executions of the last 7 days and warns when it reaches the
-timeout — and give critical workflows an Error Workflow. Docker has its own window, `N8N_STOP_GRACE_PERIOD` (40 s): it
+timeout — and give critical workflows an [Error Workflow](operations/error-workflows.md). Docker has its own window, `N8N_STOP_GRACE_PERIOD` (40 s): it
 must outlast the timeout by at least 10 seconds, because n8n needs a moment to cancel what is left and exit, so raise
 the two together (`make preflight` and `make doctor` fail when they do not fit; every n8n container, generated workers
 included, uses it). A `crashed` execution may already have done its side effect, so keep replays idempotent;

@@ -1,0 +1,19 @@
+{
+  "execution": {
+    "id": "4821",
+    "url": "https://n8n.example.com/workflow/7fKq9c2Xa1/executions/4821",
+    "error": {
+      "name": "NodeOperationError",
+      "message": "Invalid JSON in response body",
+      "stack": "NodeOperationError: Invalid JSON in response body\n    at ExecuteContext.execute",
+      "node": { "name": "HTTP Request" }
+    },
+    "lastNodeExecuted": "HTTP Request",
+    "mode": "webhook",
+    "retryOf": null
+  },
+  "workflow": {
+    "id": "7fKq9c2Xa1",
+    "name": "Zalo order intake"
+  }
+}

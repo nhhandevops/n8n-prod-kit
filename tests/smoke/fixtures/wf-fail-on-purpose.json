@@ -1,0 +1,25 @@
+{
+  "name": "kit-smoke-fail-on-purpose",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "__PATH__", "responseMode": "lastNode", "options": {} },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fails on purpose. The smoke suite asserts that the Error Workflow attached to this\n// workflow (settings.errorWorkflow) saw the failure, with this node's name in the alert.\nthrow new Error('kit-smoke deliberate failure');"
+      },
+      "name": "Boom",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Boom", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataErrorExecution": "all" }
+}
