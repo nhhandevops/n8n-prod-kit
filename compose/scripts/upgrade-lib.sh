@@ -314,7 +314,7 @@ start_rest() {
 # The monitoring checks (09) run afterwards and only warn: monitoring cannot fail an n8n upgrade. SMOKE_FAIL=1 forces
 # a failure after the real checks passed (drills of TC-015).
 verify_side() {
-  local side="${1}" want_v want_d want_r project cid svc v d bad=0 only="01,02,06" profiles
+  local side="${1}" want_v want_d want_r project cid svc v d bad=0 only="01,02,06" profiles first_load
   want_v="$(st "${side}_VERSION")"
   want_d="$(st "${side}_N8N_DIGEST")"
   want_r="$(st "${side}_RUNNERS_DIGEST")"
@@ -336,10 +336,18 @@ verify_side() {
     return 1
   fi
   ok "every n8n container runs ${want_v}"
-  if [[ -s "${KIT_DIR}/.smoke/owner.env" || -n "${SMOKE_OWNER_EMAIL:-}" ]]; then
+  # Whether the round trip can run is a question about the INSTANCE, not about a file: .smoke/owner.env can be
+  # left over from a database that no longer exists, and an instance that reports first load has no owner yet, so
+  # the suite can create one itself. Gating on the file alone had both failure modes — a stale file turned 03-05
+  # on and they failed on a dead login, and deleting it turned the round trip off silently.
+  # Asked inside the stack, not through the edge: no TLS mode, no dev CA, and the same endpoint the smoke
+  # suite reads. The n8n image carries busybox wget, not curl.
+  first_load="$(compose exec -T n8n-main wget -qO- http://127.0.0.1:5678/rest/settings 2>/dev/null |
+    jq -r '.data.userManagement.showSetupOnFirstLoad // empty' 2>/dev/null || true)"
+  if [[ -s "${KIT_DIR}/.smoke/owner.env" || -n "${SMOKE_OWNER_EMAIL:-}" || "${first_load}" == "true" ]]; then
     only="01,02,03,04,05,06"
   else
-    info "no smoke credentials (compose/.smoke/owner.env) — skipping the webhook → worker round trip (smoke 03-05)"
+    info "this instance has an owner and there are no smoke credentials for it (compose/.smoke/owner.env, SMOKE_OWNER_*) — skipping the webhook → worker round trip (smoke 03-05)"
   fi
   SMOKE_CORE_ONLY=1 ONLY="${only}" SMOKE_FAIL="${SMOKE_FAIL:-}" "${KIT_DIR}/../tests/smoke/run.sh" || return 1
   profiles=",$(env_get COMPOSE_PROFILES | tr -d ' '),"
