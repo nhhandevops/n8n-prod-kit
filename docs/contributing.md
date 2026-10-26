@@ -65,12 +65,12 @@ make up
 make smoke
 ```
 
-`tests/smoke/01-09` check, in order: every service healthy with its runner sidecars; the edge
+`tests/smoke/01-10` check, in order: every service healthy with its runner sidecars; the edge
 (redirect, certificate chain, security headers, no `Server` banner); owner, login and API key; webhook
 routing through the pool with round robin; the execution landing on a worker including a Code-node HTTP
 call; metrics inside the stack and a 404 for `/metrics` at the edge; `make backup-now` to every remote;
-`make restore-test`; and the monitoring profile. Test 09 passes as skipped when `COMPOSE_PROFILES` does
-not list `monitoring`.
+`make restore-test`; the monitoring profile; and a deliberate failure reaching an Error Workflow built from
+`templates/error-handler/`. Test 09 passes as skipped when `COMPOSE_PROFILES` does not list `monitoring`.
 
 Useful knobs: `make smoke ONLY=04,05` runs two scripts, `SMOKE_KEEP=1` keeps the workflows it created
 for debugging, and shared state lives in `compose/.smoke/`. Run it twice before you open the PR — CI

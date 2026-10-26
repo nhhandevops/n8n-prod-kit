@@ -321,6 +321,7 @@ n8n-prod-kit/
 | TC-024 | Terraform | `apply` then `destroy` | No orphaned resources (checked with a tag query) |
 | TC-025 | Docs | Quickstart followed by a tester | Completed in ≤ 15 min with no questions |
 | TC-026 | Doctor | Low disk, missing key, wrong DNS (simulated) | `make doctor` names each problem and the fix |
+| TC-027 | Error workflow | A published workflow fails on a worker, with `templates/error-handler` attached as its Error Workflow | Unpublished handler: never runs, and the worker log says why. Published: runs in mode `error` on a worker, and the alert carries the workflow name, the failing node and the message. `make doctor` fails on a handler that is not published |
 
 ### 3.4 Definition of done
 
