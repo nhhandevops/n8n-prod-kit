@@ -24,7 +24,7 @@ Instructions for AI coding agents (Claude Code, Cursor, …) and a cheat-sheet f
 - YAML: 2-space indent, yamllint clean (line length 160). Dockerfiles: hadolint clean. Makefiles: real tabs.
 - Conventional Commits (`feat(compose): …`, `fix(backup): …`, `docs: …`, `ci: …`). Kit versions `v0.x.y`, independent of the n8n version pinned.
 - Docs in English; `docs/quickstart.vi.md` is the Vietnamese translation.
-- Line endings LF everywhere (`.gitattributes`); edit inside Linux, never through a Windows share.
+- Line endings LF everywhere (`.gitattributes`); never run the kit from a Windows share, `/mnt/c` or `/mnt/d` — bind mounts and `chmod 600` need a Linux filesystem. A separate Windows-side clone used only for git, reading, docs and PRs is fine: `.gitattributes` (`* text=auto eol=lf`) keeps LF even where `core.autocrlf=true`. Which machine is which: `n8n-kit-HANDOFF.md` §4.
 
 ## `make` cheat-sheet (root)
 
