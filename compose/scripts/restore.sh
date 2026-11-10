@@ -89,7 +89,14 @@ if [[ "${stage}" != "apply" ]]; then
   if [[ -n "${from}" ]]; then
     fetch_args+=(--from "${from}")
   fi
-  compose run --rm -T "${key_args[@]}" backup /opt/backup/restore.sh "${fetch_args[@]}" || die "fetch failed — nothing was changed"
+  fetch_rc=0
+  compose run --rm -T "${key_args[@]}" backup /opt/backup/restore.sh "${fetch_args[@]}" || fetch_rc=$?
+  if (( fetch_rc == 4 )); then
+    # the bundle is intact and belongs to another host; the container already said so in full
+    die "fetch failed — nothing was changed (this host's age key is not one of the bundle's recipients: re-run with AGE_KEY=<recovery key file>)" 4
+  elif (( fetch_rc != 0 )); then
+    die "fetch failed — nothing was changed"
+  fi
   rm -f "${restore_key}"
 fi
 

@@ -66,9 +66,17 @@ case "${cmd}" in
     path="${hit#*$'\t'}"
     rm -rf "${WORK_DIR:?}"/*
     info "fetching ${remote}/${path}"
-    if ! rclone copyto "${remote}/${path}" "${WORK_DIR}/bundle.tar.age" ||
-      ! unpack_bundle "${WORK_DIR}/bundle.tar.age" "${current}" "${path##*/}"; then
+    fetch_rc=0
+    rclone copyto "${remote}/${path}" "${WORK_DIR}/bundle.tar.age" || fetch_rc=1
+    if (( fetch_rc == 0 )); then
+      unpack_bundle "${WORK_DIR}/bundle.tar.age" "${current}" "${path##*/}" || fetch_rc=$?
+    fi
+    if (( fetch_rc != 0 )); then
       rm -rf "${WORK_DIR:?}"/*
+      # 4 already said, precisely, that this host is not a recipient — do not blur it into "corrupt or renamed".
+      if (( fetch_rc == 4 )); then
+        die "cannot restore ${path} with this host's age key — pass AGE_KEY=<recovery key file>" 4
+      fi
       die "could not download/decrypt/verify ${path} (wrong age key? corrupt or renamed file?)"
     fi
     rm -f "${WORK_DIR}/bundle.tar.age"
