@@ -102,11 +102,11 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 >
 > **Nothing is uncommitted. Both VMs are powered off. No background job is running.** Four things, in order:
 >
-> **1. Check and merge PR #38** (`docs/d7-dr-drill-second-host`, D-7). At the moment the session ended:
-> `lint` ✅ 1m20s · `build` ✅ · `upgrade` ✅ 12m25s · SonarCloud ✅ · **`smoke` still running** — and `smoke` is the
-> one that matters, because it runs `tests/ci/dr-drill.sh`, whose new **steps 5a/5b** are the only part of this
-> change that was not exercised by hand. So: `gh pr checks 38` first. Green → merge; red → the failure is almost
-> certainly in those two steps and the output names which assertion.
+> **1. Merge PR #38** (`docs/d7-dr-drill-second-host`, D-7). **The full suite is green on `30a87d5`**, the commit
+> carrying every code change — `lint` ✅ 1m20s · `upgrade` ✅ 12m25s · **`smoke` ✅ 15m26s**, which is the job that
+> runs `tests/ci/dr-drill.sh`, so the new **steps 5a/5b** are CI-verified (run `42846536337`). The run in flight
+> when the session ended is on `ef2db02`, one commit later, and that commit touches **this file only** — it cannot
+> affect `smoke` or `upgrade`. Still worth one `gh pr checks 38` before merging, but expect green.
 > **An has to run the merge** — the agent's permission classifier refuses `gh pr merge` through its Bash tool, but
 > it works through the PowerShell tool: `gh pr merge 38 --squash --delete-branch`.
 >
