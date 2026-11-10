@@ -345,14 +345,19 @@ than theoretical.
 failure output looks like before you have a real failure, inject some on purpose:
 
 ```bash
-DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy make -C compose doctor
+DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,certwedge make -C compose doctor
 ```
 
 It prints an `[info]` line saying some failures below are injected on purpose, and exits non-zero. On this
-stack three of the four keys bite: `nokey` (a blank encryption key), `unhealthy` (`n8n-worker-2` reported
-unhealthy, with its log lines) and `lowdisk` (93 % used). `baddns` feeds a wrong answer to the DNS comparison
-that runs only in the ACME TLS modes, so under `TLS_MODE=internal` it changes nothing. Nothing on the host is
-touched either way.
+stack **five of the six** keys bite: `nokey` (a blank encryption key), `unhealthy` (`n8n-worker-2` reported
+unhealthy, with its log lines), `lowdisk` (93 % used), `expiredcert` (the certificate the edge serves read as
+the 12-hour leaf a real host went on serving for 14 days after it expired, on 2026-11-09) and `certwedge`
+(Caddy serving a name whose key is gone from its storage, so renewal can never succeed again). `baddns` is the
+one that does nothing here: it feeds a wrong answer to the DNS comparison that runs only in the ACME TLS modes,
+so under `TLS_MODE=internal` it changes nothing — unlike the two certificate keys, which bite in every mode on
+purpose, because internal TLS is what the kit's own dev hosts run. Use `expiredcert` or `certwedge` alone to see
+each certificate FAIL by itself; together they produce the single combined line. Nothing on the host is touched
+either way.
 
 !!! note
 
@@ -2211,14 +2216,20 @@ been failing for two weeks.
 make -C compose doctor
 ```
 
-**What you should see.** `make doctor` reports
-`TLS_MODE=internal: certificates come from the kit's local CA (12 h leaf certs, renewed automatically)` and does not
-check expiry at all. In that mode the script writes only the comment line
-`# cert-check: TLS_MODE=internal (12 h certificates from the local CA) — not monitored` in place of the metric, and the
-Backups dashboard says `not checked` instead of showing a red "No data".
+**What you should see.** The *metric* is not collected here: `backup/cert-check.sh` writes only the comment line
+`# cert-check: TLS_MODE=internal (12 h certificates from the local CA) — not monitored` in place of
+`cert_expiry_timestamp_seconds`, so `CertExpiring` has no data and stays quiet, and the Backups dashboard says
+`not checked` instead of showing a red "No data". **`make doctor` is a different matter and does check**, in every TLS
+mode: an `[info]` line about the local CA, then `certificate for n8n.localtest.me: 11 h 25 min left of a 12 h leaf
+from the kit's local CA`.
 
-**What it proves.** The kit distinguishes "nothing to watch" from "watching failed": a certificate reissued every
-12 hours has nothing worth alerting on. This is the one monitoring feature you can exercise only in an ACME mode.
+**What it proves.** The two are not the same question. A 14-day alert threshold is meaningless against a 12-hour
+certificate, so the metric is honestly absent — but "is the certificate the edge serves still valid, and can Caddy
+still renew it" has to be asked here too. On 2026-11-09 it had to be: after 14 days powered off, this VM served a leaf
+that had expired 14 days earlier while all 11 containers reported healthy, because Caddy's healthcheck is its admin
+API and knows nothing about TLS (`warning_bug_and_solutions.md`). Doctor now fails on both halves — an expired served
+certificate, and a served name whose key is missing from Caddy's storage, which is the wedge showing up hours before
+the cached copy dies.
 
 **If it goes wrong (ACME modes).** `make -C compose logs SERVICE=backup SINCE=3h` shows
 `cert-check: could not read the certificate Caddy serves for ...` when the check fails.
