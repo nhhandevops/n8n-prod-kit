@@ -102,8 +102,21 @@ cannot decrypt that.
 `ADOPT_KEY=1` prints a hint of the bundle's encryption key and asks you to compare it with the one in your password
 manager; the restore then writes that key into `.env` (keeping the old file as `.env.bak.<ts>`) and resets n8n's
 cached settings file, which would otherwise make n8n refuse to start with "Mismatching encryption keys". Without
-`ADOPT_KEY=1` the restore stops at the key check (exit 3) and changes nothing — on a new host that refusal is the
+`ADOPT_KEY=1` the restore stops at the key check and changes nothing — on a new host that refusal is the
 expected first answer, not a fault.
+
+Two refusals come before that one, and both are also expected:
+
+- **with no `AGE_KEY` at all**, the fetch cannot even decrypt. The new host's age key is not one of the bundle's
+  recipients, and the kit says so by name: *"… is intact but was not encrypted to this host"*. Nothing is wrong with
+  the bundle; you simply have to pass the recovery key.
+- **with `AGE_KEY` but no `ADOPT_KEY=1`**, the bundle decrypts and the *encryption-key* check stops the run.
+
+!!! note "The exit codes, if you are scripting this"
+    `compose/scripts/restore.sh` exits **4** when this host is not a recipient, **3** on the encryption-key
+    mismatch and **5** for a bundle from a newer n8n. **`make` cannot pass those through** — GNU make's status for
+    any failed recipe is **2**, and the real code survives only in its message (`make: *** [Makefile:130: restore]
+    Error 3`). Call `compose/scripts/restore.sh` directly when a script needs the number.
 
 ## 7. Verify
 
@@ -126,6 +139,17 @@ The owner variables are needed because `compose/.smoke/owner.env` does not exist
 suite stops with "this instance already has an owner but compose/.smoke/owner.env is missing". Note that the suite's
 backup test runs a real `make backup-now`, so run it **after** the restore, never before.
 
+A password on a command line also lands in your shell history and, for the life of the process, in `ps` for every
+user on the box. If you still have the old host, copy its file instead — that is what it is for:
+
+```bash
+install -m 600 /dev/stdin compose/.smoke/owner.env    # paste the old host's file, then Ctrl-D
+```
+
+And give the restored workflows a name the suite will not reap: its clean-up removes everything it finds under the
+`kit-smoke-` prefix, so a bundle whose only workflow was a smoke fixture comes back and is then deleted by the next
+`make smoke`. That is a drill artefact, not a restore failure — count the rows before you run the suite.
+
 ## 8. Close the loop
 
 ```bash
@@ -138,19 +162,43 @@ The `N8N_ENCRYPTION_KEY` in the new `.env` is now the old one, so what is in you
 is the *recovery* key that is new and needs storing. If workflows keep files in `/home/node/.n8n-files`, restore that
 volume from wherever you back it up separately: it is not in the bundle.
 
+**`make backup-now` before anything verifies backups — that order is not cosmetic.** Step 4 pointed this host at the
+target the *old* host wrote to, and every bundle already on it is encrypted to the old host's age key. This host is
+not one of their recipients, so it cannot verify them: until its own first backup lands there, `make restore-test`
+fails, the weekly cron job fails, `make doctor` fails with it and the backup alert fires — on bundles that are
+perfectly intact. The kit says which case it is rather than guessing at corruption:
+
+```text
+[FAIL] RESTORE TEST FAILED: newest bundle on r2:n8n-backups/prod (manual/n8n-….tar.age) is not encrypted to
+       this host — it belongs to the host this one replaced, and only the recovery key opens it; this host's own
+       backup has not reached r2:n8n-backups/prod yet (make backup-now)
+```
+
+One `make backup-now` ends it. The old bundles stay restorable the whole time — with `AGE_KEY=<recovery key>`, which
+is how you restored one in step 6 — so keep that password-manager entry until they leave retention.
+
 ## If something stops you
 
 | Message | What it means |
 |---|---|
 | preflight: `DNS: … but this host's public IP is …` | the record still points at the old host (step 1) |
-| restore: `exit 3`, keys do not match | expected without `ADOPT_KEY=1` on a new host — nothing was changed |
-| restore: `was made by n8n X, NEWER than Y that would run on it` (exit 5) | move the new host to that version first with `make upgrade N8N_VERSION=X`, then restore **by name** (the upgrade's own backup would be newer than the one you want) |
+| restore: `is intact but was not encrypted to this host` | you left `AGE_KEY=` off (step 5–6). The bundle is fine; this host's age key is simply not one of its recipients |
+| restore: keys do not match (`Error 3`) | expected without `ADOPT_KEY=1` on a new host — nothing was changed |
+| restore: `was made by n8n X, NEWER than Y that would run on it` (`Error 5`) | move the new host to that version first with `make upgrade N8N_VERSION=X`, then restore **by name** (the upgrade's own backup would be newer than the one you want) |
+| restore test / doctor: `is not encrypted to this host — it belongs to the host this one replaced` | expected between step 6 and step 8's `make backup-now`; see step 8 |
 | `could not list every remote` | `latest` refuses while a target is unreadable; fix the credentials or pick one with `FROM=<remote>` |
 | `renamed or planted file, refusing it` | the bundle's name does not match its manifest — do not restore it, find out who wrote it |
 | a restore was interrupted | `make restore-clean` empties the work volume; the live database is untouched unless the swap had completed |
 
 This whole procedure runs in CI on every change (`tests/ci/dr-drill.sh`): back up, destroy the stack including its
-`.env` and age keys, init a new host, confirm a restore without `ADOPT_KEY` refuses, restore with the recovery key and
-`ADOPT_KEY=1`, then run the full smoke suite. So if it fails for you and not there, start by comparing your `.env` with
-what the old host had — `make env-keys` lists the key names without their values, which is also what belongs in a bug
-report.
+`.env` and age keys, init a new host, confirm that a restore refuses both without `AGE_KEY` (exit 4) and without
+`ADOPT_KEY` (exit 3), restore with the recovery key and `ADOPT_KEY=1`, then run the full smoke suite. So if it fails
+for you and not there, start by comparing your `.env` with what the old host had — `make env-keys` lists the key names
+without their values, which is also what belongs in a bug report.
+
+It has also been walked once on **two real machines** (2026-11-10, PROD-PLAN D-7): a second VM built from the Ubuntu
+24.04 cloud image, bootstrapped, cloned and initialised from this page, with the bundle carried over from the first
+host and the recovery key as the only way into it. Neither of the first host's keys ever existed on it — different age
+key, different recovery key, different `N8N_ENCRYPTION_KEY`. Result: both refusals as documented, the restore
+adopting the old key, `make smoke` **10/10** and `make doctor` with no problems and no warnings. What that run found
+is the step 8 paragraph above and the two `Error N` rows in the table.

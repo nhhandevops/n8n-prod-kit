@@ -103,7 +103,7 @@ so fix it or pick a target with `FROM=<remote>`.
 
 What happens:
 1. Lock, fetch, decrypt and verify. The manifest must name the file, which catches renamed copies.
-2. **Key check.** A bundle with a different `N8N_ENCRYPTION_KEY` stops here (exit 3) and nothing is changed.
+2. **Key check.** A bundle with a different `N8N_ENCRYPTION_KEY` stops here and nothing is changed (`scripts/restore.sh` exits 3; through `make` you see `Error 3` and make's own exit 2).
 3. Confirm, then stop all n8n processes and take the **safety backup** (kind `pre-restore`) of the now quiet database.
 4. `pg_restore` into a **staging database** and check its workflow count.
 5. Swap the staging database in atomically. The replaced database is kept as `n8n_prev` until the stack is healthy.
@@ -144,11 +144,17 @@ n8n's settings file in the `n8n_data` volume. n8n caches its key there and would
 ("Mismatching encryption keys"). Every restored credential then decrypts.
 
 Afterwards: `make detach-recovery-key` for the NEW recovery key `make init` created, and `make backup-now`, so the
-first backup of the new host exists.
+first backup of the new host exists. **Do that backup before anything verifies backups.** Every bundle already on
+that target belongs to the old host and is encrypted to *its* age key, so this host cannot verify them: until its own
+first backup lands, `make restore-test`, the weekly cron job and `make doctor` all fail, and the alert fires, over
+bundles that are intact. They stay restorable with `AGE_KEY=<recovery key>` throughout, and the kit names that case
+instead of blaming corruption — *"is not encrypted to this host — it belongs to the host this one replaced"*.
 
 CI runs this whole procedure on every change (`tests/ci/dr-drill.sh`): back up, destroy the stack including its
-`.env` and age keys, init a new host, check that a restore without `ADOPT_KEY` refuses, restore with the recovery key
-and `ADOPT_KEY=1`, then run the full smoke suite.
+`.env` and age keys, init a new host, check that a restore refuses both without `AGE_KEY` and without `ADOPT_KEY`,
+restore with the recovery key and `ADOPT_KEY=1`, then run the full smoke suite. It was also walked once on two real
+machines on 2026-11-10 — a second VM that had never held any of the first host's keys — which is where the
+`make backup-now` ordering above comes from ([Rebuild on a new VPS](rebuild-vps.md)).
 
 ## Security model
 

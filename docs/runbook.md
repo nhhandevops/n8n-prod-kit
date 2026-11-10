@@ -1329,8 +1329,9 @@ real stack that removes your undo.
 
 *The key check, before the database is dropped.* If the bundle's key is not the running one, the run stops with
 `the backup was made with a different N8N_ENCRYPTION_KEY: restored credentials would be unreadable`
-(`compose/backup/restore.sh`) and `restore aborted before anything was changed (encryption key mismatch)`,
-exit 3. Nothing was stopped, nothing was dropped. The check is load-bearing for a second reason: n8n connects
+(`compose/backup/restore.sh`) and `restore aborted before anything was changed (encryption key mismatch)` —
+`compose/scripts/restore.sh` exits 3, and through `make` you see `Error 3` while make itself exits 2, as it does for
+any failed recipe. Nothing was stopped, nothing was dropped. The check is load-bearing for a second reason: n8n connects
 to Postgres as the bootstrap superuser, so a live restore runs with superuser rights (`n8n-kit-HANDOFF.md`),
 and the matching key is what establishes that a bundle is yours before any of its SQL runs.
 
@@ -1365,7 +1366,14 @@ plus the recovery key and old `N8N_ENCRYPTION_KEY` from your password manager. A
 
 **Do this.** Not by hand on your working dev stack — the drill destroys `.env` and the age keys. CI rehearses it
 on every change (`tests/ci/dr-drill.sh`); the ordered procedure for a real rebuild is
-[Rebuild on a new VPS](operations/rebuild-vps.md).
+[Rebuild on a new VPS](operations/rebuild-vps.md). On **2026-11-10** it was also walked end to end on a **second
+machine** (PROD-PLAN D-7): a throwaway VM from the Ubuntu 24.04 cloud image, which never held this stack's age key,
+its recovery key or its `N8N_ENCRYPTION_KEY` — all three provably different. The bundle was carried over and the
+recovery key was the only way into it. Both refusals behaved as documented, the restore adopted the old key (proved
+by comparing SHA-256 fingerprints of the two `.env` values rather than by eye), the old owner logged in, `make smoke`
+was **10/10** and `make doctor` reported no problems and no warnings. The one thing that run changed in the kit is on
+that page: between the restore and the new host's first `make backup-now`, the old host's bundles cannot be verified
+here, and the kit used to call them corrupt.
 
 **What you should see.** With `ADOPT_KEY=1` the mismatch prints both key fingerprints, `bundle key:  abcd…wxyz
 (64 chars)` and `running key: ...` (`compose/backup/restore.sh`), and then asks you to confirm that the
@@ -1390,9 +1398,11 @@ of its own, `latest` would be that one, which the old recovery key cannot decryp
 One `BACKUP_REMOTES` line naming a local directory, an external disk and a bucket is that rule.
 
 !!! warning
-    As the kit stands, the off-host targets are **configured but untested** — there were no credentials to test
-    them with (`n8n-kit-HANDOFF.md`). Local and external-disk targets are tested. Your first R2 run is real
-    work, not a formality. And `BACKUP_LOCAL_PATH` is empty by default, which makes `/backups/external` the same
+    **R2** was tested end to end on 2026-10-13 on a dev VM — bucket, scoped token, `make backup-now` to both
+    targets, and a `make restore-test` that fetched and restored the R2 copy (PROD-PLAN D-1, `n8n-kit-HANDOFF.md`).
+    **S3** is configured and still untested: no credentials have ever been pointed at it. Either way your first
+    run on your own bucket is real work, not a formality, because what fails there is the token's scope.
+    And `BACKUP_LOCAL_PATH` is empty by default, which makes `/backups/external` the same
     directory as `/backups/local` rather than a second copy; `make -C compose preflight` warns about exactly
     that (`compose/scripts/preflight.sh`).
 
