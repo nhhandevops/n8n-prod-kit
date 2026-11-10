@@ -114,7 +114,7 @@ status: ## Health table of every service, login URL; exit 1 if anything is unhea
 smoke: ## End-to-end smoke suite against the running stack: make smoke [ONLY=04,05] [SMOKE_KEEP=1]
 	@ONLY="$(ONLY)" "$(KIT_DIR)/../tests/smoke/run.sh"
 
-doctor: ## Diagnose common problems with fixes (DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy to test it)
+doctor: ## Diagnose common problems with fixes (DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,certwedge to test it)
 	@$(KIT_DIR)/scripts/doctor.sh
 
 # --- backups -----------------------------------------------------------------------------------------------------------

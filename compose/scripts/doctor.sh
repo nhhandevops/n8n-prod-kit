@@ -6,12 +6,14 @@
 #
 # Checks: .env permissions and key length · n8n vs runners version lock · every service running+healthy (unhealthy ones
 # get their last 20 log lines) and restart counts · ports actually served by caddy · DNS vs this host's public IP ·
-# certificate expiry (ACME modes) · disk on the Docker root · clock sync · Postgres connections, size, execution pruning ·
+# the certificate caddy actually serves and whether its key is still in caddy's storage (EVERY TLS mode) · disk on
+# the Docker root · clock sync · Postgres connections, size, execution pruning ·
 # Valkey eviction policy, AOF, memory · N8N_ENDPOINT_* overrides (would break the Caddyfile routing) · recovery key still
 # on this host · backups (from S5) · SELinux/firewalld on RHEL hosts · WSL hints.
 #
-# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy  injects failures so the output format and exit code can be tested
-# without breaking a real host (TC-026).
+# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,certwedge  injects failures so the output format and
+# exit code can be tested without breaking a real host (TC-026). baddns only bites in the ACME modes; expiredcert
+# and certwedge work in every TLS mode, including the internal one the kit's own dev hosts run.
 # shellcheck disable=SC2310,SC2311,SC2312
 set -euo pipefail
 
@@ -202,7 +204,7 @@ for port in "${http_port}" "${https_port}"; do
 done
 domain_ip="$(getent ahostsv4 "${domain}" 2>/dev/null | awk '{print $1; exit}' || true)"
 if [[ "${tls_mode}" == "internal" ]]; then
-  ok "TLS_MODE=internal: certificates come from the kit's local CA (12 h leaf certs, renewed automatically) — DNS ${domain} -> ${domain_ip:-unresolved}"
+  info "TLS_MODE=internal: certificates are issued by the kit's local CA (a 7-day intermediate under a 10-year root) — DNS ${domain} -> ${domain_ip:-unresolved}"
 else
   public_ip="$(curl -fsS -m 5 https://api.ipify.org 2>/dev/null || true)"
   if sim baddns; then domain_ip="203.0.113.1"; fi
@@ -213,20 +215,78 @@ else
   else
     ok "DNS: ${domain} -> ${domain_ip}${public_ip:+ (= public IP)}"
   fi
-  not_after="$(echo | openssl s_client -connect "127.0.0.1:${https_port}" -servername "${domain}" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2 || true)"
+fi
+# Two measurements per served name, in EVERY TLS mode: the expiry of the certificate the edge really hands out, and
+# whether caddy still holds that name's key in its storage. Both used to sit inside the ACME branch, so internal mode
+# got the banner above and nothing else — the hole this closes. 2026-11-09, this dev VM back after 14 days off: Caddy's
+# storage cleaner removed the leaf that had been expired past certmagic's grace period, every renewal then failed on
+# the key file that was no longer there (retry budget 30 days), and the expired leaf went on being SERVED from the
+# in-memory cache. All 11 containers stayed healthy throughout, because caddy's healthcheck is its admin API and knows
+# nothing about TLS, so only `make smoke` noticed, at 02-tls. Write-up in warning_bug_and_solutions.md (2026-11-09).
+cert_names=("${domain}")
+if [[ "$(env_get KUMA_ENABLED)" == "on" ]]; then cert_names+=("kuma.${domain}"); fi
+for cert_name in "${cert_names[@]}"; do
+  not_after="$(echo | openssl s_client -connect "127.0.0.1:${https_port}" -servername "${cert_name}" 2>/dev/null |
+    openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2 || true)"
+  if sim expiredcert; then not_after="Oct 26 12:00:51 2026 GMT"; fi   # the leaf the 2026-11-09 incident kept serving
   if [[ -z "${not_after}" ]]; then
-    flag_warn "could not read the certificate on 127.0.0.1:${https_port} — caddy down, or ACME still in progress (make logs SERVICE=caddy)"
-  else
-    days_left=$(( ( $(date -d "${not_after}" +%s) - $(date +%s) ) / 86400 ))
-    if (( days_left < 0 )); then
-      flag_fail "certificate EXPIRED (${not_after}) — caddy could not renew: check DNS, port ${http_port}/${https_port} reachability from the Internet, and make logs SERVICE=caddy"
-    elif (( days_left < 14 )); then
-      flag_warn "certificate expires in ${days_left} days (${not_after}) — caddy renews at 30 days left; if this keeps dropping, renewal is failing (make logs SERVICE=caddy)"
+    flag_warn "no certificate could be read for ${cert_name} on 127.0.0.1:${https_port} — HTTPS answers nothing for that name: caddy down, or a first issuance still in progress (make status; make logs SERVICE=caddy SINCE=15m)"
+    continue
+  fi
+  not_after_ts="$(date -d "${not_after}" +%s 2>/dev/null || true)"
+  if [[ -z "${not_after_ts}" ]]; then
+    flag_warn "could not read the expiry date of ${cert_name}'s certificate ('${not_after}') — check it by hand: echo | openssl s_client -connect 127.0.0.1:${https_port} -servername ${cert_name} 2>/dev/null | openssl x509 -noout -dates"
+    continue
+  fi
+  # Is that name's key still in storage? Caddy renews only what it holds there, so a name served from the in-memory
+  # cache while certificates/<issuer>/<name>/ is gone can never be renewed again — the wedge's signature, and the fact
+  # that decides which remedy to print. find starts at /data (present as long as the volume is mounted) and not at
+  # certificates/, which the cleaner can remove as well: rc 0 with no output then means "nothing stored for this name",
+  # while a non-zero rc means the look-up itself failed and must not read as a wedge. </dev/null because compose reads
+  # stdin; busybox find takes -type and -path, so this needs no glob and the file's disable list stays as it is.
+  stored_state=unknown
+  if [[ "$(service_health caddy)" == "healthy" ]]; then
+    stored_rc=0
+    stored="$(compose exec -T caddy find /data -type f -path '*/certificates/*' -name "${cert_name}.key" \
+      2>/dev/null </dev/null)" || stored_rc=$?
+    if (( stored_rc == 0 )); then
+      if [[ -n "${stored}" ]]; then stored_state=yes; else stored_state=no; fi
     else
-      ok "certificate valid for ${days_left} more days"
+      flag_warn "could not list caddy's certificate storage — look by hand: make -C compose exec caddy find /data -name '${cert_name}.key'"
     fi
   fi
-fi
+  if sim certwedge; then stored_state=no; fi
+  # Seconds, not days: a healthy 12 h leaf always has 0 days left, so the ACME day thresholds cannot be reused here.
+  secs_left=$(( not_after_ts - $(date +%s) ))
+  if (( secs_left < 0 )); then
+    expired_for="$(( -secs_left / 3600 )) h"
+    if (( -secs_left >= 172800 )); then expired_for="$(( -secs_left / 86400 )) days"; fi
+    if [[ "${stored_state}" == "no" ]]; then
+      flag_fail "certificate for ${cert_name} EXPIRED ${expired_for} ago (${not_after}) — caddy still serves it from memory and has no key left in storage, so renewal can never succeed: HTTPS is refused for everyone (browser, webhooks, make smoke, make upgrade's verify step). Fix: make -C compose restart SERVICE=caddy, not make up (an unchanged Caddyfile is a no-op) and not make trust-ca (the CA root is fine)"
+    elif [[ "${tls_mode}" == "internal" ]]; then
+      flag_fail "certificate for ${cert_name} EXPIRED ${expired_for} ago (${not_after}) — caddy still serves it from memory, so HTTPS is refused for everyone (browser, webhooks, make smoke, make upgrade's verify step); a 12 h leaf renews inside its last 4 h, so renewal has failed at least that long: make -C compose restart SERVICE=caddy (make up is a no-op on an unchanged Caddyfile)"
+    else
+      flag_fail "certificate for ${cert_name} EXPIRED ${expired_for} ago (${not_after}) — caddy still serves it from memory, so HTTPS is refused for everyone (browser, webhooks, make smoke, make upgrade's verify step); caddy renews 30 days ahead, so ACME has been failing for over a month: check DNS, that ports ${http_port}/${https_port} are reachable from the Internet, then make logs SERVICE=caddy SINCE=24h"
+    fi
+  else
+    if [[ "${tls_mode}" == "internal" ]]; then
+      # certmagic renews inside a leaf's last third and re-checks every 10 min, so a working stack never sits below
+      # ~3 h 50 m of a 12 h leaf. Under 30 min means renewal has already missed its whole window — a fault, not youth.
+      if (( secs_left < 1800 )); then
+        flag_warn "the local CA's leaf for ${cert_name} expires in $(( secs_left / 60 )) min (${not_after}) and renewal has already missed its window by over 3 h — HTTPS stops for everyone when it lapses: make logs SERVICE=caddy SINCE=1h, then make -C compose restart SERVICE=caddy"
+      else
+        ok "certificate for ${cert_name}: $(( secs_left / 3600 )) h $(( (secs_left % 3600) / 60 )) min left of a 12 h leaf from the kit's local CA"
+      fi
+    elif (( secs_left < 14 * 86400 )); then
+      flag_warn "certificate for ${cert_name} expires in $(( secs_left / 86400 )) days (${not_after}) — caddy renews at 30 days left; if this keeps dropping, renewal is failing (make logs SERVICE=caddy)"
+    else
+      ok "certificate for ${cert_name} valid for $(( secs_left / 86400 )) more days"
+    fi
+    if [[ "${stored_state}" == "no" ]]; then
+      flag_fail "caddy serves a certificate for ${cert_name} but holds no key for it under /data/caddy/certificates/*/${cert_name}/ — nothing is broken yet, but every renewal from here fails on the missing file and HTTPS dies for everyone once the cached copy lapses (within 12 h in internal mode): make -C compose restart SERVICE=caddy re-issues from scratch, make up does not"
+    fi
+  fi
+done
 
 # ---------------------------------------------------------------------------------------------------------------------
 section "host"

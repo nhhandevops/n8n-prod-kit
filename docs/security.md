@@ -141,7 +141,10 @@ It is read-only and prints the fix next to every failure. The security-relevant 
 `N8N_ENCRYPTION_KEY` present and at least 32 characters · no `N8N_ENDPOINT_*` override in `.env` (custom endpoint
 names would be routed to the wrong process) · `secrets/age-key.txt` present when backups are on · the recovery key's
 public half matches `.env`, and whether the private half is still on this host (a warning after 7 days) · the
-certificate being served, warning under 14 days left and failing when expired · `DOMAIN` resolving to this host's
+certificate the edge actually serves, in **every** TLS mode — a failure once it has expired (Caddy keeps serving an
+expired certificate from memory, so a healthy container proves nothing), a warning under 14 days left on ACME or
+under 30 minutes on the local CA's 12 h leaf, and a failure when a served name has no key left in Caddy's storage,
+which means renewal can never succeed again · `DOMAIN` resolving to this host's
 public IP · the published ports actually being served · every service running and healthy, with restart counts · n8n
 and the runners matching each other and the digests in `versions.env` · disk, clock sync, SELinux state and firewalld
 (a failure when it is active without http/https allowed) · backup age and status per target, and the last restore test.

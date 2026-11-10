@@ -15,7 +15,21 @@ redirect="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "${http_url}
 check "http -> https redirect: ${redirect}" test "${redirect}" = "308 ${BASE_URL}/"
 
 # req uses CURL_TLS (dev CA / system store): a successful request IS the chain validation.
+# A 000 is curl refusing to connect or to trust what it was handed, and its reason only ever reached .smoke/last.err,
+# which nothing reads: on 2026-11-09 "certificate has expired" sat in that file while this check printed a bare 000 and
+# every container was healthy (warning_bug_and_solutions.md). Say why, and show the dates of the certificate the edge
+# really serves, before the check fails — this is also what `make upgrade`'s verify step prints, through verify_side.
 req GET /
+if [[ "${REQ_STATUS}" == "000" ]]; then
+  curl_err="$(tr -d '\r' <"${STATE_DIR}/last.err" | tail -2 | tr '\n' ' ' || true)"
+  warn "curl could not complete the request: ${curl_err:-no output}"
+  https_port="$(env_get HTTPS_PORT)"
+  served="$(echo | openssl s_client -connect "${DOMAIN}:${https_port:-443}" -servername "${DOMAIN}" 2>/dev/null |
+    openssl x509 -noout -dates 2>/dev/null | tr '\n' ' ' || true)"
+  if [[ -n "${served}" ]]; then
+    warn "the certificate the edge serves for ${DOMAIN}: ${served}— if notAfter is in the past: make -C compose restart SERVICE=caddy (make doctor reports it too)"
+  fi
+fi
 check "TLS chain validates and / answers 200 (got ${REQ_STATUS})" status_is 200
 check "HSTS header" test -n "$(header_of Strict-Transport-Security)"
 check "X-Content-Type-Options: nosniff" test "$(header_of X-Content-Type-Options)" = "nosniff"

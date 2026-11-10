@@ -47,3 +47,16 @@ sed -i -e 's/^ALERT_TELEGRAM_BOT_TOKEN=.*/ALERT_TELEGRAM_BOT_TOKEN=000000000:ci-
 
 make -C compose up
 make -C compose doctor
+
+# TC-026: the injected failures, which no CI job exercised until now. doctor exits 1 by design here, so each run is
+# inverted and then asserted — a red job must mean doctor said the wrong thing, not that it did its job. One token per
+# run: expiredcert and certwedge together produce the single combined FAIL, not the standalone wedge line.
+# The expiredcert string must not contain the elapsed time: the injected date ages by a day every day, so
+# 'EXPIRED 14 days ago' was already 'EXPIRED 15 days ago' the day after it was written. Assert the injected
+# date instead, which never moves.
+for token in expiredcert:'ago (Oct 26 12:00:51 2026 GMT)' certwedge:'holds no key for it under'; do
+  out="$(DOCTOR_SIMULATE="${token%%:*}" make -C compose doctor 2>&1 || true)"
+  printf '%s\n' "${out}"
+  grep -qF "${token#*:}" <<<"${out}" ||
+    { echo "doctor with DOCTOR_SIMULATE=${token%%:*} did not report: ${token#*:}"; exit 1; }
+done
