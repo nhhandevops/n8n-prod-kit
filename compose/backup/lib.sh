@@ -198,11 +198,30 @@ resolve_bundle() {   # resolve_bundle NAME [FROM]
 
 # Decrypt + unpack a bundle file into DIR, verify every sha256 listed in its manifest and that the manifest names the
 # file it came from (a renamed copy of an old bundle must not pose as a newer one).
-unpack_bundle() {   # unpack_bundle FILE DIR EXPECTED_NAME
-  local file="${1}" dir="${2}" expected="${3%.tar.age}" f want have format
+unpack_bundle() {   # unpack_bundle FILE DIR EXPECTED_NAME  -> 0 ok · 4 not encrypted to this host · 1 anything else
+  local file="${1}" dir="${2}" expected="${3%.tar.age}" f want have format agerr rc
   [[ -r "${AGE_IDENTITY}" ]] || die "age identity ${AGE_IDENTITY} not readable (run make up — it fixes the permissions)"
   mkdir -p "${dir}"
-  age -d -i "${AGE_IDENTITY}" "${file}" | tar -xf - -C "${dir}" || return 1
+  # age's own reason separates "this bundle is not ours" from "this bundle is damaged", and it only ever reached
+  # stderr: every caller then reported a bundle encrypted to ANOTHER host as a corrupt copy. Found on the D-7 drill
+  # (2026-11-10): a rebuilt host pointed at the old host's backup target — which docs/operations/rebuild-vps.md step 4
+  # tells you to do — failed make restore-test and make doctor and raised an alert over a bundle that was perfectly
+  # intact and simply encrypted to the key of the host it replaced. Keep the reason, and let callers say which it is.
+  agerr="$(mktemp)"
+  rc=0
+  age -d -i "${AGE_IDENTITY}" "${file}" 2>"${agerr}" | tar -xf - -C "${dir}" || rc=$?
+  if (( rc != 0 )); then
+    cat "${agerr}" >&2
+    if grep -q 'no identity matched any of the recipients' "${agerr}"; then
+      rm -f "${agerr}"
+      # ${expected}, not the file's name: callers fetch into a fixed bundle.tar.age, which would tell nobody which bundle.
+      fail "${expected} is intact but was not encrypted to this host — its recipients do not include this host's age key, so only the recovery key can open it: make restore BACKUP=${expected} AGE_KEY=<recovery key file> ADOPT_KEY=1. A bundle left on a shared target by the host this one replaced reads exactly like this (docs/operations/rebuild-vps.md)"
+      return 4
+    fi
+    rm -f "${agerr}"
+    return 1
+  fi
+  rm -f "${agerr}"
   [[ -s "${dir}/manifest.json" && -s "${dir}/db.dump" && -s "${dir}/key-bundle.env" ]] || return 1
   have="$(jq -r '.name // empty' "${dir}/manifest.json")"
   if [[ "${have}" != "${expected}" ]]; then

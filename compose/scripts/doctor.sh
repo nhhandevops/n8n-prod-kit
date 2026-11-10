@@ -470,7 +470,15 @@ else
   rt_success="$(awk '$1 == "restore_test_last_success_timestamp_seconds" { print $2 }' <<<"${metrics}")"
   rt_status="$(awk '$1 == "restore_test_last_status" { print $2 }' <<<"${metrics}")"
   if [[ "${rt_status}" == "0" ]]; then
-    flag_fail "the last restore test FAILED — make restore-test shows why; a backup that does not restore is not a backup"
+    # The reason is already written down in the report the test leaves behind; printing it beats sending the operator
+    # off to run a second command — and for one case ("not encrypted to this host") the generic sentence below is
+    # actively wrong, because that bundle does restore, with the recovery key.
+    rt_note="$(compose exec -T backup cat /state/restore-test.json 2>/dev/null | jq -r '.note // empty' 2>/dev/null || true)"
+    if [[ -n "${rt_note}" ]]; then
+      flag_fail "the last restore test FAILED: ${rt_note} (make restore-test re-runs it)"
+    else
+      flag_fail "the last restore test FAILED — make restore-test shows why; a backup that does not restore is not a backup"
+    fi
   elif [[ -z "${rt_success}" ]]; then
     flag_warn "no restore test has run yet — make restore-test (weekly from cron)"
   else

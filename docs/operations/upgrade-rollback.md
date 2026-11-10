@@ -110,7 +110,8 @@ they differ. When it cannot read the database it refuses too (it never guesses):
 `FORCE_VERSION=1` overrides the comparison (not a pending upgrade) — only when you know why they differ. `make restart`
 only refuses for an n8n service during an unfinished upgrade (a restart never changes an image). `make clean` discards
 the upgrade state together with the volumes it described. `make restore` refuses a bundle made by a **newer** n8n than
-the version that would run on it (exit 5) and says which bundle to restore after moving to that version. Every backup
+the version that would run on it (`scripts/restore.sh` exits 5; `make` shows `Error 5` and exits 2 itself, as it does
+for every failed recipe) and says which bundle to restore after moving to that version. Every backup
 records the n8n version from the database it dumps (n8n's own record), not from `versions.env`.
 
 ## versions.env is a tracked file

@@ -7,6 +7,8 @@
 #   2. keep the recovery key aside      what the operator has in the password manager
 #   3. make clean YES=1, delete .env + both age keys   the old host is gone
 #   4. make init FORCE=1 + make up      a NEW host: new N8N_ENCRYPTION_KEY, new age keys, an empty n8n
+#   5a. restore with no AGE_KEY         exit 4: intact, but not encrypted to this host (not "corrupt copy?")
+#   5b. make restore-test on a target holding only that bundle   same cause, from the weekly job's mouth
 #   5. restore WITHOUT ADOPT_KEY        must stop with exit 3 and change nothing
 #   6. make restore … AGE_KEY=<recovery key> ADOPT_KEY=1 YES=1
 #   7. the old key is back in .env and the full smoke suite passes: the restored owner logs in, workflows execute,
@@ -62,6 +64,35 @@ done
 [[ "$(env_get N8N_ENCRYPTION_KEY)" != "${old_key}" ]] || die "init did not generate a new key"
 make -s up >/dev/null
 ok "new host is up with a new N8N_ENCRYPTION_KEY and new age keys"
+
+step "5a. with THIS host's age key only: refuse, and say the bundle belongs to another host"
+# The gap the D-7 drill found on a real second host (2026-11-10): this is the state a rebuilt host is in before its
+# own first backup, and every caller used to call the old host's intact bundle a corrupt copy.
+rc=0
+out="$(BACKUP="${name}" YES=1 scripts/restore.sh 2>&1)" || rc=$?
+printf '%s\n' "${out}" >&2
+grep -qF 'was not encrypted to this host' <<<"${out}" ||
+  die "the refusal did not name the real cause (this host is not a recipient)"
+[[ "${rc}" == "4" ]] || die "expected exit 4 (not a recipient), got ${rc}"
+scripts/status.sh >/dev/null || die "the stack is not healthy after the refused fetch"
+ok "refused with exit 4 and named the cause"
+
+step "5b. the weekly restore test must call a foreign bundle foreign, not corrupt"
+# A target holding ONLY the old host's bundle: what rebuild-vps.md step 4 produces when the new host is pointed at
+# the old host's remote. compose run reads .env when it creates the container, so no make up is needed in between.
+mkdir -p "${vault}/disk/manual"
+cp "backups/manual/${name}.tar.age" "${vault}/disk/manual/"
+env_set BACKUP_LOCAL_PATH "${vault}/disk"
+env_set BACKUP_REMOTES "/backups/external"
+rc=0
+out="$(make -s restore-test 2>&1)" || rc=$?
+printf '%s\n' "${out}" >&2
+(( rc != 0 )) || die "the restore test passed on a bundle this host cannot decrypt"
+grep -qF 'is not encrypted to this host' <<<"${out}" ||
+  die "the restore test still blames a corrupt copy for a bundle encrypted to another host"
+env_set BACKUP_REMOTES "/backups/local"
+env_set BACKUP_LOCAL_PATH ""
+ok "reported the cause, not 'corrupt copy?'"
 
 step "5. restore without ADOPT_KEY must refuse and change nothing"
 rc=0

@@ -93,11 +93,14 @@ fi
 
 # fetch_verified REMOTE PATH DIR — download, decrypt, verify; the bundle file is removed again (tmpfs space)
 fetch_verified() {
+  local urc=0
   rclone copyto "${1}/${2}" "${rt}/bundle.tar.age" || return 1
   size="$(stat -c %s "${rt}/bundle.tar.age")"
   rcpt_count="$(recipient_count "${rt}/bundle.tar.age")"
-  unpack_bundle "${rt}/bundle.tar.age" "${3}" "${2##*/}" || return 1
+  # 4 = intact but encrypted to another host; the caller says that rather than "corrupt copy?"
+  unpack_bundle "${rt}/bundle.tar.age" "${3}" "${2##*/}" || urc=$?
   rm -f "${rt}/bundle.tar.age"
+  return "${urc}"
 }
 
 if [[ "${want}" == "latest" ]]; then
@@ -124,7 +127,12 @@ if [[ "${want}" == "latest" ]]; then
       note="the newest backup on ${r} is ${age_h} h old (limit ${max_age_h} h) — the nightly backup is not working"
       finish
     fi
-    if ! fetch_verified "${r}" "${path}" "${rt}/v"; then
+    fetch_rc=0
+    fetch_verified "${r}" "${path}" "${rt}/v" || fetch_rc=$?
+    if (( fetch_rc == 4 )); then
+      note="newest bundle on ${r} (${path}) is not encrypted to this host — it belongs to the host this one replaced, and only the recovery key opens it; this host's own backup has not reached ${r} yet (make backup-now)"
+      finish
+    elif (( fetch_rc != 0 )); then
       note="newest bundle on ${r} (${path}) does not decrypt/verify — corrupt copy?"
       finish
     fi
