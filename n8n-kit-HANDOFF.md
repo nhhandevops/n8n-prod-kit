@@ -509,7 +509,13 @@ driving the VM.
   `vmrun start <vm-folder>\server1.vmx nogui` and `vmrun stop <vm-folder>\server1.vmx soft` (soft asks the guest to
   shut down through VMware Tools, so containers get a real SIGTERM; `vmrun list` shows what is running, `vmrun
   getGuestIPAddress <vmx> -wait` its NAT address). `vmrun.exe` lives under
-  `C:\Program Files (x86)\VMware\VMware Workstation\`.
+  `C:\Program Files (x86)\VMware\VMware Workstation\`. **Finding `<vm-folder>`:** the VMs are not under
+  `Documents\Virtual Machines`, and a recursive search of `C:\` and `D:\` does not find them — ask VMware instead,
+  which is instant and survives any move: `Select-String -Path "$env:APPDATA\VMware\inventory.vmls" -Pattern 'config|DisplayName'`.
+  On this desktop that is `E:\VMs\` (2026-11-10: `server1\server1.vmx`, the `n8nvm` guest, and the D-7 drill's
+  `server2\server2\server2.vmx`). A guest's own IP, when VMware Tools is not up yet, is in
+  `C:\ProgramData\VMware\vmnetdhcp.leases` by MAC; the NAT network is vmnet8 and its gateway is in
+  `C:\ProgramData\VMware\vmnetnat.conf`.
 - **Reaching it:** `ssh n8nvm` — the `Host n8nvm` block is in `~/.ssh/config` **on this desktop only** (VM user,
   NAT address, `IdentityFile`, `IdentitiesOnly yes`, keepalives). The VM is on VMware's NAT network, so it is
   reachable from this desktop and nowhere else. After a power-on, ssh refuses for a minute or so while the guest
