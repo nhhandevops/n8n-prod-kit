@@ -104,9 +104,10 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 >
 > **1. Merge PR #38** (`docs/d7-dr-drill-second-host`, D-7). **The full suite is green on `30a87d5`**, the commit
 > carrying every code change — `lint` ✅ 1m20s · `upgrade` ✅ 12m25s · **`smoke` ✅ 15m26s**, which is the job that
-> runs `tests/ci/dr-drill.sh`, so the new **steps 5a/5b** are CI-verified (run `42846536337`). The run in flight
-> when the session ended is on `ef2db02`, one commit later, and that commit touches **this file only** — it cannot
-> affect `smoke` or `upgrade`. Still worth one `gh pr checks 38` before merging, but expect green.
+> runs `tests/ci/dr-drill.sh`, so the new **steps 5a/5b** are CI-verified (run `42846536337`). **Every commit after
+> `30a87d5` on this branch changes markdown only** — this file and `n8n-kit-PROD-PLAN.md` — so none of them can
+> affect `smoke` or `upgrade`; `git diff 30a87d5..HEAD --stat` says so in one line. Still worth one
+> `gh pr checks 38` before merging, but expect green.
 > **An has to run the merge: `gh pr merge 38 --squash --delete-branch`.** The agent cannot — and note this is no
 > longer only the Bash-tool refusal recorded in earlier sessions: on 2026-11-10 the attempt **through the PowerShell
 > tool** (the route that merged #32) was denied too, by the auto-mode classifier, reason **"Merge Without Review"**.
