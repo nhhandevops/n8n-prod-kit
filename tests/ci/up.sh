@@ -54,7 +54,7 @@ make -C compose doctor
 # The expiredcert string must not contain the elapsed time: the injected date ages by a day every day, so
 # 'EXPIRED 14 days ago' was already 'EXPIRED 15 days ago' the day after it was written. Assert the injected
 # date instead, which never moves.
-for token in expiredcert:'ago (Oct 26 12:00:51 2026 GMT)' certwedge:'holds no key for it under'; do
+for token in expiredcert:'ago (Oct 26 12:00:51 2026 GMT)' futurecert:'is NOT VALID YET' certwedge:'holds no key for it under'; do
   out="$(DOCTOR_SIMULATE="${token%%:*}" make -C compose doctor 2>&1 || true)"
   printf '%s\n' "${out}"
   grep -qF "${token#*:}" <<<"${out}" ||
