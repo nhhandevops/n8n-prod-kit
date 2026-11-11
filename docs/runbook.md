@@ -345,19 +345,21 @@ than theoretical.
 failure output looks like before you have a real failure, inject some on purpose:
 
 ```bash
-DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,certwedge make -C compose doctor
+DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge make -C compose doctor
 ```
 
 It prints an `[info]` line saying some failures below are injected on purpose, and exits non-zero. On this
-stack **five of the six** keys bite: `nokey` (a blank encryption key), `unhealthy` (`n8n-worker-2` reported
+stack **six of the seven** keys bite: `nokey` (a blank encryption key), `unhealthy` (`n8n-worker-2` reported
 unhealthy, with its log lines), `lowdisk` (93 % used), `expiredcert` (the certificate the edge serves read as
-the 12-hour leaf a real host went on serving for 14 days after it expired, on 2026-11-09) and `certwedge`
-(Caddy serving a name whose key is gone from its storage, so renewal can never succeed again). `baddns` is the
+the 12-hour leaf a real host went on serving for 14 days after it expired, on 2026-11-09), `futurecert` (that
+certificate read as starting 7 hours from now — what a wrong clock at issuance produces, measured on
+2026-11-11) and `certwedge` (Caddy serving a name whose key is gone from its storage, so renewal can never
+succeed again). `baddns` is the
 one that does nothing here: it feeds a wrong answer to the DNS comparison that runs only in the ACME TLS modes,
-so under `TLS_MODE=internal` it changes nothing — unlike the two certificate keys, which bite in every mode on
-purpose, because internal TLS is what the kit's own dev hosts run. Use `expiredcert` or `certwedge` alone to see
-each certificate FAIL by itself; together they produce the single combined line. Nothing on the host is touched
-either way.
+so under `TLS_MODE=internal` it changes nothing — unlike the three certificate keys, which bite in every mode on
+purpose, because internal TLS is what the kit's own dev hosts run. Use them one at a time to see
+each certificate FAIL by itself; `expiredcert` and `certwedge` together produce the single combined line. Nothing
+on the host is touched either way.
 
 !!! note
 
@@ -2237,9 +2239,18 @@ from the kit's local CA`.
 certificate, so the metric is honestly absent — but "is the certificate the edge serves still valid, and can Caddy
 still renew it" has to be asked here too. On 2026-11-09 it had to be: after 14 days powered off, this VM served a leaf
 that had expired 14 days earlier while all 11 containers reported healthy, because Caddy's healthcheck is its admin
-API and knows nothing about TLS (`warning_bug_and_solutions.md`). Doctor now fails on both halves — an expired served
-certificate, and a served name whose key is missing from Caddy's storage, which is the wedge showing up hours before
-the cached copy dies.
+API and knows nothing about TLS (`warning_bug_and_solutions.md`). Doctor now fails on **three** halves — an expired
+served certificate; one that is **not valid yet**, which breaks HTTPS identically and which nothing repairs on its
+own, because Caddy renews on expiry and a leaf stamped in the future looks fresh to it (2026-11-11: a guest whose
+clock was 7 hours ahead at boot issued one, and it survived a power cycle while doctor said `[ OK ]`); and a served
+name whose key is missing from Caddy's storage, which is the wedge showing up hours before the cached copy dies.
+
+**A clock you have not checked is a certificate you have not checked.** Both bad-certificate cases above come from
+time, and the kit's `clock synchronised (NTP)` check cannot catch the second one: by the time doctor runs, NTP has
+corrected the *system* clock and the damage is already baked into an issued certificate. On a VMware guest make sure
+`vmware-toolbox-cmd timesync status` says **Disabled** — let NTP own the clock, not the hypervisor — and that
+`timedatectl` shows an RTC that is not holding local time. A host that boots 7 hours ahead for 30 seconds is long
+enough.
 
 **If it goes wrong (ACME modes).** `make -C compose logs SERVICE=backup SINCE=3h` shows
 `cert-check: could not read the certificate Caddy serves for ...` when the check fails.

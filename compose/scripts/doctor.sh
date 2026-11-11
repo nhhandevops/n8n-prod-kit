@@ -11,7 +11,7 @@
 # Valkey eviction policy, AOF, memory · N8N_ENDPOINT_* overrides (would break the Caddyfile routing) · recovery key still
 # on this host · backups (from S5) · SELinux/firewalld on RHEL hosts · WSL hints.
 #
-# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,certwedge  injects failures so the output format and
+# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge  injects failures so the output format and
 # exit code can be tested without breaking a real host (TC-026). baddns only bites in the ACME modes; expiredcert
 # and certwedge work in every TLS mode, including the internal one the kit's own dev hosts run.
 # shellcheck disable=SC2310,SC2311,SC2312
@@ -226,8 +226,19 @@ fi
 cert_names=("${domain}")
 if [[ "$(env_get KUMA_ENABLED)" == "on" ]]; then cert_names+=("kuma.${domain}"); fi
 for cert_name in "${cert_names[@]}"; do
-  not_after="$(echo | openssl s_client -connect "127.0.0.1:${https_port}" -servername "${cert_name}" 2>/dev/null |
-    openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2 || true)"
+  # BOTH ends of the validity window, from one connection. notBefore matters as much as notAfter and is the easier
+  # one to forget: a certificate that is not yet valid is refused by every client exactly as an expired one is.
+  # It happens whenever the clock was wrong at the moment of issuance — a VM whose RTC holds local time, a host
+  # whose timezone was just corrected, a container started before NTP settled — and **nothing self-heals it**,
+  # because certmagic decides to renew from notAfter alone: a leaf stamped hours in the future looks fresh and is
+  # kept. Measured on the 24.04 cloud-image VM on 2026-11-11: VMware time sync handed the guest a clock 7 h ahead
+  # at boot, caddy issued a 12 h leaf stamped 7 h in the future, NTP then corrected the clock, and the bad leaf
+  # survived a full power cycle while `make doctor` reported `[ OK ] … 18 h 58 min left of a 12 h leaf` — the
+  # impossible number that should have been the check.
+  cert_dates="$(echo | openssl s_client -connect "127.0.0.1:${https_port}" -servername "${cert_name}" 2>/dev/null |
+    openssl x509 -noout -dates 2>/dev/null || true)"
+  not_before="$(awk -F= '/^notBefore=/ { print $2 }' <<<"${cert_dates}")"
+  not_after="$(awk -F= '/^notAfter=/ { print $2 }' <<<"${cert_dates}")"
   if sim expiredcert; then not_after="Oct 26 12:00:51 2026 GMT"; fi   # the leaf the 2026-11-09 incident kept serving
   if [[ -z "${not_after}" ]]; then
     flag_warn "no certificate could be read for ${cert_name} on 127.0.0.1:${https_port} — HTTPS answers nothing for that name: caddy down, or a first issuance still in progress (make status; make logs SERVICE=caddy SINCE=15m)"
@@ -236,6 +247,15 @@ for cert_name in "${cert_names[@]}"; do
   not_after_ts="$(date -d "${not_after}" +%s 2>/dev/null || true)"
   if [[ -z "${not_after_ts}" ]]; then
     flag_warn "could not read the expiry date of ${cert_name}'s certificate ('${not_after}') — check it by hand: echo | openssl s_client -connect 127.0.0.1:${https_port} -servername ${cert_name} 2>/dev/null | openssl x509 -noout -dates"
+    continue
+  fi
+  now_ts="$(date +%s)"
+  not_before_ts="$(date -d "${not_before:-}" +%s 2>/dev/null || true)"
+  if sim futurecert; then not_before_ts=$(( now_ts + 25200 )); not_before="$(date -d "@${not_before_ts}" -u '+%b %e %H:%M:%S %Y GMT')"; fi
+  # 60 s of slack: a certificate issued this second can read a moment ahead of this clock without anything being wrong.
+  if [[ -n "${not_before_ts}" ]] && (( not_before_ts > now_ts + 60 )); then
+    starts_in="$(( (not_before_ts - now_ts) / 3600 )) h $(( ((not_before_ts - now_ts) % 3600) / 60 )) min"
+    flag_fail "certificate for ${cert_name} is NOT VALID YET — it starts ${starts_in} from now (${not_before}), so HTTPS is refused for everyone exactly as it would be for an expired one (browser, webhooks, make smoke, make upgrade's verify step). The clock was wrong when it was issued; this host's clock reads $(date -u '+%b %e %H:%M:%S %Y GMT'). Check the clock first (timedatectl: 'System clock synchronized' and an RTC that is NOT local time — on a VMware guest also 'vmware-toolbox-cmd timesync status', which should be Disabled so NTP owns the clock), then force a re-issue, because caddy will not: it renews on expiry, and this leaf looks fresh to it. Delete the stored copy and restart — make -C compose exec caddy rm -rf /data/caddy/certificates/*/${cert_name} && make -C compose restart SERVICE=caddy. A restart on its own keeps it (proven 2026-11-11: the bad leaf survived a full power cycle)"
     continue
   fi
   # Is that name's key still in storage? Caddy renews only what it holds there, so a name served from the in-memory
@@ -257,7 +277,7 @@ for cert_name in "${cert_names[@]}"; do
   fi
   if sim certwedge; then stored_state=no; fi
   # Seconds, not days: a healthy 12 h leaf always has 0 days left, so the ACME day thresholds cannot be reused here.
-  secs_left=$(( not_after_ts - $(date +%s) ))
+  secs_left=$(( not_after_ts - now_ts ))
   if (( secs_left < 0 )); then
     expired_for="$(( -secs_left / 3600 )) h"
     if (( -secs_left >= 172800 )); then expired_for="$(( -secs_left / 86400 )) days"; fi
