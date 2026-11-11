@@ -82,28 +82,27 @@ is a ceiling, not a reservation: real use is far lower, and its job is to cap a 
 exceeds its limit is OOM-killed and restarted, and Docker allows the same amount again in swap when the host has swap.
 
 The floor is what `make preflight` enforces: at least 3.5 GB RAM, 2 CPUs and 10 GB free on the Docker root. With
-`COMPOSE_PROFILES=monitoring` it warns below 5 GB, because that profile adds roughly 1 GB in practice (2.9 GB of
-limits). `ContainerMemoryPressure` and `ContainerOOMKilled` in [monitoring.md](monitoring.md) tell you a limit is too
+`COMPOSE_PROFILES=monitoring` it warns below 5 GB. That profile's six containers hold 2.9 GB of limits but
+measured **about 440 MiB in total** on 2026-11-11, for roughly 0.7 GB more host RAM in use
+([Sizing](../sizing.md)) — so the 5 GB threshold is a comfortable margin, not a tight one. `ContainerMemoryPressure` and `ContainerOOMKilled` in [monitoring.md](monitoring.md) tell you a limit is too
 tight before a user does.
 
-## Sizing: one data point, honestly
+## Sizing: the numbers live on their own page
 
-Everything below was measured on **one** host with **one** workflow shape: a 2 vCPU / 7.7 GB Ubuntu 24.04 VM running
-the core stack only, `WORKER_REPLICAS=2`, `WORKER_CONCURRENCY=10`, driven by `make loadtest`. Its async fixture is a
-webhook that answers on receipt feeding one Code node, so every execution includes a round trip to the runner sidecar.
+[Sizing](../sizing.md) has what was measured and on what — two host shapes (2 and 4 vCPU), three worker counts, with
+and without the monitoring profile, every configuration run at least twice. The two results that change how you tune
+this stack:
 
-| Measurement | Result |
-|---|---|
-| 200-job burst | absorbed in 14 s |
-| peak backlog during the burst | 161 jobs waiting |
-| webhook intake | 40 req/s |
-| end-to-end throughput | ~850 executions/min |
+- **Doubling the cores roughly doubles everything** (2 → 4 vCPU: intake ×1.8, throughput and drain ×2).
+- **The worker curve has a maximum, and on four cores it is at two workers.** Four workers *cost* about 15 % of
+  throughput and start returning 502s, because the extra processes compete with the ones that accept requests.
 
-What it does not tell you is how *your* workflows behave. Executions per minute is mostly a function of how long one
-execution takes: an HTTP Request node waiting 2 s on a third-party API, or a node moving a 20 MB binary through
-Postgres, changes it by an order of magnitude. The kit's planning table (`n8n-kit-PLAN.md` §2.6) is design intent
-rather than measurement — 2 vCPU / 4 GB / 40 GB for ~20 workflows under 10k executions/day, 4 vCPU / 8 GB / 80 GB for
-~100 workflows under 100k/day. Use it to pick a VPS, then measure.
+What no measurement there tells you is how *your* workflows behave. Executions per minute is mostly a function of how
+long one execution takes: an HTTP Request node waiting 2 s on a third-party API, or a node moving a 20 MB binary
+through Postgres, changes it by an order of magnitude. The kit's planning table (`n8n-kit-PLAN.md` §2.6) is design
+intent rather than measurement — 2 vCPU / 4 GB / 40 GB for ~20 workflows under 10k executions/day, 4 vCPU / 8 GB /
+80 GB for ~100 workflows under 100k/day — and the measured hosts cleared more than twenty times that rate for a
+trivial workflow. Use the table to pick a VPS, then measure your own.
 
 ## Measure your own with `make loadtest`
 

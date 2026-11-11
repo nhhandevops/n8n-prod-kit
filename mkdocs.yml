@@ -57,6 +57,7 @@ nav:
       - Chaos drills: operations/chaos-drills.md
       - Rebuild a host: operations/rebuild-vps.md
       - RHEL-family hosts: operations/rhel-hosts.md
+  - Sizing: sizing.md
   - Compatibility: compat.md
   - FAQ: faq.md
   - Contributing: contributing.md
