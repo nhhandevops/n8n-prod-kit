@@ -66,10 +66,14 @@ check "the shipped schema.sql was renamed for this test (no 'idempotency_keys' l
 check "the renamed schema creates ${table}" grep -q "CREATE TABLE IF NOT EXISTS ${table}" <<<"${schema_sql}"
 
 # The password goes in on stdin exactly as the README tells a user to do it — never on a command line, where
-# every user on the host could read it out of /proc.
+# every user on the host could read it out of /proc. The escaping is the README's too: psql's \set lexer eats
+# a backslash and ends the value at a single quote, so a password containing either would be stored as
+# something else. rand_hex can produce neither, so this line is here to keep the tested recipe identical to
+# the documented one rather than to fix anything in this script.
+esc_password="$(printf '%s' "${ledger_password}" | sed -e 's/\\/\\\\/g' -e "s/'/''/g")"
 schema_log="${STATE_DIR}/idem-schema-${nonce}.log"
 applied=0
-{ printf "\\set idem_password '%s'\n" "${ledger_password}"; printf '%s\n' "${schema_sql}"; } |
+{ printf "\\set idem_password '%s'\n" "${esc_password}"; printf '%s\n' "${schema_sql}"; } |
   compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U n8n -d n8n >"${schema_log}" 2>&1 && applied=1
 check "schema.sql applied through psql on stdin (log: ${schema_log})" test "${applied}" = 1
 if (( applied == 0 )); then
