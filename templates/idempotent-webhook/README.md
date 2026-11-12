@@ -128,8 +128,10 @@ the slowest run of the work, or an execution still running will be declared stal
   matches no rows if the lease is not this execution's. At `typeVersion` 2.8 the node does not go quiet on
   that: it emits one `{success: true}` item (`utils.ts` substitutes it for an empty result on a non-`SELECT`
   query), which carries no `state` — so the guard that matters is `row.state !== 'done'` in the next node,
-  which raises rather than answering 200 for work nothing will remember. "Always Output Data" is left on as
-  belt-and-braces for older node versions, not as the guard.
+  which raises rather than answering 200 for work nothing will remember. "Always Output Data" is left on only
+  in case a future node version stops substituting that item; it is not what catches the 0-row case today,
+  and every version this kit has shipped against substitutes it (`utils.ts`, both the `< 2.3` and the current
+  branch).
 - **Ownership is a column, not `xmax = 0`.** The usual trick for "did my `INSERT` create this row" reads
   Postgres' internal `xmax`, which is folklore rather than a documented contract. Here the row records the
   execution that inserted it, and `owner = $2` is the test.
