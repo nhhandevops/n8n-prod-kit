@@ -81,8 +81,16 @@ check "the ledger role exists" test "$(kit_psql "select count(*) from pg_roles w
 
 # The least privilege the template's README promises, asserted instead of only claimed: the role the workflow
 # holds may claim and complete keys, and may not read n8n's own tables or delete ledger rows.
-check "the ledger role may INSERT and UPDATE its own table" \
-  test "$(kit_psql "select has_table_privilege('${role}', '${table}', 'insert') and has_table_privilege('${role}', '${table}', 'update')")" = "t"
+check "the ledger role may INSERT a claim and complete one (state, result, done_at)" \
+  test "$(kit_psql "select has_table_privilege('${role}', '${table}', 'insert')
+    and has_column_privilege('${role}', '${table}', 'state', 'update')
+    and has_column_privilege('${role}', '${table}', 'result', 'update')
+    and has_column_privilege('${role}', '${table}', 'done_at', 'update')")" = "t"
+# UPDATE is granted per column, so the credential cannot rename a key or take over somebody else's lease.
+# This is also why the claim query's no-op assignment targets `state` and not `key`.
+check "the ledger role may NOT rewrite a key or an owner" \
+  test "$(kit_psql "select has_column_privilege('${role}', '${table}', 'key', 'update')
+    or has_column_privilege('${role}', '${table}', 'owner', 'update')")" = "f"
 check "the ledger role may NOT DELETE ledger rows (retention is the owner's job)" \
   test "$(kit_psql "select has_table_privilege('${role}', '${table}', 'delete')")" = "f"
 check "the ledger role may NOT read n8n's stored credentials" \
@@ -184,6 +192,11 @@ check "a delivery with no idempotency key is refused (HTTP 500, <= 180 s)" \
 check "...for the right reason (the key check, not a cold runner)" \
   wait_for 30 "the refusal to be recorded" gate_error_says 'no idempotency key'
 check "refusing it did the work zero times ($(side_effects) sink execution(s))" test "$(side_effects)" = "0"
+# Measured, not assumed to be 1: wait_for polls, so on a slow stack the first attempts can 404 (no execution)
+# while a later one errors — and if activation lands between two polls, more than one 500 can be recorded.
+# The accounting assertion after the burst needs the real number, or it fails on a correct stack.
+warmup_errors="$(gate_executions error)"
+info "the warm-up left ${warmup_errors} errored execution(s) behind"
 
 # --- the race: one key, N deliveries, all at once ---------------------------------------------------------
 info "firing the same idempotency key ${burst_key} ${N} times with ${N} in flight"
@@ -225,8 +238,8 @@ check "its owner is the n8n execution that claimed it (exec:...)" \
 # running or waiting.
 gate_success="$(gate_executions success)"
 gate_error="$(gate_executions error)"
-check "n8n recorded one execution per delivery (${gate_success} success + ${gate_error} error = ${N} + the no-key refusal)" \
-  test "$(( gate_success + gate_error ))" = "$(( N + 1 ))"
+check "n8n recorded one execution per delivery (${gate_success} success + ${gate_error} error = ${N} + ${warmup_errors} from the warm-up)" \
+  test "$(( gate_success + gate_error ))" = "$(( N + warmup_errors ))"
 check "the 200s are exactly the executions that succeeded (${ok_n:-0} vs ${gate_success})" \
   test "${ok_n:-0}" = "${gate_success}"
 

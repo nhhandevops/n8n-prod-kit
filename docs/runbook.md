@@ -868,7 +868,7 @@ files there ([Backup and restore](operations/backup-restore.md)).
 
 ### 7. `make smoke`: the automated version of everything you just did
 
-**What it is.** Ten scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
+**What it is.** Eleven scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
 did by hand, and look inside containers only where the outside cannot see. They run in order and stop at the
 first failure, because later ones build on earlier ones (04 creates the workflow 05 inspects).
 

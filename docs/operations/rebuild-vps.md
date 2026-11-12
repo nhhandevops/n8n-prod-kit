@@ -158,6 +158,11 @@ make backup-now                   # first backup of the new host
 make restore-test                 # prove the new host can restore its own bundle
 ```
 
+**If any workflow uses the idempotency ledger** (`templates/idempotent-webhook/`), re-apply its
+`schema.sql` here too. The restore brings the table and its rows back but not its `GRANT`s —
+`pg_restore --no-owner --no-privileges` — and this host has no `n8n_idem` role at all, so until you do, every
+delivery answers 500 or fails to authenticate. Details in [Idempotency](idempotency.md).
+
 The `N8N_ENCRYPTION_KEY` in the new `.env` is now the old one, so what is in your password manager still matches — it
 is the *recovery* key that is new and needs storing. If workflows keep files in `/home/node/.n8n-files`, restore that
 volume from wherever you back it up separately: it is not in the bundle.

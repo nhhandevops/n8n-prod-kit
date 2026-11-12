@@ -86,8 +86,11 @@ arriving in the same millisecond **waits** for the first to commit and then read
 of also inserting. `owner` is written on insert and never changed, so `owner = $2` is "this execution claimed
 it" — no need for the `xmax = 0` trick, which reads a Postgres internal rather than a documented contract.
 
-`DO NOTHING` would be wrong here: on a conflict it returns **zero** rows, and a node that outputs nothing ends
-its branch in n8n without telling anyone why.
+`DO NOTHING` would be wrong here. On a conflict it returns **zero** rows — which the Postgres node at
+`typeVersion` 2.8 turns into a single `{success: true}` item for a non-`SELECT` query. That item looks like
+success, carries no `route`, and would send the delivery down whichever branch the `IF` node's type validation
+happens to choose. The loser of a true tie also cannot *see* the winner's uncommitted row, so `DO NOTHING`
+cannot tell "somebody else has it" from "nobody has it" at all.
 
 ---
 
@@ -105,9 +108,10 @@ Three stores are available on a stack this kit builds. They are not equivalent.
 | Good for | anything that costs money | a short dedupe window, seconds to hours | a single-worker flow where a duplicate is an annoyance |
 
 **The Postgres table is the kit's recommendation**, for one reason beyond atomicity: it lives in n8n's own
-database, so the backup, the restore and the DR drill this kit already proves cover it with no extra work
-([backup and restore](backup-restore.md)). Its price is on the same coin — see *What a restore does to the
-ledger* below.
+database, so every ledger row is carried by the backup, the restore and the DR drill this kit already proves
+([backup and restore](backup-restore.md)). The rows, not the plumbing — a restore brings the table back
+*without* its grants, and a rebuilt host has no ledger role at all. See *What a restore does to the ledger*
+below; it is two commands, but it is not nothing.
 
 ### The built-in "Remove Duplicates" node is not a gate
 
@@ -130,8 +134,9 @@ the source, rather than reasoned about.
   of items to be processed exceeds the maximum history size. Please increase the history size or reduce the
   number of items to be processed."* Measured with `historySize: 2`: once two keys were stored, **every** later
   delivery failed with HTTP 500 and nothing was recorded — including keys the node had never seen. At the
-  default of 10 000 that means the workflow stops working on its 10 000th distinct key until somebody raises the
-  limit or runs *Clear Deduplication History* — and clearing it is exactly what re-opens the replay window. The
+  default of 10 000 the workflow works for 10 000 distinct keys and then stops on the 10 001st, until somebody
+  raises the limit or runs *Clear Deduplication History* — and clearing it is exactly what re-opens the replay
+  window. The
   editor hints at it from half capacity: *"Some duplicates may be not be removed since you're approaching the
   maximum history size."*
 
@@ -158,8 +163,23 @@ live. The template's claim query reports one of four:
 |---|---|---|
 | `first` | nobody had it | do the work, then complete the lease |
 | `replay` | completed earlier | answer with the stored result, do nothing else |
-| `in_flight` | claimed recently, not completed | refuse with a 5xx — the caller retries and gets the result once it exists |
+| `in_flight` | claimed recently, not completed | refuse with a 5xx — the caller retries and gets the result once it exists, *if* the claimer finishes |
 | `stale` | claimed longer ago than the lease, never completed | **refuse and alert** |
+
+Two consequences of that table worth stating before you run it in anger.
+
+**A failed execution leaves a lease exactly like a killed one does.** The claim commits before the work
+starts — it has to, that is the whole point — so if the thing you call is down and the work node exhausts its
+retries, the key stays `in_progress`. Every delivery for the rest of the lease is refused as `in_flight`, and
+no `replay` ever comes, because nothing completed it. Then it goes `stale` and needs the same human
+reconcile and an owner-run `DELETE` to re-open the key. During a downstream outage, that is the shape of
+your backlog.
+
+**All three refusals fail the execution, so all three reach the Error Workflow** — not only `stale`. On a
+concurrent burst that means one alert per racing delivery (the kit measured 4 in-flight refusals in a
+20-wide burst), plus one for every keyless request anyone sends. If only `stale` should page a human, filter
+in the handler: `stale` is the message containing `never completed`. Alerting on all of them is also a
+defensible choice, as long as it is a choice.
 
 `stale` is the honest case, and the reason this template does not try to be clever. The lease holder claimed
 the key and never came back — which is exactly what a killed worker leaves behind. Whether the work happened
@@ -204,11 +224,23 @@ FROM idempotency_keys WHERE state = 'in_progress' ORDER BY claimed_at;
 Empty is the normal answer. A handful of rows after an incident is expected; a steadily growing count means
 executions are dying between claim and completion.
 
-**What a restore does to the ledger.** Because the ledger is in n8n's database, `make restore` and
-`make rollback` move it back in time with everything else. A key recorded after the backup is gone, so the
-same delivery can be accepted again — which is correct if the downstream work was also rolled back, and a
-duplicate if it was not. After restoring a stack that charges money, reconcile against the downstream system
-before re-opening the endpoint to traffic.
+**What a restore does to the ledger.** Two separate things, and the second one surprises people.
+
+*The rows move back in time.* Because the ledger is in n8n's database, `make restore` and a migration-mode
+`make rollback` rewind it with everything else. A key recorded after the backup is gone, so the same delivery
+can be accepted again — correct if the downstream work was also rolled back, a duplicate if it was not. After
+restoring a stack that charges money, reconcile against the downstream system before re-opening the endpoint
+to traffic.
+
+*The grants do not come back at all.* `make restore` rebuilds the database with
+`pg_restore --no-owner --no-privileges` (`compose/backup/restore.sh`), so the table and its rows return while
+every `GRANT` on it is dropped — and on a rebuilt host the `n8n_idem` role does not exist in the first place,
+because roles live in the cluster rather than in the dump. The ledger then looks fine and every delivery
+answers 500 with `permission denied for table idempotency_keys`, or fails to authenticate at all. **Re-run
+`templates/idempotent-webhook/schema.sql` with the same password after any restore, migration-mode rollback,
+or host rebuild** — it is written to be safe to re-run, and it is the whole fix. Put it next to
+`make detach-recovery-key` in your own rebuild checklist; the kit's is in
+[rebuild a host](rebuild-vps.md).
 
 **Use a least-privileged role.** `POSTGRES_USER` (`n8n`) is the database's bootstrap superuser. A credential
 holding it gives every workflow on the instance — and anyone who can edit one — the ability to read every
