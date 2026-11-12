@@ -1,0 +1,13 @@
+# Direct dependency only. requirements-lint.txt is GENERATED from this, with hashes:
+#   pip-compile --generate-hashes --output-file requirements-lint.txt requirements-lint.in
+# Regenerate it when bumping, never hand-edit the lock.
+#
+# Why yamllint comes from PyPI and not apt: until 2026-11-11 CI installed it with `apt-get install yamllint`,
+# which made the whole pipeline depend on Ubuntu's mirrors for a linter. That day `azure.archive.ubuntu.com`
+# stopped resolving on GitHub's runners and every `lint` run died in its install step — and because `smoke` and
+# `upgrade` need `lint`, nothing was tested at all (bug log 2026-11-11). shellcheck and hadolint in the same step
+# come from pinned GitHub releases with sha256 checks and were unaffected.
+#
+# 1.33.0 is what Ubuntu 24.04 (noble) ships, so CI and the dev hosts — which still install it with apt, see
+# scripts/new-dev-vm.sh — agree on the version, and a lint result is the same in both places.
+yamllint==1.33.0

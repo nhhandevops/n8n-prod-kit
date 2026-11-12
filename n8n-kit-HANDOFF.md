@@ -107,22 +107,20 @@
 ### 🔄 In progress
 Format: `- [machine] [branch] what · started date · where it stopped · how to verify`
 
-> ## ⏱️ RESUME HERE (end of 2026-11-11)
+> ## ⏱️ RESUME HERE (2026-11-12)
 >
-> **Both VMs powered off. Nothing uncommitted. `main` is at the sizing merge.** Check what is open with
-> `gh pr list` and `gh run list --branch main --limit 4` rather than trusting a PR number written here — this block
-> has gone stale twice by naming them, so it no longer does.
+> **Check what is open with `gh pr list` and `gh run list --branch main --limit 4`** rather than trusting a PR
+> number written here — this block went stale twice by naming them, so it no longer does.
 >
-> **1. `main`'s CI is RED, and it is NOT the code.** Every `lint` run on 2026-11-11 died in the *install* step with
-> `Temporary failure resolving 'azure.archive.ubuntu.com'` — GitHub's runners could not reach Ubuntu's apt mirrors to
-> fetch **yamllint**. `smoke` and `upgrade` depend on `lint`, so they were **skipped**: nothing merged that day was
-> validated by CI, including the new `DOCTOR_SIMULATE=futurecert` assertion in `tests/ci/up.sh`, which has never
-> executed. What stands in for it: `make lint` green on a Linux host for both branches (shellcheck, hadolint,
-> yamllint, `mkdocs build --strict`), and the doctor behaviour verified by hand on `server2` — healthy leaf reads
-> `11 h 58 min left of a 12 h leaf`, `futurecert` FAILs, `expiredcert`/`certwedge` still FAIL their own way, and
-> HTTPS returned 200 after the real repair.
-> **First action: re-run it** (`gh run rerun <id> --failed`). If it passes, the day's work is validated and `main`
-> is green with nothing to change.
+> **1. The CI outage is over and its cause is fixed in this same PR.** For the record, because a red `lint` will
+> look like this again one day: through 2026-11-11 every `ci` run died in the `lint` job's **install** step on
+> `Temporary failure resolving 'azure.archive.ubuntu.com'` while fetching **yamllint from apt**, and since `smoke`
+> and `upgrade` both declare `needs: lint`, they were **skipped** — the red badge meant *nothing was tested*, not
+> that a test failed. Two PRs merged in that state (#39, #40). A plain re-run cleared it on 2026-11-12 with no
+> change to the repository, which is how an outage is told apart from a defect: **look at which step failed before
+> concluding anything about the code.** The fix here removes the cause — yamllint comes from a hash-locked wheel
+> (`requirements-lint.txt`, same contract `docs.yml` uses for MkDocs) and the `lint` job makes no apt call on the
+> normal path. `shellcheck` and `hadolint` were never affected: pinned releases, sha256-checked.
 >
 > **2. Then fix the cause, because waiting on Ubuntu's mirrors for a linter is the actual bug.** `ci.yml`'s lint job
 > installs **yamllint from apt**, which makes the whole pipeline — `smoke` and `upgrade` included, since they depend
