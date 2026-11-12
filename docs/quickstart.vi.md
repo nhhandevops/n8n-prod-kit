@@ -151,8 +151,8 @@ Hãy làm việc này **trước** `make smoke`, vì smoke sẽ tự tạo owner
 
 Khi đã có owner, bài kiểm tra đầu-cuối tuỳ chọn là `make smoke`: sức khoẻ dịch vụ, chuyển hướng HTTP→HTTPS,
 chuỗi chứng chỉ và các security header, owner/đăng nhập/API key, một webhook do pool trả lời chứ không phải
-main, một execution thật chạy trên worker kèm Code node, metrics, rồi một lần backup và một lần kiểm tra khôi
-phục. Bài test idempotent và tự xoá các workflow nó tạo ra. Suite chạy lần lượt và dừng ở lỗi đầu tiên, nên trên
+main, một execution thật chạy trên worker kèm Code node, metrics, một lần backup và một lần kiểm tra khôi
+phục, và hai template được ship chạy đầu-cuối (một alert khi có lỗi, và một webhook từ chối làm việc của nó hai lần). Bài test idempotent và tự xoá các workflow nó tạo ra. Suite chạy lần lượt và dừng ở lỗi đầu tiên, nên trên
 một bản cài lộ trình A mới tinh nó sẽ chạy tới `07-backup` rồi dừng: `BACKUP_REMOTES` vẫn còn trống. Lộ trình B
 pass hết, vì `init` đã đặt `BACKUP_REMOTES=/backups/local` cho domain dev.
 

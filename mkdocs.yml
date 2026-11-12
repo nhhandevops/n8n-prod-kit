@@ -53,6 +53,7 @@ nav:
       - Upgrade and rollback: operations/upgrade-rollback.md
       - Monitoring and alerts: operations/monitoring.md
       - Error workflows: operations/error-workflows.md
+      - Idempotency: operations/idempotency.md
       - Scaling: operations/scaling.md
       - Chaos drills: operations/chaos-drills.md
       - Rebuild a host: operations/rebuild-vps.md
