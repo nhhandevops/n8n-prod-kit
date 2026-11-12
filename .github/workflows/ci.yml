@@ -22,7 +22,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install linters (yamllint from apt; shellcheck + hadolint pinned releases, sha256-checked)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-lint.txt
+
+      - name: Install linters (yamllint from a hash-locked wheel; shellcheck + hadolint pinned releases, sha256-checked)
         env:
           # shellcheck is pinned to the version used on the build hosts: apt's older build reports different
           # codes (e.g. SC2317 vs SC2329 for trap-only functions) and would make CI and local lint disagree.
@@ -31,8 +37,15 @@ jobs:
           HADOLINT_VERSION: v2.15.1
           HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq yamllint xz-utils
+          # yamllint came from apt until 2026-11-11, which made this job — and therefore `smoke` and `upgrade`,
+          # which both need it — depend on Ubuntu's package mirrors for a linter. That day
+          # azure.archive.ubuntu.com stopped resolving on GitHub's runners, every run died in this step before
+          # linting a single file, and nothing was tested at all (bug log 2026-11-11). Same contract as docs.yml:
+          # --require-hashes refuses any package not in the lock, --only-binary :all: runs no setup.py.
+          pip install --require-hashes --only-binary :all: -r requirements-lint.txt
+          # xz unpacks the shellcheck tarball. The runner image ships it, so only reach for apt if it is genuinely
+          # missing — on the normal path this step now makes no apt call at all.
+          command -v xz >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq xz-utils; }
           curl -fsSL -o /tmp/shellcheck.tar.xz \
             "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
           echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -

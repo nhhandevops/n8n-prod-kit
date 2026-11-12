@@ -107,15 +107,27 @@
 ### 🔄 In progress
 Format: `- [machine] [branch] what · started date · where it stopped · how to verify`
 
-> ## ⏱️ RESUME HERE (2026-11-11)
+> ## ⏱️ RESUME HERE (2026-11-12)
 >
-> **Nothing is uncommitted. One PR open. `n8nvm` is running, `server2` is running at 4 vCPU.** In order:
+> **Check what is open with `gh pr list` and `gh run list --branch main --limit 4`** rather than trusting a PR
+> number written here — this block went stale twice by naming them, so it no longer does.
 >
-> **1. ~~Merge PR #38~~ — done 2026-11-10**, squashed to `main` as `bef4e22`, and the post-merge `ci` run is green
-> (lint 1m24s · upgrade 10m11s · **smoke 17m06s**, which exercises `tests/ci/dr-drill.sh` steps 5a/5b). D-7 is
-> closed. **What is open instead: PR for `fix/doctor-notbefore`** — the certificate check validated only
-> `notAfter`, so a leaf that had not started yet read `[ OK ]` while HTTPS was refused. Found this morning on
-> `server2` (§2 Done, 2026-11-11). An merges it: `gh pr merge <n> --squash --delete-branch`.
+> **1. The CI outage is over and its cause is fixed in this same PR.** For the record, because a red `lint` will
+> look like this again one day: through 2026-11-11 every `ci` run died in the `lint` job's **install** step on
+> `Temporary failure resolving 'azure.archive.ubuntu.com'` while fetching **yamllint from apt**, and since `smoke`
+> and `upgrade` both declare `needs: lint`, they were **skipped** — the red badge meant *nothing was tested*, not
+> that a test failed. Two PRs merged in that state (#39, #40). A plain re-run cleared it on 2026-11-12 with no
+> change to the repository, which is how an outage is told apart from a defect: **look at which step failed before
+> concluding anything about the code.** The fix here removes the cause — yamllint comes from a hash-locked wheel
+> (`requirements-lint.txt`, same contract `docs.yml` uses for MkDocs) and the `lint` job makes no apt call on the
+> normal path. `shellcheck` and `hadolint` were never affected: pinned releases, sha256-checked.
+>
+> **2. Then fix the cause, because waiting on Ubuntu's mirrors for a linter is the actual bug.** `ci.yml`'s lint job
+> installs **yamllint from apt**, which makes the whole pipeline — `smoke` and `upgrade` included, since they depend
+> on `lint` — hostage to `azure.archive.ubuntu.com`. shellcheck and hadolint in the *same step* come from pinned
+> GitHub releases with sha256 checks and were unaffected all day. Move yamllint to a pinned
+> `pip install yamllint==<version>` so that step has no apt dependency left, and the job becomes as deterministic as
+> the two tools beside it. Small PR; it would have saved four red runs on 2026-11-11.
 >
 > **2. `server2` has now served its purpose — D-16 is written, so it can be DELETED** (that was the condition in §3). It is powered off at 4 vCPU with `COMPOSE_PROFILES=monitoring` left on, at `E:\VMs\server2\server2\server2.vmx`, with a healthy
 > n8n 2.46.7 stack whose database came from `n8nvm` — **and `n8nvm`'s `N8N_ENCRYPTION_KEY` in its `.env`**, adopted
