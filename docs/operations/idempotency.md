@@ -166,21 +166,6 @@ live. The template's claim query reports one of four:
 | `in_flight` | claimed recently, not completed | refuse with a 5xx — the caller retries and gets the result once it exists, *if* the claimer finishes |
 | `stale` | claimed longer ago than the lease, never completed | **refuse and alert** |
 
-Two consequences of that table worth stating before you run it in anger.
-
-**A failed execution leaves a lease exactly like a killed one does.** The claim commits before the work
-starts — it has to, that is the whole point — so if the thing you call is down and the work node exhausts its
-retries, the key stays `in_progress`. Every delivery for the rest of the lease is refused as `in_flight`, and
-no `replay` ever comes, because nothing completed it. Then it goes `stale` and needs the same human
-reconcile and an owner-run `DELETE` to re-open the key. During a downstream outage, that is the shape of
-your backlog.
-
-**All three refusals fail the execution, so all three reach the Error Workflow** — not only `stale`. On a
-concurrent burst that means one alert per racing delivery (the kit measured 4 in-flight refusals in a
-20-wide burst), plus one for every keyless request anyone sends. If only `stale` should page a human, filter
-in the handler: `stale` is the message containing `never completed`. Alerting on all of them is also a
-defensible choice, as long as it is a choice.
-
 `stale` is the honest case, and the reason this template does not try to be clever. The lease holder claimed
 the key and never came back — which is exactly what a killed worker leaves behind. Whether the work happened
 is **not knowable from the ledger**: a crashed execution may have died before its side effect or after it
@@ -191,6 +176,21 @@ human reconciles against the downstream system before deleting the row to allow 
 
 **Size the lease above the slowest run of the work**, not above the average: an execution that is still
 running when the lease expires gets declared stale and will be alerted on. The template uses 900 s.
+
+Two consequences of that table to know before you run it in anger.
+
+**A failed execution leaves a lease behind exactly like a killed one does.** The claim commits before the
+work starts — it has to, that is the whole point — so if the thing you call is down and the work node
+exhausts its retries, the key stays `in_progress`. Every delivery for the rest of the lease is then refused
+as `in_flight`, and no `replay` ever comes, because nothing completed it; after the lease it is `stale`, with
+the same reconcile and the same owner-run `DELETE` to re-open the key. During a downstream outage, that is
+the shape of your backlog.
+
+**All three refusals fail the execution, so all three reach the Error Workflow** — not only `stale`. On a
+concurrent burst that is one alert per racing delivery (the kit measured 4 in-flight refusals in a 20-wide
+burst), plus one for every keyless request anybody sends you. If only `stale` should page a human, filter in
+the handler: `stale` is the message containing `never completed`. Alerting on all of them is defensible too,
+as long as it is a choice rather than a surprise.
 
 The best way to need this rarely is to not lose the lease holder in the first place: drain workers instead of
 killing them (`N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above your p99, which is what `make upgrade` does) — see

@@ -33,23 +33,23 @@ The four routes, and the answer the caller gets:
 |---|---|---|
 | `first` | nobody had this key; this execution owns it | `200` `{outcome: "done", result: …}` |
 | `replay` | the first execution finished | `200` `{outcome: "duplicate", result: …}` — the *same* result |
-| `in_flight` | somebody else holds the lease and is still inside it | `500` — retry; by then it is `replay`… |
+| `in_flight` | somebody else holds the lease and is still inside it | `500` — retry; by then it is usually `replay` |
 | `stale` | claimed over `LEASE_SECONDS` ago and never completed | `500`, and a human has to look |
-
-…**unless that execution failed.** The claim is committed before the work starts, so an execution that dies
-in `Do the work` leaves the lease behind: the key is then refused as `in_flight` for the rest of the lease —
-`replay` never comes, because nothing completed it — and after that as `stale`. Same reconcile, same
-owner-run `DELETE` to re-open the key. Expect this whenever the thing you call has an outage.
-
-**All three refusals fail the execution, so all three reach the Error Workflow** — not just `stale`. On a
-burst, that is one alert per concurrent delivery (the kit measured 4 in-flight refusals in a 20-wide burst),
-plus one for every keyless request anybody sends you. If only `stale` should page you, filter in the handler:
-the `stale` message is the one containing `never completed`.
 
 `stale` is the honest case. The work may or may not have happened — a crashed execution can die *after* its
 side effect — and this template refuses to decide that for you. Reconcile, then delete the row to allow a
 retry. The lease is 900 s, as the `900` in the **Claim the key** node's Query Parameters; make it longer than
 the slowest run of the work, or an execution still running will be declared stale.
+
+**`replay` only comes if the claimer finishes.** The claim is committed before the work starts, so an
+execution that dies inside `Do the work` leaves its lease behind: the key is refused as `in_flight` for the
+rest of the lease — nothing will ever complete it — and as `stale` after that, with the same reconcile and
+the same owner-run `DELETE` to re-open it. Expect this shape whenever the thing you call has an outage.
+
+**All three refusals fail the execution, so all three reach the Error Workflow** — not just `stale`. On a
+burst, that is one alert per concurrent delivery (the kit measured 4 in-flight refusals in a 20-wide burst),
+plus one for every keyless request anybody sends you. If only `stale` should page you, filter in the handler:
+the `stale` message is the one containing `never completed`.
 
 ## Set it up
 
