@@ -147,7 +147,8 @@ Do this **before** `make smoke`, which creates an owner itself when the instance
 
 With an owner in place, the optional end-to-end proof is `make smoke`: health, the HTTP→HTTPS redirect,
 certificate chain and security headers, owner/login/API key, a webhook answered by the pool rather than by
-main, a real execution on a worker including a Code node, metrics, then a backup and a restore test. It is
+main, a real execution on a worker including a Code node, metrics, a backup and a restore test, and the two
+shipped templates end to end (an alert on a failure, and a webhook that refuses to do its work twice). It is
 idempotent and deletes the workflows it created. The suite runs its scripts in order and stops at the first
 failure, so on a fresh route-A install it gets as far as `07-backup` and stops there: `BACKUP_REMOTES` is
 still empty. Route B passes all of it, because `init` set `BACKUP_REMOTES=/backups/local` for the dev domain.

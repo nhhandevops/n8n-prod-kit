@@ -9,6 +9,7 @@ credentials needed, how to test) and, where it helps, a `test-payload.json`. Imp
 | Template | What it does |
 |---|---|
 | [`error-handler/`](error-handler/) | The Error Workflow every other workflow should point at: Error Trigger → a Code node that formats the failure → a Telegram message. n8n retries nothing by itself, so without one a failed execution is silent. `make -C compose doctor` counts the workflows that have none; `tests/smoke/10-error-workflow.sh` proves the path on every CI run. Background: [docs/operations/error-workflows.md](../docs/operations/error-workflows.md). |
+| [`idempotent-webhook/`](idempotent-webhook/) | A webhook that cannot do its work twice, however often the same delivery arrives: Postgres claims the idempotency key, the work runs only for the execution that won the claim, and a replay is answered with the first result. Ships the ledger schema and a least-privileged database role; `tests/smoke/11-idempotency.sh` fires one key at it 20 times at once on every CI run. Background: [docs/operations/idempotency.md](../docs/operations/idempotency.md). |
 
 ## Planned (milestone M1)
 

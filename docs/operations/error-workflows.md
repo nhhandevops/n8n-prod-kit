@@ -128,6 +128,7 @@ errors is its own handler (n8n calls that the *internal* error workflow) and nee
 ## Related
 
 - [Chaos drills](chaos-drills.md) — what a killed worker really costs, and why replays need idempotency
+- [Idempotency](idempotency.md) — making a replay safe, and the one case that has to reach a human
 - [Monitoring and alerts](monitoring.md) — the rate-based alerts, and what to watch when the instance itself is gone
 - [Configuration](../configuration.md) — `EXECUTIONS_TIMEOUT`, `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`
 - [Runbook](../runbook.md) — the hands-on walk through every feature of the kit

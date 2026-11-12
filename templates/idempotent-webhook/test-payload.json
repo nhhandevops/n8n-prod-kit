@@ -1,0 +1,6 @@
+{
+  "orderId": "order-1001",
+  "customer": "cust-42",
+  "amountVnd": 250000,
+  "note": "Send this twice with the same Idempotency-Key header: the second delivery must answer outcome=duplicate without doing the work again."
+}

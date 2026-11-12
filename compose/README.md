@@ -38,7 +38,7 @@ make up && make trust-ca             # trust-ca prints the certutil line for a W
 | `make restart SERVICE=n8n-main` | restart one service |
 | `make down` / `make up` | stop / start (volumes and `.env` are kept) |
 | `make preflight` | re-check host, ports, DNS, disk, clock |
-| `make smoke [ONLY=04,05]` | end-to-end check of the running stack: health, TLS and headers, owner/login/API key, webhook routing through the pool, execution on a worker (incl. a Code node), metrics — ~30 s, idempotent; state in `compose/.smoke/` |
+| `make smoke [ONLY=04,05]` | end-to-end check of the running stack: health, TLS and headers, owner/login/API key, webhook routing through the pool, execution on a worker (incl. a Code node), metrics, a backup and a restore test, and the two shipped templates (an alert on a failure; a webhook that refuses to do its work twice) — idempotent; state in `compose/.smoke/` |
 | `make doctor` | diagnose: versions, health + last logs of unhealthy services, certificate, disk, Postgres/Valkey state, dangerous settings — every FAIL comes with its fix |
 | `make scale-workers N=4` | 1–16 workers (each with its runner sidecar); `N=1` parks worker 2 |
 | `make backup-now [NAME=x]` | encrypted backup (DB + encryption key) to every `BACKUP_REMOTES` target now; nightly from cron |

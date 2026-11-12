@@ -1,0 +1,23 @@
+{
+  "name": "kit-smoke-template",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "__PATH__", "responseMode": "onReceived", "options": {} },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stands in for the thing that costs money: one execution of this workflow = one side effect.\n// responseMode is onReceived on purpose. The caller (the gate's \"Do the work\" node) must not have to\n// wait for a worker slot to free up: with WORKER_CONCURRENCY x workers slots all taken by a burst of\n// gate executions, a gate execution waiting for THIS one to finish would wait for a slot that only it\n// could release.\nreturn [{ json: { did: $input.first().json.body, exec: $execution.id } }];"
+      },
+      "name": "Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": { "Webhook": { "main": [[{ "node": "Code", "type": "main", "index": 0 }]] } },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "all", "saveDataErrorExecution": "all" }
+}

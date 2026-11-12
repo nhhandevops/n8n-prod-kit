@@ -185,7 +185,8 @@ execution time — `make doctor` measures that p99 from the executions of the la
 timeout — and give critical workflows an [Error Workflow](operations/error-workflows.md). Docker has its own window, `N8N_STOP_GRACE_PERIOD` (40 s): it
 must outlast the timeout by at least 10 seconds, because n8n needs a moment to cancel what is left and exit, so raise
 the two together (`make preflight` and `make doctor` fail when they do not fit; every n8n container, generated workers
-included, uses it). A `crashed` execution may already have done its side effect, so keep replays idempotent;
+included, uses it). A `crashed` execution may already have done its side effect, so keep replays idempotent
+([Idempotency](operations/idempotency.md) is how, and the kit ships a template for it);
 [Chaos drills](operations/chaos-drills.md) measures all of this.
 
 ## 5 Security

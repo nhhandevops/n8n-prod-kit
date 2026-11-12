@@ -868,7 +868,7 @@ files there ([Backup and restore](operations/backup-restore.md)).
 
 ### 7. `make smoke`: the automated version of everything you just did
 
-**What it is.** Ten scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
+**What it is.** Eleven scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
 did by hand, and look inside containers only where the outside cannot see. They run in order and stop at the
 first failure, because later ones build on earlier ones (04 creates the workflow 05 inspects).
 
@@ -884,6 +884,7 @@ first failure, because later ones build on earlier ones (04 creates the workflow
 | `08-restore-test` | Every remote's newest bundle verifies and the newest restores into a scratch Postgres inside the backup container. The live database is never touched. |
 | `09-monitoring` | The monitoring profile end to end. Skipped when `COMPOSE_PROFILES` does not list `monitoring`. |
 | `10-error-workflow` | A workflow that fails on purpose reaches an Error Workflow built from `templates/error-handler/`: unpublished it never runs, published it runs in mode `error` on a worker and the alert names the workflow, the node and the message ([Error workflows](operations/error-workflows.md)). |
+| `11-idempotency` | The shipped `templates/idempotent-webhook/` does the work **once** when one idempotency key is delivered 20 times at once through the pool; a replay gets the stored result, a new key is not blocked, and a lease that is still running or was abandoned is refused with a message that says which ([Idempotency](operations/idempotency.md)). |
 
 **Why you care.** Checking all of this by hand is most of an afternoon, and you would not do it again after every
 small change. The suite does it unattended and in the same order every time, which is what turns "it still works"
