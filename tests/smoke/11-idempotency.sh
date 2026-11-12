@@ -57,7 +57,10 @@ trap cleanup EXIT
 # --- the ledger, from the shipped schema.sql ---------------------------------------------------------------
 # Renamed, not rewritten: every statement that runs here is one the documented command runs, so a mistake in
 # the shipped file fails this test instead of waiting for a user to find it.
-schema_sql="$(sed -e "s/\bidempotency_keys\b/${table}/g" -e "s/\bn8n_idem\b/${role}/g" "${TEMPLATE_DIR}/schema.sql")"
+# Plain substrings, not \b word boundaries: the index is called idempotency_keys_claimed_at_idx, and \b does
+# not match between a letter and an underscore — so the index would keep the real ledger's name and land in
+# the same namespace as one.
+schema_sql="$(sed -e "s/idempotency_keys/${table}/g" -e "s/n8n_idem/${role}/g" "${TEMPLATE_DIR}/schema.sql")"
 check "the shipped schema.sql was renamed for this test (no 'idempotency_keys' left)" \
   bash -c '! grep -q "idempotency_keys" <<<"$1"' _ "${schema_sql}"
 check "the renamed schema creates ${table}" grep -q "CREATE TABLE IF NOT EXISTS ${table}" <<<"${schema_sql}"
