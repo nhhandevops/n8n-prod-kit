@@ -1,0 +1,251 @@
+{
+  "name": "Idempotent webhook - claim, do, complete",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "__PATH__",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Where the key comes from decides whether any of this works.\n//\n// A key names an INTENT — this one order, this one payment — not a delivery. Two deliveries of the same\n// intent must produce the same key, and a new intent must never reuse one. Generating a key here\n// (crypto.randomUUID(), Date.now(), $execution.id) makes every delivery unique and silently turns the\n// whole gate into a no-op, which is the usual way this pattern is got wrong.\n//\n// Preferred source is the caller's Idempotency-Key header (the convention Stripe, Square and friends\n// follow); a stable business id in the body is the fallback. n8n lowercases incoming header names.\nconst req = $input.first().json;\nconst headers = req.headers ?? {};\nconst body = req.body ?? {};\n\nconst raw = headers['idempotency-key'] ?? headers['x-idempotency-key'] ?? body.idempotencyKey ?? body.orderId ?? null;\nconst key = raw === null || raw === undefined ? '' : String(raw).trim();\n\n// Refusing the work is the only safe answer: without a key this endpoint cannot tell a retry from a\n// second order, and guessing either way is a lost order or a double charge.\nif (key === '') {\n  throw new Error('no idempotency key: send an Idempotency-Key header or an orderId in the body');\n}\n// Rejected, never truncated: two keys that differ only after the cut would collide, and a collision\n// here means one caller's work is silently skipped as somebody else's duplicate.\nif (key.length > 200) {\n  throw new Error(`idempotency key is ${key.length} characters, the limit is 200`);\n}\n\nreturn [{ json: { key, owner: `exec:${$execution.id}`, payload: body } }];"
+      },
+      "name": "Idempotency key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Claim this key, or find out who already holds it. One statement, exactly one row, no race:\n-- ON CONFLICT ... DO UPDATE takes a row lock, so a second delivery arriving at the same instant WAITS\n-- for the first to commit and then reads it, instead of also inserting. Postgres decides the winner.\n-- `owner` is set on INSERT and never changed, so `owner = $2` means \"this execution claimed it\".\nINSERT INTO idempotency_keys (key, owner)\nVALUES ($1, $2)\nON CONFLICT (key) DO UPDATE SET key = idempotency_keys.key\nRETURNING\n  CASE\n    WHEN owner = $2                                         THEN 'first'\n    WHEN state = 'done'                                     THEN 'replay'\n    WHEN now() - claimed_at < make_interval(secs => $3::int) THEN 'in_flight'\n    ELSE 'stale'\n  END                                                    AS route,\n  state,\n  result,\n  owner                                                  AS lease_owner,\n  floor(extract(epoch FROM now() - claimed_at))::int      AS age_seconds;",
+        "options": {
+          "queryReplacement": "={{ [ $json.key, $json.owner, 900 ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "name": "Claim the key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PUT-YOUR-POSTGRES-CREDENTIAL-ID-HERE",
+          "name": "n8n idempotency ledger"
+        }
+      },
+      "onError": "stopWorkflow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "route-is-first",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "first",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "First time?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.example.com/charge",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Idempotency key').item.json.key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Idempotency key').item.json.payload) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "name": "Do the work",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Complete the lease and store what the caller should be told on every later delivery.\n-- `owner = $3` and `state = 'in_progress'` keep this execution from completing a lease it does not\n-- hold and from completing one twice; 0 rows back is a real condition, handled by the next node.\nUPDATE idempotency_keys\nSET state = 'done', result = $2::jsonb, done_at = now()\nWHERE key = $1 AND owner = $3 AND state = 'in_progress'\nRETURNING key, state, done_at;",
+        "options": {
+          "queryReplacement": "={{ [ $('Idempotency key').item.json.key, JSON.stringify($json), $('Idempotency key').item.json.owner ] }}",
+          "queryBatching": "independently"
+        }
+      },
+      "name": "Mark the key done",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        1100,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PUT-YOUR-POSTGRES-CREDENTIAL-ID-HERE",
+          "name": "n8n idempotency ledger"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "stopWorkflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The ledger write is the only thing standing between \"the work happened\" and \"a replay is told it\n// happened\". If it did not land, say so loudly rather than answer 200: the caller gets a 500 and\n// retries, and the retry reads the ledger instead of redoing the work.\nconst row = $input.first().json;\nconst key = $('Idempotency key').item.json.key;\n\nif (row.state !== 'done') {\n  throw new Error(`the work ran but the ledger row for ${key} was not completed — reconcile by hand`);\n}\n\nreturn [{ json: { outcome: 'done', key, result: $('Do the work').item.json } }];"
+      },
+      "name": "Answer the caller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Everything that is not a fresh claim lands here. Three different situations, three different answers,\n// and the difference between them is the point of the template.\nconst row = $input.first().json;\nconst key = $('Idempotency key').item.json.key;\n\nif (row.route === 'replay') {\n  // The first execution finished. Answer exactly what it answered and do nothing else — that is what\n  // makes this endpoint safe to retry.\n  return [{ json: { outcome: 'duplicate', key, result: row.result ?? null } }];\n}\n\nif (row.route === 'in_flight') {\n  // Another execution holds the lease and is still inside it. Throwing is deliberate: the caller gets a\n  // 500, retries, and by then the key is 'done' and the retry gets the stored result. Answering 200 here\n  // would tell the caller that work succeeded which may still fail.\n  throw new Error(`key ${key} is in flight (held by ${row.lease_owner} for ${row.age_seconds}s) — retry`);\n}\n\n// route === 'stale': the lease holder claimed the key and never completed it, which is what a killed\n// worker leaves behind — n8n 2.x does not retry in-flight executions, and a crashed one may already have\n// done its side effect (docs/operations/chaos-drills.md). Whether the work happened is not knowable from\n// here, so nothing decides it automatically: this raises, the Error Workflow alerts, a human reconciles.\nthrow new Error(\n  `key ${key} was claimed ${row.age_seconds}s ago by ${row.lease_owner} and never completed — the work ` +\n    'may or may not have happened; reconcile it by hand, then delete the row to allow a retry',\n);"
+      },
+      "name": "Replay, wait, or alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Idempotency key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency key": {
+      "main": [
+        [
+          {
+            "node": "Claim the key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim the key": {
+      "main": [
+        [
+          {
+            "node": "First time?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First time?": {
+      "main": [
+        [
+          {
+            "node": "Do the work",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Replay, wait, or alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do the work": {
+      "main": [
+        [
+          {
+            "node": "Mark the key done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark the key done": {
+      "main": [
+        [
+          {
+            "node": "Answer the caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 300
+  }
+}
