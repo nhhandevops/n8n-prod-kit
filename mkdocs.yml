@@ -54,6 +54,7 @@ nav:
       - Monitoring and alerts: operations/monitoring.md
       - Error workflows: operations/error-workflows.md
       - Idempotency: operations/idempotency.md
+      - Approvals: operations/approvals.md
       - Scaling: operations/scaling.md
       - Chaos drills: operations/chaos-drills.md
       - Rebuild a host: operations/rebuild-vps.md
