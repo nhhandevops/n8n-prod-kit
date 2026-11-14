@@ -121,11 +121,13 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 > **Ask git what is open** — `gh pr list`, `gh run list --branch main --limit 4` — rather than trusting a PR
 > number written here; this block has gone stale twice by naming them.
 >
-> **1. Nothing is open.** D-15 merged as **#42** on 2026-11-12 (`main` at `9821719`), fully green on its final
-> commit — `lint` 1m9s, `smoke` 18m47s, `upgrade` 13m48s, plus the strict docs build. The smoke job runs the
-> suite twice, so `11-idempotency` proved the invariant **twice on a GitHub runner** as well as three times on
-> `n8nvm`. Nothing is uncommitted on any machine. (Merges are An's: the agent's permission classifier refuses
-> `gh pr merge` through both its Bash and its PowerShell tool.)
+> **1. Nothing is open once this file's own PR is in.** D-15 merged as **#42** on 2026-11-12 (`main` at
+> `9821719`), green on its final commit — `lint` 1m9s, `smoke` 18m47s, `upgrade` 13m48s, plus the strict docs
+> build — and **`main`'s own run after the merge was green too** (19m43s), which is the check worth making:
+> this repo twice merged into a state where `smoke` had been skipped and nothing was tested. The smoke job runs
+> the suite twice, so `11-idempotency` proved the invariant **twice on a GitHub runner** as well as three times
+> on `n8nvm`. Nothing is uncommitted on any machine. (Merges are An's: the agent's permission classifier
+> refuses `gh pr merge` through both its Bash and its PowerShell tool.)
 >
 > **2. The ledger has nothing left that an agent can close unaided.** D-15 was the last one. What remains in
 > PROD-PLAN §5 is **eight blockers that need a production host, a public domain, An's password manager or other
@@ -135,15 +137,20 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 > `error-handler/` and `idempotent-webhook/` did: a template, a docs page, a smoke test. That is a scope
 > decision rather than a ledger item, so it waits for An.
 >
-> **3. `n8nvm` is running and should be shut down** — `ssh n8nvm 'sudo poweroff'`, or `vmrun stop <vmx> soft`.
-> It was powered on to verify D-15, runs a healthy n8n 2.46.7 stack and is parked on `d15-idempotency`. After a
-> day off expect a backup-age FAIL until the next `make backup-now`; after more than 14 days off, a certificate
-> FAIL as well (the paragraph above §4's machines table).
+> **3. Both VMs are off** — `vmrun list` reported *0 running* on 2026-11-14, and `ssh n8nvm` times out. Nothing
+> needs shutting down. `n8nvm` is `E:\VMs\server1\server1.vmx` (its hostname is `server1`, like the laptop's
+> 26.04 VM — §4's machines table), it holds a healthy n8n 2.46.7 stack, and its clone is parked on the deleted
+> `d15-idempotency` branch, so `git checkout main && git pull` before using it. Expect a **backup-age FAIL**
+> until the next `make backup-now`, and — because it has now been off more than a day — a **certificate FAIL**
+> once it passes 14 days off, which `make backup-now` does not fix (the paragraph above §4's machines table).
 >
-> **4. `server2` can be DELETED** — D-16 is written, which was the condition recorded in §3. It is powered off
-> at `E:\VMs\server2\server2\server2.vmx` and holds **`n8nvm`'s `N8N_ENCRYPTION_KEY` in its `.env`** (adopted
-> by the D-7 drill's restore), so it is not a host to forget about: `vmrun deleteVM <vmx>`, then the
-> `Host server2` block in `~/.ssh/config`.
+> **4. `server2` is still on disk and can be DELETED** — D-16 is written, which was the condition recorded in
+> §3. 10.3 GB at `E:\VMs\server2\server2\server2.vmx`, powered off, and **no longer in the VMware library**
+> (`inventory.vmls` lists only `server1`), so it will not show up in the UI to remind you it is there. It holds
+> **`n8nvm`'s `N8N_ENCRYPTION_KEY` in its `.env`**, adopted by the D-7 drill's restore — which is exactly why a
+> forgotten, invisible copy of it is worth clearing: `vmrun deleteVM 'E:\VMs\server2\server2\server2.vmx'`
+> (deleteVM takes the path, so being out of the library does not matter), then the `Host server2` block in
+> `~/.ssh/config`.
 >
 > **5. An's one remaining cheap item: the recovery-key rotation on `n8nvm`** — owed since 2026-10-25, when that
 > key went through a chat. Four commands at the VM's own terminal (they read `/dev/tty`, so not over ssh), §2
