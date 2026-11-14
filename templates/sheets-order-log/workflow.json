@@ -1,0 +1,127 @@
+{
+  "name": "Order log - one order, one spreadsheet row",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "__PATH__",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One order in, one row out. Everything the sheet will contain is decided here, so that the Google Sheets\n// node has nothing to do but append — and so that a bad order is refused before it reaches the sheet, where\n// a wrong row is far more annoying to fix than a 4xx is to read.\n//\n// The keys of the object returned below ARE the column headers: the Sheets node is set to\n// \"Map Automatically\", which matches input fields to the header row by name. Rename a key here and you must\n// rename the header in the sheet (and vice versa) — that pairing is the one thing to keep in step.\nconst req = $input.first().json;\nconst body = req.body ?? {};\n\nconst text = (value, max) => String(value ?? '').replace(/\\s+/g, ' ').trim().slice(0, max);\n\nconst orderId = text(body.orderId, 64);\nconst customer = text(body.customer, 120);\nconst phone = text(body.phone, 32);\nconst item = text(body.item, 200);\nconst note = text(body.note, 500);\nconst qty = Number(body.qty ?? 1);\nconst amountVnd = Number(body.amountVnd);\n\n// Refusals, in the order a caller is most likely to get them wrong. Each names the field, because \"400 bad\n// request\" with no field name is a support ticket.\nif (!orderId) {\n  throw new Error('orderId is required — it is what makes a row traceable back to the order');\n}\nif (!Number.isFinite(amountVnd) || amountVnd < 0) {\n  throw new Error(`amountVnd must be a non-negative number, got ${JSON.stringify(body.amountVnd)}`);\n}\nif (!Number.isInteger(qty) || qty < 1) {\n  throw new Error(`qty must be a whole number of 1 or more, got ${JSON.stringify(body.qty)}`);\n}\nif (!customer && !phone) {\n  throw new Error('need customer or phone — a row identifying nobody cannot be followed up');\n}\n\n// ISO 8601 in UTC, not a local-time string: a spreadsheet of orders is read months later, often from another\n// timezone, and \"14/11/2026 23:05\" with no offset is ambiguous. Format it for people in the sheet if you\n// prefer, but keep one machine-readable column.\nconst receivedAt = new Date().toISOString();\n\nreturn [\n  {\n    json: {\n      receivedAt,\n      orderId,\n      customer,\n      phone,\n      item,\n      qty,\n      amountVnd,\n      note,\n      // Which execution wrote the row. Worth a column: when a row looks wrong, this is how you find the\n      // execution that produced it in n8n's own list.\n      executionId: $execution.id,\n    },\n  },\n];"
+      },
+      "name": "Normalise the order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PUT-YOUR-GOOGLE-SHEET-URL-HERE"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Orders"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "useAppend": true
+        }
+      },
+      "name": "Append the row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PUT-YOUR-GOOGLE-SHEETS-CREDENTIAL-ID-HERE",
+          "name": "Google Sheets account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// What the caller is told. The row is already in the sheet by this point, so this is a receipt rather than a\n// promise — and it carries the execution id so a support question can be traced without guesswork.\nconst row = $('Normalise the order').first().json;\n\nreturn [\n  {\n    json: {\n      logged: true,\n      orderId: row.orderId,\n      receivedAt: row.receivedAt,\n      executionId: row.executionId,\n    },\n  },\n];"
+      },
+      "name": "Answer the caller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalise the order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise the order": {
+      "main": [
+        [
+          {
+            "node": "Append the row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append the row": {
+      "main": [
+        [
+          {
+            "node": "Answer the caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 120
+  }
+}
