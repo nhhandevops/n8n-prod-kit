@@ -4,6 +4,12 @@ Two knobs decide how much work this stack executes: **`WORKER_REPLICAS`** (how m
 **`WORKER_CONCURRENCY`** (how many executions each one runs at a time). Both live in `compose/.env`. This page is
 about which of the two to turn, and when turning either stops helping.
 
+> **The other half of capacity is whatever you are calling.** This page is how much the stack can push; a
+> third-party API decides how much it will accept, and the two are rarely the same number — Google Sheets
+> allows about 60 writes a minute per user, against a stack that can run a thousand executions in one.
+> [Calling other APIs](outbound-apis.md) has the ceiling, what a 429 costs inside the queue, and why a
+> retrying node is a worker slot doing nothing.
+
 ## The two knobs
 
 | Knob | Default | Range | How to change it |
