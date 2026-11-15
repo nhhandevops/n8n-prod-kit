@@ -156,9 +156,20 @@ Format: `- [machine] [branch] what · started date · where it stopped · how to
 > evening clears **D-9**, then **D-8**, **D-3**, **D-4**, **D-2**, **D-6**, **D-1/D-5** (most are minutes once
 > the host exists), and it is the gate for TC-025 and for flipping the release off pre-release.
 >
-> **3. `n8nvm` is RUNNING again** (resumed 2026-11-14 to verify the new template) and should be stopped when
-> the session ends: `ssh n8nvm 'sudo poweroff'`, or `vmrun stop 'E:\VMs\server1\server1.vmx' soft`. Its clone
-> is on the `m1-gchat-approval` branch. **`server2` is still powered off and still undeleted** — item 4.
+> **3. `n8nvm` is RUNNING** (resumed 2026-11-15 to verify the templates) and should be stopped when the
+> session ends: `ssh n8nvm 'sudo poweroff'`, or `vmrun stop 'E:\VMs\server1\server1.vmx' soft`. Its clone is
+> on the `m1-sheets-order-log` branch. **`server2` is still powered off and still undeleted** — item 4.
+>
+> > **⚠️ FIRST COMMAND after booting this VM: `make -C compose doctor`, and if it reports an expired leaf,
+> > `make -C compose restart SERVICE=caddy`.** The internal CA issues a **12 h** leaf, so *any* stop or
+> > suspend longer than that leaves Caddy serving an expired certificate from memory — HTTPS then refuses
+> > everyone, and `make smoke` fails in `02-tls` with a wall of bare `HTTP 000`s that say nothing about the
+> > cause. This has happened on **three consecutive sessions** (40 h, 3 h and 3 h past expiry); it is normal
+> > for a VM that is not on all the time, not a defect. Renewal takes one restart and ~8 s. The doctor check
+> > that catches it shipped in #39 — without it the 000s send you hunting in the wrong place. Automating the
+> > check in a script? Capture doctor's output *before* grepping it: `make doctor | grep -q` is non-zero
+> > under `pipefail` whenever doctor finds a problem, so the renewal branch silently never fires (cost me a
+> > full suite run on 2026-11-15, and it is the trap §0's conventions already warn about).
 >
 > **What resuming it taught, worth knowing on any laptop/desktop VM:** it had been **suspended**, not powered
 > off, and the two are indistinguishable to `vmrun list` (both report *0 running*) while `docker ps` keeps
