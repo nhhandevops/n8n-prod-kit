@@ -1,0 +1,200 @@
+{
+  "name": "Google Chat approval - ask a human, then act",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "__PATH__",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The two buttons are the whole mechanism: each one is a link back into THIS execution.\n//\n// $execution.resumeUrl already carries the execution's resume token as ?signature=... — n8n generates that\n// token when the execution's run data is created, so it exists here, before the Wait node has run. The\n// waiting webhook answers 401 without it, which is why `approved` is appended with **&** and never with ?.\n// (A wrong separator would drop the token and every button would 401. Verified against n8n 2.46.7:\n// core/.../get-additional-keys.ts appends `signature`, cli/.../waiting-webhooks.ts rejects a call without it.)\nconst req = $input.first().json;\nconst body = req.body ?? {};\n\nconst ref = String(body.ref ?? '').trim();\nconst requester = String(body.requester ?? '').trim();\nconst reason = String(body.reason ?? '').trim();\nconst amountVnd = Number(body.amountVnd);\n\n// Refuse rather than ask for a decision nobody can act on: a card without a reference is unmatchable, and\n// an approval for an unknown amount is not an approval.\nif (!ref || !requester || !Number.isFinite(amountVnd)) {\n  throw new Error('need ref, requester and a numeric amountVnd in the body');\n}\n\nconst approveUrl = `${$execution.resumeUrl}&approved=true`;\nconst rejectUrl = `${$execution.resumeUrl}&approved=false`;\n\n// Thousands separators without Intl on purpose: the n8n image is Alpine-based and a small-ICU build would\n// silently format 'vi-VN' as en-US instead of failing, so the grouping is done by hand.\nconst money = String(Math.round(amountVnd)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.');\n\nreturn [\n  {\n    json: {\n      ref,\n      requester,\n      reason,\n      amountVnd,\n      approveUrl,\n      rejectUrl,\n      // Google Chat's cardsV2 payload. An incoming webhook accepts this as-is — no OAuth, no Chat app:\n      // the space's URL is the credential, which is why this template needs no n8n credential at all.\n      card: {\n        cardsV2: [\n          {\n            cardId: `approval-${ref}`,\n            card: {\n              header: {\n                title: 'Duyệt chi · Expense approval',\n                subtitle: `${ref} · ${money} ₫`,\n              },\n              sections: [\n                {\n                  widgets: [\n                    { decoratedText: { topLabel: 'Người đề nghị · Requester', text: requester } },\n                    { decoratedText: { topLabel: 'Lý do · Reason', text: reason || '—' } },\n                    {\n                      buttonList: {\n                        buttons: [\n                          { text: 'Approve', onClick: { openLink: { url: approveUrl } } },\n                          { text: 'Reject', onClick: { openLink: { url: rejectUrl } } },\n                        ],\n                      },\n                    },\n                  ],\n                },\n              ],\n            },\n          },\n        ],\n      },\n    },\n  },\n];"
+      },
+      "name": "Build the approval card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "PUT-YOUR-GOOGLE-CHAT-SPACE-WEBHOOK-URL-HERE",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.card) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "Ask in Google Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "GET",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 2,
+        "resumeUnit": "days",
+        "options": {}
+      },
+      "name": "For a decision",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "webhookId": "a1b2c3d4-0000-4000-8000-00000000c0de"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "approved-is-true",
+              "leftValue": "={{ $json.query.approved }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ----------------------------------------------------------------------------------------------------\n// REPLACE THIS NODE with whatever the approval unlocks: pay the invoice, release the discount, post the\n// order. Everything before it is the approval; this is the part that costs money.\n// ----------------------------------------------------------------------------------------------------\n//\n// Two things to keep in mind when you do:\n//  1. A button link can be clicked twice, and a browser can prefetch it. Make the action idempotent —\n//     docs/operations/idempotency.md is the pattern, and templates/idempotent-webhook/ is a working gate.\n//  2. .first() rather than .item on purpose: paired-item tracking does not survive the wait reliably, and\n//     one approval is one item, so there is nothing to pair.\nconst d = $('Build the approval card').first().json;\n\nreturn [\n  {\n    json: {\n      outcome: 'approved',\n      ref: d.ref,\n      requester: d.requester,\n      amountVnd: d.amountVnd,\n      respondedAt: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "name": "Do the approved thing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The rejection path exists so a \"no\" is recorded rather than dropped: without it, a rejected request and\n// a request nobody ever answered look identical afterwards.\nconst d = $('Build the approval card').first().json;\n\nreturn [\n  {\n    json: {\n      outcome: 'rejected',\n      ref: d.ref,\n      requester: d.requester,\n      amountVnd: d.amountVnd,\n      respondedAt: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "name": "Record the rejection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build the approval card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the approval card": {
+      "main": [
+        [
+          {
+            "node": "Ask in Google Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask in Google Chat": {
+      "main": [
+        [
+          {
+            "node": "For a decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "For a decision": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Do the approved thing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record the rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

@@ -279,5 +279,6 @@ five tries cannot be a CI assertion — it would be a flaky test. That measureme
 - [`templates/idempotent-webhook/`](https://github.com/nhhandevops/n8n-prod-kit/tree/main/templates/idempotent-webhook) — the workflow, the schema, the setup
 - [Chaos drills](chaos-drills.md) — what a killed worker costs, measured
 - [Error workflows](error-workflows.md) — how `stale` reaches you
+- [Approvals](approvals.md) — the other place a URL is handed to a human, and why a clicked link still needs a gate
 - [Backup and restore](backup-restore.md) — what the ledger rides along with
 - [Configuration](../configuration.md) — `WORKER_CONCURRENCY`, `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`
