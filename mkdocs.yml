@@ -55,6 +55,7 @@ nav:
       - Error workflows: operations/error-workflows.md
       - Idempotency: operations/idempotency.md
       - Approvals: operations/approvals.md
+      - Calling other APIs: operations/outbound-apis.md
       - Scaling: operations/scaling.md
       - Chaos drills: operations/chaos-drills.md
       - Rebuild a host: operations/rebuild-vps.md
