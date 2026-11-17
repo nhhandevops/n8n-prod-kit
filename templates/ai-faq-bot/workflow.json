@@ -1,0 +1,298 @@
+{
+  "name": "FAQ bot - answer from your FAQ, or hand over to a human",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "__PATH__",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PUT-YOUR-HEADER-AUTH-CREDENTIAL-ID-HERE",
+          "name": "FAQ bot shared secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// This endpoint spends money every time it answers, so everything here runs BEFORE the model does.\n//\n// The Webhook node already rejected anyone without the shared secret (Header Auth, so the secret lives in\n// n8n's encrypted credential store rather than in this workflow). What is left to decide is whether THIS\n// request is worth paying for.\nconst req = $input.first().json;\nconst body = req.body ?? {};\nconst headers = req.headers ?? {};\n\nconst question = String(body.question ?? '').replace(/\\s+/g, ' ').trim();\n\nif (!question) {\n  throw new Error('question is required');\n}\n// A cap, not a truncation: a 50 KB \"question\" is either a mistake or someone using your budget as a\n// pastebin, and silently answering the first 500 characters of it teaches nobody anything.\nif (question.length > 500) {\n  throw new Error(`question is ${question.length} characters, the limit is 500`);\n}\n\n// Who to count this against. Prefer a caller-supplied identity (your own app knows which customer is\n// asking); fall back to the forwarded client address. Neither is trustworthy on its own — the point of the\n// counter is to cap accidental and casual abuse, and the shared secret is what keeps strangers out.\nconst sender =\n  String(body.sender ?? '').trim() ||\n  String(headers['x-forwarded-for'] ?? '').split(',')[0].trim() ||\n  'anonymous';\n\n// A FIXED-WINDOW counter: the key carries the minute, so each minute starts at zero.\n//\n// Why not one key per sender with a TTL: n8n's Redis node calls EXPIRE on *every* increment, which keeps\n// pushing the expiry out, so a sender under continuous traffic would never get a fresh window and would\n// stay blocked until they paused. Bucketing by minute makes that harmless — the old bucket just expires\n// unused.\nconst minute = Math.floor(Date.now() / 60000);\n\nreturn [\n  {\n    json: {\n      question,\n      sender,\n      rateKey: `faq:rl:${sender}:${minute}`,\n      limit: 20,\n      askedAt: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "name": "Check the question",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $json.rateKey }}",
+        "expire": true,
+        "ttl": 120
+      },
+      "name": "Count this minute",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "redis": {
+          "id": "PUT-YOUR-VALKEY-CREDENTIAL-ID-HERE",
+          "name": "Valkey (this kit's broker)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// The Redis node returns { \"<the key>\": <new count> }, and the key is built at runtime, so the count cannot\n// be read by name. Object.values() is the robust way, and re-attaching the question keeps everything after\n// this node readable — the Redis node drops the incoming fields.\nconst counted = Object.values($input.first().json)[0];\nconst count = Number(counted ?? 0);\nconst asked = $('Check the question').first().json;\n\nreturn [\n  {\n    json: {\n      ...asked,\n      count,\n      withinLimit: count <= asked.limit,\n      // Seconds until this minute's bucket rolls over — what a 429 should tell the caller to wait.\n      retryAfter: 60 - Math.floor((Date.now() % 60000) / 1000),\n    },\n  },\n];"
+      },
+      "name": "Read the counter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "within-the-limit",
+              "leftValue": "={{ $json.withinLimit }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Within the limit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.question }}",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You answer customer questions for PUT-YOUR-BUSINESS-NAME-HERE using ONLY the FAQ below.\n\nRules, in order of importance:\n1. If the FAQ does not answer the question, reply with exactly KHONG_BIET and nothing else.\n2. Never invent a price, a date, an address, a policy or a promise. If it is not in the FAQ, you do not know it.\n3. Answer in the language the question was asked in (Vietnamese or English).\n4. Two sentences at most. No greetings, no sign-off.\n\nFAQ (replace all of this with your own):\n- Gio mo cua / Opening hours: 07:00-21:00 every day, including weekends.\n- Giao hang / Delivery: within 5 km, 15.000 d. Over 5 km we do not deliver.\n- Thanh toan / Payment: cash, bank transfer, or VietQR on collection.\n- Doi tra / Returns: within 24 hours if the item is faulty. Keep the receipt.\n- Dat truoc / Pre-orders: by phone only, at least one day ahead."
+            }
+          ]
+        }
+      },
+      "name": "Answer from the FAQ",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1100,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "maxOutputTokens": 200,
+          "temperature": 0.2
+        }
+      },
+      "name": "Gemini (swap for your provider)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        80
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "PUT-YOUR-GEMINI-CREDENTIAL-ID-HERE",
+          "name": "Google Gemini"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// The model was told to answer KHONG_BIET (\"I do not know\") when the FAQ does not cover the question. That\n// sentinel is the whole guardrail: it turns \"the model is unsure\" from a sentence a human has to judge into\n// a flag this workflow can act on.\n//\n// Without it, an FAQ bot's worst failure is confident invention — a made-up delivery fee is worse than no\n// answer, because the customer believes it.\nconst text = String($input.first().json.text ?? '').trim();\nconst asked = $('Check the question').first().json;\n\nconst unsure = text === 'KHONG_BIET' || text.includes('KHONG_BIET') || text === '';\n\nreturn [\n  {\n    json: {\n      answered: !unsure,\n      question: asked.question,\n      answer: unsure\n        ? 'Xin loi, cau hoi nay can nhan vien tra loi. Chung toi se lien he lai. / Sorry, this needs a person. We will get back to you.'\n        : text,\n      // So the business can see what the bot could not answer: those are the next FAQ entries to write.\n      needsHuman: unsure,\n      askedAt: asked.askedAt,\n    },\n  },\n];"
+      },
+      "name": "Format the answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"answered\": $json.answered, \"answer\": $json.answer, \"needsHuman\": $json.needsHuman } }}",
+        "options": {}
+      },
+      "name": "Answer the caller",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1540,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"answered\": false, \"error\": \"rate limit\", \"detail\": \"Too many questions this minute from \" + $json.sender + \" (\" + $json.count + \" of \" + $json.limit + \")\", \"retryAfterSeconds\": $json.retryAfter } }}",
+        "options": {
+          "responseCode": 429
+        }
+      },
+      "name": "Refuse: too many questions",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1100,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check the question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the question": {
+      "main": [
+        [
+          {
+            "node": "Count this minute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count this minute": {
+      "main": [
+        [
+          {
+            "node": "Read the counter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the counter": {
+      "main": [
+        [
+          {
+            "node": "Within the limit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Within the limit?": {
+      "main": [
+        [
+          {
+            "node": "Answer from the FAQ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refuse: too many questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer from the FAQ": {
+      "main": [
+        [
+          {
+            "node": "Format the answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format the answer": {
+      "main": [
+        [
+          {
+            "node": "Answer the caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (swap for your provider)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Answer from the FAQ",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 120
+  }
+}

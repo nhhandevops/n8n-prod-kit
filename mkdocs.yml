@@ -56,6 +56,7 @@ nav:
       - Idempotency: operations/idempotency.md
       - Approvals: operations/approvals.md
       - Calling other APIs: operations/outbound-apis.md
+      - Endpoints that cost money: operations/paid-endpoints.md
       - Scaling: operations/scaling.md
       - Chaos drills: operations/chaos-drills.md
       - Rebuild a host: operations/rebuild-vps.md

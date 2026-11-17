@@ -868,7 +868,7 @@ files there ([Backup and restore](operations/backup-restore.md)).
 
 ### 7. `make smoke`: the automated version of everything you just did
 
-**What it is.** Thirteen scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
+**What it is.** Fourteen scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
 did by hand, and look inside containers only where the outside cannot see. They run in order and stop at the
 first failure, because later ones build on earlier ones (04 creates the workflow 05 inspects).
 
@@ -884,6 +884,7 @@ first failure, because later ones build on earlier ones (04 creates the workflow
 | `08-restore-test` | Every remote's newest bundle verifies and the newest restores into a scratch Postgres inside the backup container. The live database is never touched. |
 | `09-monitoring` | The monitoring profile end to end. Skipped when `COMPOSE_PROFILES` does not list `monitoring`. |
 | `10-error-workflow` | A workflow that fails on purpose reaches an Error Workflow built from `templates/error-handler/`: unpublished it never runs, published it runs in mode `error` on a worker and the alert names the workflow, the node and the message ([Error workflows](operations/error-workflows.md)). |
+| `14-ai-faq-bot` | The shipped `templates/ai-faq-bot/` guardrails, with the model stubbed: a request with no secret and one with the wrong secret are refused (403), a 600-character question is refused before any spend, and the rate limit — driven against the kit's **real Valkey** — splits 23 questions from one sender in one minute exactly **20 answered / 3 refused with 429**, leaves a different sender unaffected, and keeps its counter under a 120 s TTL ([Endpoints that cost money](operations/paid-endpoints.md)). |
 | `13-sheets-order-log` | The shipped `templates/sheets-order-log/` up to the vendor node: one order becomes one row with the documented columns (they are the contract with your header row), all four bad-order refusals write nothing and name their field, and 20 orders at once become exactly 20 rows. The Sheets node's own shape is asserted statically; the append itself needs a Google account and is validated by hand ([Calling other APIs](operations/outbound-apis.md)). |
 | `12-gchat-approval` | The shipped `templates/gchat-approval/` suspends on a human decision and resumes through `/webhook-waiting/` on the pool: a link with the wrong token is refused **401** while the execution stays parked, **Approve** resumes it down the approved branch, a second click gets **409**, **Reject** takes the other branch, and the parked row's deadline is ~2 days out ([Approvals](operations/approvals.md)). |
 | `11-idempotency` | The shipped `templates/idempotent-webhook/` does the work **once** when one idempotency key is delivered 20 times at once through the pool; a replay gets the stored result, a new key is not blocked, and a lease that is still running or was abandoned is refused with a message that says which ([Idempotency](operations/idempotency.md)). |

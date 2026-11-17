@@ -281,5 +281,6 @@ five tries cannot be a CI assertion — it would be a flaky test. That measureme
 - [Error workflows](error-workflows.md) — how `stale` reaches you
 - [Approvals](approvals.md) — the other place a URL is handed to a human, and why a clicked link still needs a gate
 - [Calling other APIs](outbound-apis.md) — re-driving a failed outbound call is a replay, with somebody else's rate limit attached
+- [Endpoints that cost money](paid-endpoints.md) — why a rate limiter needs an atomic counter too
 - [Backup and restore](backup-restore.md) — what the ledger rides along with
 - [Configuration](../configuration.md) — `WORKER_CONCURRENCY`, `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`

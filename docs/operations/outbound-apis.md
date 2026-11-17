@@ -110,6 +110,7 @@ through.
 
 - [`templates/sheets-order-log/`](https://github.com/nhhandevops/n8n-prod-kit/tree/main/templates/sheets-order-log) — the worked example
 - [Idempotency](idempotency.md) — because re-driving a failed outbound call is a replay
+- [Endpoints that cost money](paid-endpoints.md) — the same relationship from the other side: your endpoint, somebody else's bill
 - [Error workflows](error-workflows.md) — how a spent retry reaches you
 - [Scaling](scaling.md) and [Sizing](../sizing.md) — what the stack can push, which is the other half of this page
 - [Configuration](../configuration.md) — `PUBLIC_URL`, `WORKER_CONCURRENCY`, `N8N_ENCRYPTION_KEY`
