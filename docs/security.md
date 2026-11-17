@@ -3,6 +3,11 @@
 What the kit hardens by default, what it leaves to you, and the checklist to work through before you give anyone the
 URL. Every setting named here comes from `compose/docker-compose.yml`, `compose/caddy/` or `compose/.env.example`.
 
+> **An endpoint that spends money is its own category.** n8n exposes webhook URLs publicly by design, which is
+> fine while answering a request only costs CPU. When it costs cash at a model or messaging provider, the
+> defences are different and they belong in front of the spend — authentication, a per-caller rate limit, input
+> caps, and a budget cap at the provider: [Endpoints that cost money](operations/paid-endpoints.md).
+
 ## The edge: one container, three ports
 
 Only the `caddy` service publishes ports: `HTTP_PORT` (default 80) for the ACME HTTP-01 challenge and the permanent
