@@ -8,12 +8,20 @@
 # served or submitted a form through them**. This script does, end to end, and it is the one template in the
 # kit that needs **no credential of any kind**, which it also asserts.
 #
-# Two things about n8n's form API that this test had to be built around, both read out of 2.46.7's source
-# rather than guessed (`nodes/Form/utils/utils.ts`):
-#   * a submission MUST be `multipart/form-data` — the node asserts the content type outright;
+# Three things about n8n's form API that this test had to be built around, all read out of 2.46.7's source
+# rather than guessed:
+#   * a submission MUST be `multipart/form-data` — the node asserts the content type outright
+#     (`nodes/Form/utils/utils.ts`);
 #   * the body keys are POSITIONAL (`field-0`, `field-1`, ...), not the field names, so the order of the
 #     fields in the template is the wire format. Reordering them is a breaking change for anything that
-#     posts directly, which is why this script posts positionally and the template pins its field names.
+#     posts directly, which is why this script posts positionally and the template pins its field names;
+#   * **the form's path is an OPTION from node version 2.2 onward.** `FormTriggerV2` declares the top-level
+#     `path` property only for `@version <= 2.1`, and the webhook path expression is
+#     `$parameter["path"] || $parameter["options"]?.path || $webhookId`. A stored key the node does not
+#     declare is invisible to `$parameter`, so a top-level `path` at 2.6 is ignored and the form is served at
+#     `/form/<webhookId>` instead. The symptom is a 404 at your own path plus
+#     `The requested webhook ... is not registered` in a webhook process's log, while `webhook_entity` holds
+#     rows under a UUID. This test's first assertion exists so that can never ship again.
 # shellcheck disable=SC2310,SC2311,SC2312,SC2329,SC2016  # functions run via check/wait_for; sh -c snippets are literal on purpose
 set -euo pipefail
 # shellcheck source=lib.sh

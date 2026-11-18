@@ -3,7 +3,6 @@
   "nodes": [
     {
       "parameters": {
-        "path": "__PATH__",
         "formTitle": "Dat hang / Place an order",
         "formDescription": "Dien thong tin, chung toi se goi lai de xac nhan. / Fill this in and we will call you back to confirm.",
         "formFields": {
@@ -59,7 +58,9 @@
           ]
         },
         "responseMode": "lastNode",
-        "options": {}
+        "options": {
+          "path": "__PATH__"
+        }
       },
       "name": "Order form",
       "type": "n8n-nodes-base.formTrigger",
@@ -67,8 +68,7 @@
       "position": [
         0,
         0
-      ],
-      "webhookId": "b1a2c3d4-0000-4000-8000-00000000f0rm"
+      ]
     },
     {
       "parameters": {
