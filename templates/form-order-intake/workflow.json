@@ -1,0 +1,201 @@
+{
+  "name": "Order form - collect an order, confirm it, hand it on",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "__PATH__",
+        "formTitle": "Dat hang / Place an order",
+        "formDescription": "Dien thong tin, chung toi se goi lai de xac nhan. / Fill this in and we will call you back to confirm.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Ten cua ban / Your name",
+              "fieldName": "customer",
+              "placeholder": "Nguyen Thi Mai",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "So dien thoai / Phone",
+              "fieldName": "phone",
+              "placeholder": "0901234567",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Mon / Item",
+              "fieldName": "item",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Ca phe sua da"
+                  },
+                  {
+                    "option": "Ca phe den"
+                  },
+                  {
+                    "option": "Banh mi"
+                  },
+                  {
+                    "option": "Khac / Other (ghi o Ghi chu)"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "So luong / Quantity",
+              "fieldName": "qty",
+              "fieldType": "number",
+              "placeholder": "1",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Ghi chu / Note",
+              "fieldName": "note",
+              "fieldType": "textarea",
+              "placeholder": "Giao truoc 9h / deliver before 9am",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Order form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b1a2c3d4-0000-4000-8000-00000000f0rm"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The form already enforced \"required\" and the number type in the browser. This is the second line: the\n// things a browser cannot check, and the things a determined person can POST straight past the form.\n//\n// It does NOT throw. A human is reading the other end of this, so an invalid order routes to a page that\n// says what to fix — an n8n error page with a stack trace is not an answer to \"I typed my phone wrong\".\nconst f = $input.first().json;\n\nconst text = (v, max) => String(v ?? '').replace(/\\s+/g, ' ').trim().slice(0, max);\n\nconst customer = text(f.customer, 120);\nconst item = text(f.item, 200);\nconst note = text(f.note, 500);\nconst qty = Number(f.qty);\n\n// Vietnamese mobile numbers start with 0, and +84 is the same number written for abroad. Strip everything\n// that is not a digit, then normalise the country code back to the local form — otherwise \"+84 901 234 567\",\n// \"0901-234-567\" and \"0901234567\" are three different customers in your records.\nlet phone = String(f.phone ?? '').replace(/[^0-9+]/g, '');\nif (phone.startsWith('+84')) phone = '0' + phone.slice(3);\nelse if (phone.startsWith('84') && phone.length > 9) phone = '0' + phone.slice(2);\nphone = phone.replace(/[^0-9]/g, '');\n\n// What to tell them, in the order they are most likely to have got it wrong. One problem at a time: a form\n// that lists five faults at once gets abandoned.\nlet problem = '';\nif (!customer) {\n  problem = 'Vui long nhap ten. / Please enter your name.';\n} else if (!/^0[0-9]{8,10}$/.test(phone)) {\n  problem = 'So dien thoai khong hop le — vui long nhap so Viet Nam, vi du 0901234567. / That phone number does not look right — please use a Vietnamese number, e.g. 0901234567.';\n} else if (!item) {\n  problem = 'Vui long chon mon. / Please choose an item.';\n} else if (!Number.isInteger(qty) || qty < 1 || qty > 99) {\n  problem = 'So luong phai tu 1 den 99. / Quantity must be between 1 and 99.';\n}\n\n// A short, human-quotable reference: the date, so staff can find it, plus four random characters, so two\n// orders in the same minute cannot collide. Not a security token - it is read out over the phone.\nconst now = new Date();\nconst stamp = now.toISOString().slice(0, 10).replace(/-/g, '');\nconst suffix = Math.random().toString(36).toUpperCase().slice(2, 6);\n\nreturn [\n  {\n    json: {\n      valid: problem === '',\n      problem,\n      ref: `DH-${stamp}-${suffix}`,\n      customer,\n      phone,\n      item,\n      qty: Number.isFinite(qty) ? qty : null,\n      note,\n      receivedAt: now.toISOString(),\n      executionId: $execution.id,\n    },\n  },\n];"
+      },
+      "name": "Check the order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "order-is-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Usable order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "Da nhan don / Order received",
+        "completionMessage": "={{ 'Ma don / Reference: ' + $json.ref + '\\n\\nChung toi se goi lai de xac nhan. / We will call you back to confirm.' }}",
+        "options": {}
+      },
+      "name": "Confirm it",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "Chua gui duoc / Not sent yet",
+        "completionMessage": "={{ $json.problem + '\\n\\nVui long bam Back va sua lai. / Please go back and correct it.' }}",
+        "options": {}
+      },
+      "name": "Tell them what to fix",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Order form": {
+      "main": [
+        [
+          {
+            "node": "Check the order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the order": {
+      "main": [
+        [
+          {
+            "node": "Usable order?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Usable order?": {
+      "main": [
+        [
+          {
+            "node": "Confirm it",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tell them what to fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 120
+  }
+}
