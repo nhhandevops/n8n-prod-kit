@@ -36,6 +36,11 @@ nonce="$(rand_hex 6)"
 form_path="kit-smoke-form-${nonce}"
 
 # --- the shipped shape ------------------------------------------------------------------------------------
+# At node version 2.2+ the path is an option. Set at the top level it is silently ignored and the form is
+# served at /form/<webhookId> — which is how this template failed its first test run.
+check "the form's path is set where the node declares it (options.path), not at the top level" \
+  test "$(jq -r '[.nodes[] | select(.type == "n8n-nodes-base.formTrigger") | (.parameters.options.path // "MISSING"), (if .parameters | has("path") then "TOP-LEVEL-PATH-PRESENT" else "absent" end)] | join(",")' "${TEMPLATE}")" \
+    = "__PATH__,absent"
 check "the form's output keys are pinned, so renaming a label cannot break the workflow" \
   test "$(jq -r '[.nodes[] | select(.type == "n8n-nodes-base.formTrigger") | .parameters.formFields.values[].fieldName] | join(",")' "${TEMPLATE}")" \
     = "customer,phone,item,qty,note"
@@ -53,7 +58,7 @@ check "it needs no credential at all" \
 # --- publish it -------------------------------------------------------------------------------------------
 form_json="$(jq -c --arg n "kit-smoke-form-${nonce}" --arg p "${form_path}" '
   .name = $n
-  | .nodes = [ .nodes[] | if .type == "n8n-nodes-base.formTrigger" then .parameters.path = $p else . end ]' "${TEMPLATE}")"
+  | .nodes = [ .nodes[] | if .type == "n8n-nodes-base.formTrigger" then .parameters.options.path = $p else . end ]' "${TEMPLATE}")"
 api POST /api/v1/workflows "${form_json}"
 form_id="$(req_body | jq -r '.id // empty')"
 check "form workflow created from the shipped template (HTTP ${REQ_STATUS})" test -n "${form_id}"
