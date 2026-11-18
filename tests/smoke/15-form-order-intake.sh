@@ -94,9 +94,16 @@ submit() {   # submit NAME PHONE ITEM QTY NOTE -> sets REQ_STATUS, WAIT_URL, PAG
   req POST "/form/${form_path}" \
     -F "field-0=${1}" -F "field-1=${2}" -F "field-2=${3}" -F "field-3=${4}" -F "field-4=${5}"
   WAIT_URL="$(req_body | jq -r '.formWaitingUrl // empty' 2>/dev/null || true)"
-  if [[ -n "${WAIT_URL}" ]]; then
-    PAGE_CODE="$(curl -sS --max-time 30 "${CURL_TLS[@]}" -o "${PAGE}" -w '%{http_code}' "${WAIT_URL}" 2>/dev/null || echo 000)"
-  fi
+  [[ -n "${WAIT_URL}" ]] || return 0
+  # Polled, the way the form's own client does it: the page is only served once the execution has PARKED at
+  # the Form node, and a fetch before that blocks rather than erroring. Fetching once, immediately, is how
+  # this test first "failed" against a template that was working.
+  local try
+  for try in 1 2 3 4 5 6 7 8; do
+    PAGE_CODE="$(curl -sS --max-time 10 "${CURL_TLS[@]}" -o "${PAGE}" -w '%{http_code}' "${WAIT_URL}" 2>/dev/null || echo 000)"
+    [[ "${PAGE_CODE}" == "200" ]] && return 0
+    sleep 2
+  done
 }
 submit 'Nguyen Thi Mai' '+84 901 234 567' 'Ca phe sua da' '2' 'giao truoc 9h'
 check "a good order is accepted (HTTP ${REQ_STATUS})" status_is 200
@@ -153,4 +160,20 @@ row="$(order)"
 check "the last rejected order is recorded as not usable" test "$(jq -r '.valid' <<<"${row}")" = "false"
 check "...with the problem kept, so it can be counted" \
   bash -c '[[ -n "$1" && "$1" != "null" ]]' _ "$(jq -r '.problem // empty' <<<"${row}")"
+
+# --- the cost of a completion page, pinned ---------------------------------------------------------------
+# A Form Ending node parks its execution with n8n's wait-indefinitely sentinel (year 3000) and never resumes
+# it, even after the page has been served. Pruning excludes `waiting` executions outright, so **every
+# submission leaves a row nothing will ever delete** — and those rows still count when the count-based prune
+# computes its cutoff, which is how a busy form shortens the retention window for every OTHER workflow on
+# the instance. ~1.7 KB of execution_data each, measured on this stack.
+#
+# This is asserted rather than merely documented so that if a future n8n version stops parking — or starts
+# resuming — the kit finds out from a failing test rather than from a full database.
+parked="$(kit_psql "select count(*) from execution_entity where \"workflowId\" = '${form_id}' and status = 'waiting'")"
+check "every submission left a parked execution (${parked:-?} of the $(( 1 + 4 )) submitted)" \
+  bash -c '[[ -n "$1" ]] && (( $1 >= 5 ))' _ "${parked}"
+check "...parked with the wait-indefinitely sentinel, so nothing will resume them" \
+  test "$(kit_psql "select count(*) from execution_entity where \"workflowId\" = '${form_id}' and status = 'waiting' and \"waitTill\" > now() + interval '100 years'")" = "${parked}"
+info "a form that parks one execution per submission needs a sweep — docs/operations/forms.md has the query"
 finish
