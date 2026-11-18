@@ -81,16 +81,32 @@ check "...and the page carries the form's own title" \
 # --- a good order -----------------------------------------------------------------------------------------
 # Positional keys and multipart, as the node requires. The phone is deliberately written the way a customer
 # would who has the number saved for international use.
-submit() {   # submit NAME PHONE ITEM QTY NOTE
+# A submission is two requests, which is the part that is not obvious from the outside. The POST does not
+# return the page a customer reads: it returns {"formWaitingUrl": "<PUBLIC_URL>/form-waiting/<execution
+# id>?signature=<token>"}, and the form's own client then FOLLOWS that URL to render whatever the workflow
+# ended on. So `/form/*` and `/form-waiting/*` are both on the path of a single submission, and a test that
+# stops at the POST proves only half of it.
+PAGE="${STATE_DIR}/form-page.html"
+submit() {   # submit NAME PHONE ITEM QTY NOTE -> sets REQ_STATUS, WAIT_URL, PAGE_CODE, and renders into $PAGE
+  : >"${PAGE}"
+  WAIT_URL=''
+  PAGE_CODE='000'
   req POST "/form/${form_path}" \
     -F "field-0=${1}" -F "field-1=${2}" -F "field-2=${3}" -F "field-3=${4}" -F "field-4=${5}"
+  WAIT_URL="$(req_body | jq -r '.formWaitingUrl // empty' 2>/dev/null || true)"
+  if [[ -n "${WAIT_URL}" ]]; then
+    PAGE_CODE="$(curl -sS --max-time 30 "${CURL_TLS[@]}" -o "${PAGE}" -w '%{http_code}' "${WAIT_URL}" 2>/dev/null || echo 000)"
+  fi
 }
 submit 'Nguyen Thi Mai' '+84 901 234 567' 'Ca phe sua da' '2' 'giao truoc 9h'
 check "a good order is accepted (HTTP ${REQ_STATUS})" status_is 200
-body="$(req_body)"
-check "...and the confirmation page is shown" grep -qF 'Da nhan don' <<<"${body}"
-check "...carrying a reference the customer can quote (DH-YYYYMMDD-XXXX)" \
-  grep -qE 'DH-[0-9]{8}-[A-Z0-9]{4}' <<<"${body}"
+# The second half of the flow, over the kit's other form route.
+check "...answering with a form-waiting URL for this execution" \
+  grep -qE '/form-waiting/[0-9]+\?signature=' <<<"${WAIT_URL}"
+check "...which renders the confirmation page (HTTP ${PAGE_CODE})" test "${PAGE_CODE}" = "200"
+check "...showing the customer their order was received" grep -qF 'Da nhan don' "${PAGE}"
+check "...carrying a reference they can quote (DH-YYYYMMDD-XXXX)" \
+  grep -qE 'DH-[0-9]{8}-[A-Z0-9]{4}' "${PAGE}"
 
 latest_execution() {   # the newest execution's data for this workflow
   local ex
@@ -119,8 +135,8 @@ reject() {   # reject DESCRIPTION EXPECTED_TEXT NAME PHONE ITEM QTY NOTE
   shift 2
   submit "${@}"
   check "${desc} is sent back (HTTP ${REQ_STATUS})" status_is 200
-  check "...on the 'what to fix' page, not an error page" grep -qF 'Chua gui duoc' "${STATE_DIR}/last.body"
-  check "...saying ${expect}" grep -qF "${expect}" "${STATE_DIR}/last.body"
+  check "...on the 'what to fix' page, not an error page (HTTP ${PAGE_CODE})" grep -qF 'Chua gui duoc' "${PAGE}"
+  check "...saying ${expect}" grep -qF "${expect}" "${PAGE}"
 }
 reject "a number that is not a Vietnamese mobile" 'So dien thoai khong hop le' \
   'Nguyen Thi Mai' '12345' 'Ca phe den' '1' ''
