@@ -38,7 +38,7 @@ The Compose kit's targets live in `compose/Makefile` — `make -C compose help`.
 
 `make chaos SCENARIO=worker|redis|main` kills or stops containers on purpose. Never run it against a stack you did not create for testing, and read `docs/operations/chaos-drills.md` first — it records what a killed worker actually costs (in-flight executions are lost, not retried) and why `docker kill` does not exercise the restart policy.
 
-Smoke suite rules: `tests/smoke/NN-*.sh` share `tests/smoke/lib.sh`; never pipe into an early-exiting reader (`| grep -q`, `| head`) under pipefail — capture first; n8n allows only 5 logins per window, so reuse the session/API key in `compose/.smoke/`.
+Smoke suite rules: `tests/smoke/NN-*.sh` share `tests/smoke/lib.sh`; never pipe into an early-exiting reader (`| grep -q`, `| head`) under pipefail — capture first; n8n allows only 5 logins per window, so reuse the session/API key in `compose/.smoke/`. On a host with `UI_PROTECT=on` the suite needs the edge password — `KIT_UI_PASSWORD='…' make -C compose smoke` — because `.env` keeps only its bcrypt hash and `/rest` and `/api/v1` are behind basic auth even for requests made on the host.
 
 Remote shell tip (learned the hard way): `docker compose up` and `make up` read stdin — never feed a multi-step script to a remote host through `ssh host 'bash -s' <<EOF`; copy it to a file and run `bash file </dev/null`.
 

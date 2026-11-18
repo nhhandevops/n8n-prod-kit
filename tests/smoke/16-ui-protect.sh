@@ -30,7 +30,8 @@
 #   * otherwise              -> skips, like 09-monitoring does without the monitoring profile.
 # The restore runs from a trap and is asserted at the end: a half-finished run must never leave somebody
 # locked out of their own editor.
-# shellcheck disable=SC2310,SC2311,SC2312,SC2329  # functions run via check/wait_for
+# shellcheck disable=SC2310,SC2311,SC2312,SC2329,SC2016  # functions run via check/wait_for; the single-quoted
+# regexes and `bash -c` snippets are literal on purpose ('$2a$' is a bcrypt prefix, not an expansion)
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib.sh"
@@ -103,8 +104,7 @@ trap restore_env EXIT
 apply_caddy() {   # apply_caddy CIDR -> recreate caddy with the current .env and wait for it to answer
   env_set UI_ALLOW_CIDR "${1}"
   compose up -d --no-deps --force-recreate caddy >/dev/null 2>&1
-  local try
-  for try in 1 2 3 4 5 6 7 8 9 10; do
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(service_health caddy)" == "healthy" ]] && break
     sleep 2
   done

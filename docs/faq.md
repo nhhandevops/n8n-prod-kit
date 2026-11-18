@@ -86,11 +86,25 @@ docker compose --env-file versions.env --env-file .env run --rm caddy caddy hash
 
 **Does `UI_PROTECT` break my webhooks?**
 
-No. The IP allow-list and basic auth are imported only in front of the editor, the API and `/grafana/`.
-Production webhooks, forms, MCP endpoints and the health paths are never behind them, so integrations
-keep working. Two things to know: with `UI_ALLOW_CIDR` set, a foreign address gets 403 *before* the auth
-prompt; and clients on the host itself arrive through Docker's NAT as the bridge gateway (`172.x.x.1`),
+No — and this is now measured rather than reasoned. The IP allow-list and basic auth are imported only in
+front of the editor, the API and `/grafana/`. `tests/smoke/16-ui-protect.sh` turns the protection on against a
+real stack and shows `/webhook/*`, `/form/*`, `/form-waiting/*`, `/webhook-waiting/*` and both health paths
+answering **200 with no credentials at all**, from inside the allow-list and from outside it, while the editor
+answers 401 and then 403. Two things to know: with `UI_ALLOW_CIDR` set, a foreign address gets 403 *before* the
+auth prompt; and clients on the host itself arrive through Docker's NAT as the bridge gateway (`172.x.x.1`),
 not as their own address.
+
+**`UI_PROTECT=on` and now `make smoke` fails at its first API call.**
+
+Expected: `/rest` and `/api/v1` are behind the same password, and running on the host is no exemption (Docker
+NAT again). `.env` holds only the bcrypt hash, so the suite cannot work the password out — give it to it:
+
+```bash
+KIT_UI_PASSWORD='the edge password' make -C compose smoke
+```
+
+Do **not** widen `UI_ALLOW_CIDR` to the Docker bridge range instead: that would let the Code nodes your own
+workflows run reach the editor and the API through the edge.
 
 ## Workflows and nodes
 

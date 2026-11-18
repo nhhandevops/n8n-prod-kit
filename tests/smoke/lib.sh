@@ -7,7 +7,9 @@
 # mode 700); every run creates its own uniquely named "kit-smoke-<nonce>" workflows and run.sh removes them.
 #
 # API (scripts call only these):
-#   BASE_URL, DOMAIN, TLS_MODE, STATE_DIR, CURL_TLS[]   set on source
+#   BASE_URL, DOMAIN, TLS_MODE, STATE_DIR, CURL_TLS[], CURL_EDGE[]   set on source
+#     CURL_EDGE[] carries Caddy's basic-auth credential when UI_PROTECT=on; pass the password in as
+#     KIT_UI_PASSWORD, because .env holds only its bcrypt hash (see the comment above req)
 #   check "description" cmd...    run cmd; print [ OK ]/[FAIL]; count failures (never exits)
 #   finish                        exit 1 if any check failed in this script
 #   req METHOD PATH [curl args]   HTTP via Caddy; sets REQ_STATUS; body in "$(req_body)", headers via header_of
@@ -111,11 +113,30 @@ finish() {
 }
 
 # --- HTTP ------------------------------------------------------------------------------------------------------------
+# With UI_PROTECT=on, Caddy's basic auth sits in front of the editor, /rest and /api/v1 — including requests made on
+# the host itself, whose `remote_ip` is the Docker bridge gateway and not 127.0.0.1, so "I am local" is no exemption.
+# .env holds only the bcrypt HASH of that password, which the suite cannot reverse, so a protected host has to be told:
+#   KIT_UI_PASSWORD='<the edge password>' make -C compose smoke
+# Without it every API call comes back 401 from the edge and the whole suite fails for a reason that looks like a broken
+# stack. The credential goes on every request (curl takes the LAST -u, so a script's own -u still wins); the open paths
+# — /webhook/*, /form/*, health — simply receive an Authorization header they would otherwise not have, which n8n
+# ignores unless that webhook asks for Basic auth of its own.
+CURL_EDGE=()
+if [[ "$(env_get UI_PROTECT)" == "on" ]]; then
+  _ui_user="$(env_get UI_BASIC_AUTH_USER)"
+  if [[ -n "${KIT_UI_PASSWORD:-}" && -n "${_ui_user}" ]]; then
+    CURL_EDGE=(-u "${_ui_user}:${KIT_UI_PASSWORD}")
+  else
+    warn "UI_PROTECT=on but KIT_UI_PASSWORD is unset — the editor, /rest and /api/v1 answer 401 at the edge before n8n sees them, so this suite cannot pass. Re-run as: KIT_UI_PASSWORD='<the edge password>' make -C compose smoke"
+  fi
+fi
+
 REQ_STATUS=000
 req() {
   local method="${1}" path="${2}"
   shift 2
-  REQ_STATUS="$(curl -sS --max-time 60 "${CURL_TLS[@]}" -o "${STATE_DIR}/last.body" -D "${STATE_DIR}/last.headers" \
+  REQ_STATUS="$(curl -sS --max-time 60 "${CURL_TLS[@]}" "${CURL_EDGE[@]}" \
+    -o "${STATE_DIR}/last.body" -D "${STATE_DIR}/last.headers" \
     -w '%{http_code}' -X "${method}" "${@}" "${BASE_URL}${path}" 2>"${STATE_DIR}/last.err" || true)"
   REQ_STATUS="${REQ_STATUS:-000}"
 }
