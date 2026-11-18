@@ -98,8 +98,7 @@ submit() {   # submit NAME PHONE ITEM QTY NOTE -> sets REQ_STATUS, WAIT_URL, PAG
   # Polled, the way the form's own client does it: the page is only served once the execution has PARKED at
   # the Form node, and a fetch before that blocks rather than erroring. Fetching once, immediately, is how
   # this test first "failed" against a template that was working.
-  local try
-  for try in 1 2 3 4 5 6 7 8; do
+  for _ in 1 2 3 4 5 6 7 8; do
     PAGE_CODE="$(curl -sS --max-time 10 "${CURL_TLS[@]}" -o "${PAGE}" -w '%{http_code}' "${WAIT_URL}" 2>/dev/null || echo 000)"
     [[ "${PAGE_CODE}" == "200" ]] && return 0
     sleep 2
@@ -165,8 +164,10 @@ check "...with the problem kept, so it can be counted" \
 # A Form Ending node parks its execution with n8n's wait-indefinitely sentinel (year 3000) and never resumes
 # it, even after the page has been served. Pruning excludes `waiting` executions outright, so **every
 # submission leaves a row nothing will ever delete** — and those rows still count when the count-based prune
-# computes its cutoff, which is how a busy form shortens the retention window for every OTHER workflow on
-# the instance. ~1.7 KB of execution_data each, measured on this stack.
+# computes its cutoff (that subquery has no status filter; checked in the pinned image's own @n8n/db build),
+# which is how a busy form shortens the retention window for every OTHER workflow on the instance.
+# Measured on this stack with this template: 1694 B of `data` + 3607 B of `workflowData` = 5301 B per
+# submission, so 10 000 of them is ~51 MB of execution_data, in every backup, for ever.
 #
 # This is asserted rather than merely documented so that if a future n8n version stops parking — or starts
 # resuming — the kit finds out from a failing test rather than from a full database.
