@@ -22,6 +22,12 @@ acme-test: ## Issue a real certificate from Pebble (Let's Encrypt's test CA) usi
 
 lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then compose/ lint if present
 	@if [ -n "$(SH_FILES)" ]; then shellcheck -x $(SH_FILES) && echo "shellcheck: OK"; else echo "shellcheck: no .sh files yet"; fi
+	@# Mode bits, because a .sh committed 644 from the Windows clone reads perfectly in a diff and then fails at
+	@# runtime as "Permission denied" — a make target that does nothing, or a smoke script the suite skips. It
+	@# cost PR #48 and then cost another round on 2026-11-19, so it fails here instead. Every tracked .sh in this
+	@# repo is executable, sourced libraries included; fix with: git update-index --chmod=+x <file>
+	@bad=$$(git ls-files -s '*.sh' 2>/dev/null | awk '$$1 != "100755" { print "  " $$4 }'); \
+	if [ -n "$$bad" ]; then printf 'not executable in git:\n%s\n' "$$bad" >&2; exit 1; else echo "script modes: OK"; fi
 	@if [ -n "$(DOCKERFILES)" ]; then hadolint $(DOCKERFILES) && echo "hadolint: OK"; else echo "hadolint: no Dockerfiles yet"; fi
 	@if [ -n "$(YAML_FILES)" ]; then yamllint -s $(YAML_FILES) && echo "yamllint: OK"; else echo "yamllint: no YAML yet"; fi
 	@if [ -f compose/Makefile ]; then $(MAKE) -C compose lint; fi
