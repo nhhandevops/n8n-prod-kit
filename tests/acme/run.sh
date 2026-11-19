@@ -136,9 +136,14 @@ leaf() {
   openssl s_client -connect "127.0.0.1:8443" -servername "${DOMAIN_UNDER_TEST}" \
     -CAfile "${STATE}/pebble-root.pem" </dev/null 2>/dev/null
 }
-leaf_text="$(leaf | openssl x509 -noout -subject -issuer -dates 2>/dev/null || true)"
+leaf_text="$(leaf | openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null || true)"
 printf '%s\n' "${leaf_text}" | sed 's/^/      /'
-check "...for ${DOMAIN_UNDER_TEST} itself" grep -qF "CN=${DOMAIN_UNDER_TEST}" <<<"${leaf_text}"
+# The name lives in the SAN, not in the subject: the issued leaf's subject DN is EMPTY, which is how a modern
+# CA issues (CN in the subject has been deprecated for name validation since RFC 2818's replacement). A test
+# asserting `CN=<domain>` passes against Caddy's internal CA and fails against a real one — it failed here
+# first, which is the kind of difference this harness exists to surface before a production host does.
+check "...naming ${DOMAIN_UNDER_TEST} in its subjectAltName" \
+  grep -qF "DNS:${DOMAIN_UNDER_TEST}" <<<"${leaf_text}"
 check "...issued by Pebble, not by Caddy's internal CA" grep -qiE 'issuer=.*pebble' <<<"${leaf_text}"
 chain_verifies() {
   openssl s_client -connect "127.0.0.1:8443" -servername "${DOMAIN_UNDER_TEST}" \
@@ -146,12 +151,17 @@ chain_verifies() {
 }
 check "...and the chain verifies against the CA root" chain_verifies
 
-# The ACME traffic itself, from the CA's side: proof the challenge was really served over HTTP rather than
-# the certificate coming from anywhere else.
-pebble_log="$(acme_compose logs pebble 2>/dev/null || true)"
-check "Pebble recorded an HTTP-01 validation for ${DOMAIN_UNDER_TEST}" \
-  grep -qE "http-01|HTTP-01" <<<"${pebble_log}"
-check "...and finalized an order" grep -qiE 'finaliz|certificate' <<<"${pebble_log}"
+# The ACME traffic itself, from the CA's side — proof the certificate came from a completed challenge rather
+# than from anywhere else. Pebble never prints the string "http-01"; what it prints is the validation task it
+# pulled for the identifier, the authorization going VALID, and the serial it issued. (It starts THREE
+# validations per challenge, imitating Let's Encrypt's multi-perspective validation.)
+pebble_log="$(docker logs "${PROJECT}-pebble-1" 2>&1 || true)"
+check "the CA pulled a validation task for ${DOMAIN_UNDER_TEST}" \
+  grep -qF "Value:\"${DOMAIN_UNDER_TEST}\"" <<<"${pebble_log}"
+check "...the challenge completed and the authorization went VALID" \
+  grep -qF 'set VALID by completed challenge' <<<"${pebble_log}"
+check "...and the order was finalized into an issued certificate" \
+  grep -qF 'Issued certificate serial' <<<"${pebble_log}"
 
 # And the rest of the shipped edge still behaves while a real certificate is in play: the security headers
 # are set by the same site block that the TLS policy lives in, so a mistake there would show here.
