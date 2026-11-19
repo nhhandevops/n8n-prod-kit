@@ -17,7 +17,7 @@
 # only 127.0.0.1 publishings. Safe to run beside a live stack.
 #
 # Usage:  tests/acme/run.sh            (KEEP=1 leaves the containers up for inspection)
-# shellcheck disable=SC2310,SC2311,SC2312
+# shellcheck disable=SC2310,SC2311,SC2312,SC2016  # functions run via check/retry; the `bash -c` snippet is literal
 set -euo pipefail
 
 ACME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -81,15 +81,25 @@ mkdir -p "${STATE}"
 # Caddy will not talk to an ACME directory it cannot verify, so the root that signs Pebble's API certificate
 # has to be on disk before Caddy starts. It is inside the Pebble image; take it from there rather than
 # vendoring a copy that would rot.
+# The config Caddy will read: every shipped file, copied, plus the two the test adds. See the volumes comment
+# in docker-compose.yml for why this is a copy rather than the directory itself.
+info "assembling the Caddy config from compose/caddy/ plus the test's TLS policy"
+mkdir -p "${STATE}/caddy"
+cp -a "${KIT_DIR}/caddy/." "${STATE}/caddy/"
+cp -a "${ACME_DIR}/tls-acmetest.caddy" "${STATE}/caddy/tls-acmetest.caddy"
+check "the Caddyfile under test is byte-identical to the shipped one" \
+  cmp -s "${KIT_DIR}/caddy/Caddyfile" "${STATE}/caddy/Caddyfile"
+
 # The image is distroless — no shell, no cat, no ls — so the file is taken out with `docker cp` from a
 # container that is created and never started. (`docker run --entrypoint cat` fails with
 # "executable file not found in $PATH", which is how this was found.)
 info "extracting Pebble's API root from the image"
 pebble_cid="$(docker create "ghcr.io/letsencrypt/pebble@${PEBBLE_DIGEST}")"
-docker cp "${pebble_cid}:/test/certs/pebble.minica.pem" - 2>/dev/null | tar -xO >"${STATE}/pebble-minica.pem"
+docker cp "${pebble_cid}:/test/certs/pebble.minica.pem" - 2>/dev/null |
+  tar -xO >"${STATE}/caddy/pebble-minica.pem"
 docker rm -f "${pebble_cid}" >/dev/null 2>&1 || true
-check "Pebble's API root extracted ($(wc -c <"${STATE}/pebble-minica.pem" 2>/dev/null || echo 0) bytes)" \
-  openssl x509 -in "${STATE}/pebble-minica.pem" -noout -subject
+check "Pebble's API root extracted ($(wc -c <"${STATE}/caddy/pebble-minica.pem" 2>/dev/null || echo 0) bytes)" \
+  openssl x509 -in "${STATE}/caddy/pebble-minica.pem" -noout -subject
 
 # --- up -------------------------------------------------------------------------------------------------
 info "starting Pebble and the kit's Caddy (project ${PROJECT}, ports 8080/8443)"
@@ -105,7 +115,7 @@ check "the kit's Caddyfile started under TLS_MODE=acmetest" retry 60 caddy_runni
 # The chain Pebble issues is signed by a root generated for this run, so the client trust comes from its
 # management API rather than from a file in the repo.
 roots_ready() {
-  curl -fsS --max-time 5 --cacert "${STATE}/pebble-minica.pem" https://127.0.0.1:15000/roots/0 \
+  curl -fsS --max-time 5 --cacert "${STATE}/caddy/pebble-minica.pem" https://127.0.0.1:15000/roots/0 \
     -o "${STATE}/pebble-root.pem"
 }
 check "Pebble's issuing root fetched from its management API" retry 60 roots_ready

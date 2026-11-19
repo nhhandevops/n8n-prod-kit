@@ -56,11 +56,15 @@ services:
       UI_PROTECT: "off"
       KUMA_ENABLED: "off"
     volumes:
-      # The shipped Caddyfile and its snippets, read-only and unmodified.
-      - ../../compose/caddy:/etc/caddy:ro
-      # Two files layered on top: the test-only TLS policy, and the root that signs Pebble's API certificate.
-      - ./tls-acmetest.caddy:/etc/caddy/tls-acmetest.caddy:ro
-      - ./.state/pebble-minica.pem:/etc/caddy/pebble-minica.pem:ro
+      # .state/caddy is assembled per run by run.sh: every file from compose/caddy/ copied verbatim (the
+      # Caddyfile is then compared byte for byte, so it cannot drift from what production reads), plus the
+      # test-only TLS policy and the root that signs Pebble's API certificate.
+      #
+      # Why a copy and not the directory itself: a file cannot be bind-mounted INTO a read-only bind mount —
+      # Docker has to create the mountpoint and the mount it would create it in is read-only
+      # ("make mountpoint ...: read-only file system"). Layering two files over compose/caddy:ro therefore
+      # cannot work, and making that directory writable to a container is worse than copying it.
+      - ./.state/caddy:/etc/caddy:ro
     networks:
       acme:
         ipv4_address: 10.77.0.10
