@@ -2,6 +2,15 @@
 
 Format per entry: symptom → root cause → how to verify → fix → date.
 
+## 2026-11-19 · Three traps met while building the ACME harness: a file cannot be mounted into a read-only mount, the Pebble image has no shell, and a real CA issues an empty subject DN
+
+- **(1) A bind mount cannot create its mountpoint inside a read-only bind mount.** Mounting `compose/caddy:/etc/caddy:ro` and then layering one extra file at `/etc/caddy/tls-acmetest.caddy` fails at container start with `failed to create shim task: … create mountpoint for /etc/caddy/pebble-minica.pem mount: make mountpoint "…": read-only file system`. Docker has to create the target file before it can mount over it, and the directory it would create it in forbids writes. **Fix:** stage a copy (`cp -a compose/caddy/. .state/caddy/`, add the test files there, mount that) — and `cmp` the Caddyfile against the shipped one so the copy can never silently drift from what production reads.
+- **(2) `ghcr.io/letsencrypt/pebble` is distroless.** `docker run --rm --entrypoint cat … /test/certs/pebble.minica.pem` fails with `exec: "cat": executable file not found in $PATH`; there is no shell, no `ls`, no `cat`. **Fix:** `cid=$(docker create <image>)` then `docker cp "$cid:/path" - | tar -xO` — the file comes out of a container that is never started. The same trick reads any file from any distroless image.
+- **(3) A real CA issues certificates with an EMPTY subject DN.** Pebble's leaf carries `subject=` and the name only in `X509v3 Subject Alternative Name: DNS:n8n.localtest.me`. So a test written as `openssl x509 -subject | grep "CN=<domain>"` **passes against Caddy's internal CA and fails against a real one** — which is how it failed here first. Assert the `subjectAltName` extension instead. CN-as-name has been deprecated for validation for years; Caddy's internal CA still fills it in, so an internal-CA-only test suite cannot see the difference.
+- **Also worth knowing:** Pebble never logs the string `http-01`. It logs the validation task it pulled for the identifier, `set VALID by completed challenge`, and `Issued certificate serial …` — and it starts **three** validations per challenge, imitating Let's Encrypt's multi-perspective validation. Asserting on the protocol name finds nothing.
+- **How to verify:** `make acme-test` (≈1 min, runs beside a live stack); `KEEP=1 make acme-test` then `docker logs kitacme-pebble-1`.
+- **Date:** 2026-11-19
+
 ## 2026-11-19 · Let's Encrypt validates over IPv6 first, so a stale `AAAA` record breaks issuance while every IPv4 check you run by hand passes
 
 - **Symptom (upstream reports, not yet met on a host of ours):** ACME issuance fails or hangs on a host whose `A` record is correct and whose port 80 is open. `curl` against the IPv4 address serves the challenge file perfectly; Caddy's log says the authorization failed with a connection timeout, which reads like a firewall problem on a firewall that is open.

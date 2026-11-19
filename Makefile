@@ -44,6 +44,6 @@ lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then 
 	@if [ -f compose/Makefile ] && grep -qE "^$@:" compose/Makefile; then \
 	  printf '"%s" is a Compose-kit target, not a root one. Run:\n\n    make -C compose %s\n\n' "$@" "$@" >&2; \
 	else \
-	  printf 'no "%s" target here. This Makefile has: help, lint, bootstrap-test.\nThe Compose kit has the rest: make -C compose help\n' "$@" >&2; \
+	  printf 'no "%s" target here. This Makefile has: help, lint, bootstrap-test, acme-test.\nThe Compose kit has the rest: make -C compose help\n' "$@" >&2; \
 	fi; \
 	exit 2
