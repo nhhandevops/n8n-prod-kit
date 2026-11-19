@@ -8,7 +8,7 @@ SH_FILES    := $(shell $(LS_FILES) '*.sh' 2>/dev/null)
 DOCKERFILES := $(shell $(LS_FILES) '*Dockerfile*' 2>/dev/null)
 YAML_FILES  := $(shell $(LS_FILES) '*.yml' '*.yaml' '.yamllint' 2>/dev/null)
 
-.PHONY: help lint bootstrap-test
+.PHONY: help lint bootstrap-test acme-test
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-16s %s\n", $$1, $$2}'
@@ -16,6 +16,9 @@ help: ## Show this help
 
 bootstrap-test: ## Run scripts/bootstrap-host.sh inside Ubuntu/Debian/Rocky/Alma containers (install-only, ~10 min)
 	@tests/bootstrap/test-in-container.sh
+
+acme-test: ## Issue a real certificate from Pebble (Let's Encrypt's test CA) using the shipped Caddyfile (~1 min)
+	@tests/acme/run.sh
 
 lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then compose/ lint if present
 	@if [ -n "$(SH_FILES)" ]; then shellcheck -x $(SH_FILES) && echo "shellcheck: OK"; else echo "shellcheck: no .sh files yet"; fi

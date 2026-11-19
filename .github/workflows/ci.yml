@@ -60,6 +60,20 @@ jobs:
       - name: make lint
         run: make lint
 
+  # The ACME code path, against Pebble (Let's Encrypt's own test CA) rather than Let's Encrypt: a real account,
+  # order, HTTP-01 validation and issuance, using the shipped Caddyfile unchanged. It is a job of its own, not a
+  # step inside smoke, for the reason the 2026-11-11 lint outage taught: a job others `needs:` turns its own
+  # flakiness into a blackout, and this one pulls an image from a registry nothing else here depends on.
+  acme:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: make acme-test
+        run: make acme-test
+
   # The real thing on a fresh runner: make init -> make up -> make smoke (twice: the suite must be idempotent),
   # with the internal CA on the default ports 80/443 — the closest a CI runner gets to a fresh VPS.
   smoke:
