@@ -169,8 +169,14 @@ the recovery key as detached.
 
 ### P3 — TLS, staging first
 
-DNS `A`/`AAAA` for `DOMAIN` (and `kuma.DOMAIN` if `KUMA_ENABLED=on`) pointing at the host, propagated —
-`make preflight` checks this and will refuse a mismatch.
+DNS for `DOMAIN` (and `kuma.DOMAIN` if `KUMA_ENABLED=on`) pointing at the host, propagated — `make preflight`
+refuses a mismatched `A` record, a wrong `AAAA` and a placeholder `ACME_EMAIL` before Caddy ever calls the CA.
+
+**If your provider gave the host an IPv6, decide about the `AAAA` now.** Let's Encrypt validates over IPv6
+first when one exists, and its IPv4 fallback fires only on a connection-level failure — unreliably, because
+the IPv6 attempt can eat the whole validation timeout. So either the host serves port 80 over IPv6 (firewall
+included: `ufw` rules are IPv4-only unless IPv6 is enabled) or there is **no `AAAA` record**. The failure this
+prevents is the nastiest kind: every IPv4 check you make by hand passes, and issuance still fails.
 
 ```bash
 # .env: TLS_MODE=acme-staging

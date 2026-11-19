@@ -319,6 +319,7 @@ else
     *@example.com | *@example.org | *@example.net | *@localhost | *@localdomain)
       warn "ACME_EMAIL=${acme_email} is a placeholder — Let's Encrypt registers it and then has nowhere to send the 'certificate expiring' notice, which is the last warning you get when renewal has been failing silently. Use an address you actually read"
       ;;
+    *) ;;   # any other address is the operator's business; init.sh already checked that it parses
   esac
   if [[ "$(env_get KUMA_ENABLED)" == "on" ]]; then
     kuma_ip="$(resolve4 "kuma.${domain}")"

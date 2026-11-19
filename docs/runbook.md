@@ -390,6 +390,22 @@ meaning nothing about this host will stop `make up`. With `TLS_MODE=internal`, D
 address is fine, and a name that does not resolve on the host is a warning, not a failure. It takes seconds
 and is safe at any time.
 
+In the **ACME modes** the DNS block is the strictest part of the script, because what it is really checking is
+whether Let's Encrypt will be able to reach you:
+
+- the **`A` record must equal this host's public IP**, or issuance cannot work — a `[FAIL]`;
+- an **`AAAA` record must equal this host's public IPv6, or not exist at all.** This is the one that surprises
+  people: Let's Encrypt validates over **IPv6 first** when the name has an `AAAA`, and its fallback to IPv4
+  happens only on a connection-level failure — and not dependably, since the IPv6 attempt can consume the
+  whole validation timeout. So a stale `AAAA` (a previous host, a provider's default address, a tunnel that no
+  longer exists) breaks ACME *while every IPv4 test you run by hand passes*. A wrong `AAAA` is a `[FAIL]`; an
+  `AAAA` on a host with no reachable IPv6 is a `[warn]` telling you to delete the record unless the host
+  really serves port 80 over IPv6;
+- **`ACME_EMAIL` must not be a placeholder.** `init.sh` only checks that it parses, so `admin@example.com`
+  survives to production, where Let's Encrypt accepts it and the "certificate expiring" notice — your last
+  warning when renewal has been failing quietly — goes nowhere. An `example.*` or `localhost` address is a
+  `[warn]`.
+
 **If it goes wrong.** It exits with `[FAIL] preflight: N problem(s) — fix them and re-run make preflight`. The
 two you will probably meet are `docker daemon not reachable` (the re-login trap) and a port in use, reported
 with the holding process and PID.
