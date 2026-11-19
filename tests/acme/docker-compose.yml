@@ -1,0 +1,70 @@
+---
+# tests/acme/docker-compose.yml -- Pebble (Let's Encrypt's own test CA) plus the kit's REAL Caddyfile, so the
+# ACME code path can be exercised without a public host, a public domain or a single Let's Encrypt rate-limit
+# unit. Driven by tests/acme/run.sh; never part of the kit's own stack.
+#
+# Deliberately isolated from a live stack on the same host: its own project name (set by run.sh), its own
+# network and subnet, and ports 8080/8443 instead of 80/443 -- so it binds nothing the kit itself uses. The
+# only published ports are on 127.0.0.1.
+#
+# The Caddy image, tag and digest are the ones the kit itself pins (compose/versions.env); run.sh passes them
+# in, so this harness can never silently test a different Caddy than production runs.
+
+networks:
+  acme:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.77.0.0/24
+
+services:
+  # The test CA. Issues real certificates from a throwaway root that is generated per run, and performs a real
+  # HTTP-01 validation against the Caddy container -- which is the part of the flow no other test covers.
+  pebble:
+    image: ghcr.io/letsencrypt/pebble@${PEBBLE_DIGEST:?set PEBBLE_DIGEST}
+    # No -strict: the subject under test is this kit's configuration, not Caddy's RFC compliance, and a
+    # strict-mode rejection would read as a kit failure.
+    command: ["-config", "/test/config/pebble-config.json"]
+    environment:
+      # Pebble sleeps a random 0-15 s before each validation to shake out ACME clients that assume
+      # instant authorization. The kit is not under test for that here, and run.sh has its own timeout.
+      PEBBLE_VA_NOSLEEP: "1"
+    volumes:
+      - ./pebble-config.json:/test/config/pebble-config.json:ro
+    # HTTP-01 means "connect to the name being validated, on the port in the config". Docker's embedded DNS
+    # would hand `n8n.localtest.me` to the upstream resolver, which answers 127.0.0.1 -- i.e. Pebble itself --
+    # so the name is pinned to Caddy's static address instead. This is the whole reason the network declares a
+    # subnet.
+    extra_hosts:
+      - "n8n.localtest.me:10.77.0.10"
+    networks:
+      acme: {}
+    ports:
+      - "127.0.0.1:15000:15000"   # management API: run.sh fetches the run's root certificate from here
+
+  # The kit's own Caddy, with the kit's own Caddyfile, asked to get a certificate from Pebble.
+  caddy:
+    image: ${CADDY_IMAGE:?set CADDY_IMAGE}:${CADDY_VERSION:?set CADDY_VERSION}@${CADDY_DIGEST:?set CADDY_DIGEST}
+    depends_on:
+      - pebble
+    environment:
+      DOMAIN: n8n.localtest.me
+      ACME_EMAIL: acme-test@example.com
+      TLS_MODE: acmetest
+      HTTP_PORT: "8080"
+      HTTPS_PORT: "8443"
+      UI_PROTECT: "off"
+      KUMA_ENABLED: "off"
+    volumes:
+      # The shipped Caddyfile and its snippets, read-only and unmodified.
+      - ../../compose/caddy:/etc/caddy:ro
+      # Two files layered on top: the test-only TLS policy, and the root that signs Pebble's API certificate.
+      - ./tls-acmetest.caddy:/etc/caddy/tls-acmetest.caddy:ro
+      - ./.state/pebble-minica.pem:/etc/caddy/pebble-minica.pem:ro
+    networks:
+      acme:
+        ipv4_address: 10.77.0.10
+        aliases:
+          - n8n.localtest.me
+    ports:
+      - "127.0.0.1:8443:8443"     # so the test can complete a TLS handshake from outside the network

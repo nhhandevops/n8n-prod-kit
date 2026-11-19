@@ -1,0 +1,20 @@
+# tls-acmetest.caddy -- the TLS policy for TLS_MODE=acmetest, which exists ONLY for tests/acme/run.sh and is
+# mounted into the Caddy container by tests/acme/docker-compose.yml. It is not shipped in compose/caddy/ and
+# no production mode reads it.
+#
+# Why it can exist at all without touching shipped config: compose/caddy/Caddyfile resolves its TLS policy as
+# `import /etc/caddy/tls-{$TLS_MODE:acme}.caddy`, so supplying a file plus TLS_MODE is the documented
+# extension point. The real Caddyfile, the real site blocks, the real security headers and the real routing
+# are therefore exercised unchanged -- only the CA is swapped.
+#
+# `issuer acme` rather than the bare `ca` sub-directive, because two things must be set together: the
+# directory URL of the test CA and the root that signs its API certificate. Pebble serves its ACME API with a
+# certificate from its own minica, which nothing trusts, so without `trusted_roots` Caddy cannot complete the
+# TLS handshake to the CA and the test would fail before any ACME traffic happened.
+tls {
+	issuer acme {
+		dir https://pebble:14000/dir
+		trusted_roots /etc/caddy/pebble-minica.pem
+		email {$ACME_EMAIL}
+	}
+}
