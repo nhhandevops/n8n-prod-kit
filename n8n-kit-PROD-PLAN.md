@@ -174,9 +174,18 @@ refuses a mismatched `A` record, a wrong `AAAA` and a placeholder `ACME_EMAIL` b
 
 **If your provider gave the host an IPv6, decide about the `AAAA` now.** Let's Encrypt validates over IPv6
 first when one exists, and its IPv4 fallback fires only on a connection-level failure — unreliably, because
-the IPv6 attempt can eat the whole validation timeout. So either the host serves port 80 over IPv6 (firewall
-included: `ufw` rules are IPv4-only unless IPv6 is enabled) or there is **no `AAAA` record**. The failure this
-prevents is the nastiest kind: every IPv4 check you make by hand passes, and issuance still fails.
+the IPv6 attempt can eat the whole validation timeout. So either the host genuinely serves port 80 over IPv6,
+**verified from another network** (`curl -6 http://n8n.example.com/` from somewhere else, or a phone on mobile
+data), or there is **no `AAAA` record** at all. The failure this prevents is the nastiest kind: every IPv4
+check you make by hand passes, and issuance still fails.
+
+Note what the kit does and does not do about the firewall here. `scripts/bootstrap-host.sh` opens http/https
+in **firewalld** when firewalld is running (EL hosts, both address families), and on **ufw** hosts it
+deliberately changes nothing, because Docker publishes ports through its own iptables chains ahead of ufw's
+INPUT rules. Whether that bypass also holds for **IPv6** depends on the Docker daemon's own IPv6
+configuration on your host, which this kit has never tested — no host it has run on had IPv6. Treat it as
+unknown, which is the second reason the simplest answer is to keep no `AAAA` unless you have checked IPv6
+end to end from outside.
 
 ```bash
 # .env: TLS_MODE=acme-staging

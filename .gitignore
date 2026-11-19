@@ -6,6 +6,9 @@ compose/secrets/*
 compose/backups/*
 compose/.smoke/
 compose/.upgrade/
+# Assembled per run by tests/acme/run.sh (a copy of compose/caddy plus the test CA's root); the run deletes it,
+# but an interrupted one must not leave a certificate staged for committing.
+tests/acme/.state/
 *.age
 terraform.tfvars
 *.tfstate
