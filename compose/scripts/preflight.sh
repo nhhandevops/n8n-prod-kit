@@ -5,7 +5,8 @@
 # WARN never blocks; the script exits 1 when at least one FAIL was printed. Every check is read-only.
 # Checks: docker/compose versions · .env present, 0600, required keys · image digests pinned · HTTP/HTTPS ports free
 # (naming the process that holds them) · disk ≥ 10 GB on the Docker root · RAM ≥ 3.5 GB · ≥ 2 CPUs · clock synchronised ·
-# vm.overcommit_memory (Valkey) · DNS of DOMAIN (internal: resolves; acme*: must equal this host's public IP) · kuma.DOMAIN
+# vm.overcommit_memory (Valkey) · DNS of DOMAIN (internal: resolves; acme*: the A record must equal this host's public
+# IP, an AAAA record must equal its public IPv6 or not exist, and ACME_EMAIL must not be a placeholder) · kuma.DOMAIN
 # when KUMA_ENABLED=on.
 # Optional shellcheck checks that fight the "function in an if/pipeline" style this script is built on
 # (a file-wide directive must precede the first command):
@@ -287,6 +288,38 @@ else
   else
     flag_fail "DNS: ${domain} -> ${domain_ip} but this host's public IP is ${public_ip} — fix the record (or use TLS_MODE=acme-staging while testing to avoid Let's Encrypt rate limits)"
   fi
+  # The AAAA record, which the A-record check above cannot see — and which is why a host with a perfect A record
+  # can still fail issuance. Let's Encrypt validates over IPv6 FIRST when the name has an AAAA, and falls back to
+  # IPv4 only on a connection-level failure; that fallback is not dependable either, because the IPv6 attempt can
+  # consume the whole validation timeout (boulder #2770). So a stale AAAA — a previous host, a provider's default
+  # address, a tunnel that no longer exists — breaks ACME while every IPv4 test you run by hand passes.
+  # `getent ahostsv6` is asked rather than dig (no new dependency) and ::ffff:0:0/96 is excluded, because
+  # AI_V4MAPPED can return IPv4 addresses in v6 form on some resolvers and that must not read as an AAAA.
+  resolve6() {
+    getent ahostsv6 "${1}" 2>/dev/null | awk '$1 ~ /:/ && $1 !~ /^::ffff:/ { print $1; exit }' || true
+  }
+  domain_ip6="$(resolve6 "${domain}")"
+  if [[ -z "${domain_ip6}" ]]; then
+    ok "DNS: ${domain} has no AAAA record — ACME will validate over IPv4"
+  else
+    public_ip6="$(curl -fsS -m 5 https://api6.ipify.org 2>/dev/null || true)"
+    if [[ "${domain_ip6}" == "${public_ip6}" ]]; then
+      ok "DNS: ${domain} -> ${domain_ip6} (AAAA) = this host's public IPv6"
+    elif [[ -z "${public_ip6}" ]]; then
+      warn "DNS: ${domain} has an AAAA record (${domain_ip6}) but this host has no reachable IPv6 — Let's Encrypt tries IPv6 first and its IPv4 fallback is not dependable, so issuance may fail or hang: delete the AAAA unless this host really serves port 80 over IPv6"
+    else
+      flag_fail "DNS: ${domain} -> AAAA ${domain_ip6} but this host's public IPv6 is ${public_ip6} — Let's Encrypt validates over IPv6 first, so the challenge goes to the wrong machine however correct the A record is: fix or delete the AAAA"
+    fi
+  fi
+  # The ACME account e-mail. Let's Encrypt accepts anything that parses, so a placeholder costs nothing today and
+  # the expiring-certificate warning — the last signal before an outage when renewal has been failing quietly —
+  # has nowhere to go.
+  acme_email="$(env_get ACME_EMAIL)"
+  case "${acme_email,,}" in
+    *@example.com | *@example.org | *@example.net | *@localhost | *@localdomain)
+      warn "ACME_EMAIL=${acme_email} is a placeholder — Let's Encrypt registers it and then has nowhere to send the 'certificate expiring' notice, which is the last warning you get when renewal has been failing silently. Use an address you actually read"
+      ;;
+  esac
   if [[ "$(env_get KUMA_ENABLED)" == "on" ]]; then
     kuma_ip="$(resolve4 "kuma.${domain}")"
     if [[ -n "${kuma_ip}" && ( -z "${public_ip}" || "${kuma_ip}" == "${public_ip}" ) ]]; then
