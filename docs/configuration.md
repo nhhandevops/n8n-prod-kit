@@ -170,6 +170,13 @@ history out of the database — which is why `make loadtest` warns and asks for 
 prunes hourly, and `make doctor` warns when the oldest execution is older than twice `EXECUTIONS_DATA_MAX_AGE`, which
 means pruning has stalled.
 
+**Waiting executions are exempt from pruning but not from the count.** Pruning never deletes a `waiting` row — an
+approval link must survive until its deadline — while the count cap's cutoff is computed over *all* executions,
+waiting ones included. So anything that parks executions permanently eats the retention budget of every other
+workflow, and the one feature that does so by design is a **form**: its completion page parks one execution per
+submission, for ever. `make doctor` warns once such rows pass 10 % of the cap;
+[Forms](operations/forms.md) has the arithmetic and the sweep.
+
 ### The graceful-shutdown timeout is what makes a drain work
 
 On SIGTERM n8n pauses its queues, waits for in-flight executions for 80 % of this timeout, then cancels the stragglers

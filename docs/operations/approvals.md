@@ -97,8 +97,10 @@ Waiting executions are easy to lose track of, so two facts about them:
 - **Pruning does not delete them.** The pruning query excludes `new`, `running` and `waiting` outright, with
   n8n's own comment *"Only mark executions as deleted if they are in an end state"*. A 2-day link cannot be
   pruned out from under the person who holds it. (They do still count toward `EXECUTIONS_DATA_PRUNE_MAX_COUNT`
-  when it computes its cutoff, so a large pile of parked executions makes the retention window shorter for
-  everything else.)
+  when it computes its cutoff — that subquery carries no status filter, checked in the pinned build — so a
+  large pile of parked executions makes the retention window shorter for everything else. Here the pile is
+  bounded by the 2-day deadline; where it is not bounded at all is a **form**, whose completion page parks one
+  execution per submission for ever: [Forms](forms.md) has the arithmetic and the sweep.)
 - **A restart does not lose them.** The row carries the deadline, and the wait-tracker picks parked executions
   up again after the stack comes back. `make upgrade`'s drain does not need to wait for them either, since
   they hold no worker.

@@ -7,13 +7,14 @@
 # Checks: .env permissions and key length · n8n vs runners version lock · every service running+healthy (unhealthy ones
 # get their last 20 log lines) and restart counts · ports actually served by caddy · DNS vs this host's public IP ·
 # the certificate caddy actually serves and whether its key is still in caddy's storage (EVERY TLS mode) · disk on
-# the Docker root · clock sync · Postgres connections, size, execution pruning ·
+# the Docker root · clock sync · Postgres connections, size, execution pruning, executions parked for ever ·
 # Valkey eviction policy, AOF, memory · N8N_ENDPOINT_* overrides (would break the Caddyfile routing) · recovery key still
 # on this host · backups (from S5) · SELinux/firewalld on RHEL hosts · WSL hints.
 #
-# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge  injects failures so the output format and
-# exit code can be tested without breaking a real host (TC-026). baddns only bites in the ACME modes; expiredcert
-# and certwedge work in every TLS mode, including the internal one the kit's own dev hosts run.
+# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs  injects failures so the
+# output format and exit code can be tested without breaking a real host (TC-026). baddns only bites in the ACME
+# modes; expiredcert, certwedge and parkedexecs work in every TLS mode, including the internal one the kit's own dev
+# hosts run.
 # shellcheck disable=SC2310,SC2311,SC2312
 set -euo pipefail
 
@@ -367,6 +368,24 @@ if [[ "$(service_health postgres)" == "healthy" ]]; then
     flag_warn "executions: ${exec_count} rows, oldest ${oldest_h} h > 2 x EXECUTIONS_DATA_MAX_AGE (${max_age} h) — pruning seems stalled (main prunes hourly; check make logs SERVICE=n8n-main for 'prun')"
   else
     ok "executions: ${exec_count} rows, oldest ${oldest_h} h (prune=${prune:-true}, max age ${max_age} h)"
+  fi
+  # Executions parked for ever: a Form Ending page (one per form submission) and a Wait node with no limit both stop
+  # their execution at n8n's year-3000 sentinel, and nothing ever resumes it. Pruning skips `waiting` rows — correct,
+  # an approval link must not be pruned out from under the person holding it — but the count-based prune's cutoff
+  # subquery has NO status filter (verified in 2.46.7's own @n8n/db build), so these rows occupy slots in
+  # EXECUTIONS_DATA_PRUNE_MAX_COUNT while being exempt from deletion. The visible symptom is someone else's history
+  # disappearing early. docs/operations/forms.md has the sweep.
+  prune_max="$(env_get EXECUTIONS_DATA_PRUNE_MAX_COUNT)"; prune_max="${prune_max:-10000}"
+  parked="$(pg "select count(*) from execution_entity where status = 'waiting' and \"waitTill\" > now() + interval '100 years'")"
+  if sim parkedexecs; then parked="$(( ${prune_max:-10000} / 4 ))"; fi
+  if [[ ! "${parked}" =~ ^[0-9]+$ || ! "${prune_max}" =~ ^[0-9]+$ ]] || (( prune_max <= 0 )); then
+    flag_warn "executions parked for ever: could not count them — ask Postgres by hand: select count(*) from execution_entity where status = 'waiting'"
+  elif (( parked * 10 >= prune_max )); then
+    flag_warn "executions parked for ever: ${parked} will never be pruned — at or past 10% of EXECUTIONS_DATA_PRUNE_MAX_COUNT (${prune_max}), and they still count toward its cutoff, so finished executions are being pushed out of the history early. One per form submission (a Form Ending page) plus any limitless Wait node; nothing resumes them. Sweep them: docs/operations/forms.md"
+  elif (( parked > 0 )); then
+    ok "executions parked for ever: ${parked} of EXECUTIONS_DATA_PRUNE_MAX_COUNT ${prune_max} (form completion pages and limitless waits; docs/operations/forms.md has the sweep)"
+  else
+    ok "executions parked for ever: none"
   fi
   # A stop gives running executions N8N_GRACEFUL_SHUTDOWN_TIMEOUT; whatever runs longer is cancelled and never retried.
   # Measured, not guessed: p99 wall time of the executions that finished in the last 7 days (a Wait node's pause counts).

@@ -55,6 +55,7 @@ nav:
       - Error workflows: operations/error-workflows.md
       - Idempotency: operations/idempotency.md
       - Approvals: operations/approvals.md
+      - Forms: operations/forms.md
       - Calling other APIs: operations/outbound-apis.md
       - Endpoints that cost money: operations/paid-endpoints.md
       - Scaling: operations/scaling.md

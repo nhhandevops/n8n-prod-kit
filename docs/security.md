@@ -7,6 +7,10 @@ URL. Every setting named here comes from `compose/docker-compose.yml`, `compose/
 > fine while answering a request only costs CPU. When it costs cash at a model or messaging provider, the
 > defences are different and they belong in front of the spend — authentication, a per-caller rate limit, input
 > caps, and a budget cap at the provider: [Endpoints that cost money](operations/paid-endpoints.md).
+>
+> **A form n8n hosts is public by design too** — anyone with the link can submit, as often as they like, and
+> each submission leaves a row in your database that nothing deletes on its own:
+> [Forms](operations/forms.md).
 
 ## The edge: one container, three ports
 

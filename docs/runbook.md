@@ -324,8 +324,10 @@ command; one `[FAIL]` exits 1. For an unhealthy service it also prints that cont
 
 **Why you care.** It is the command for "something is wrong and I do not know what", and its output is what a
 bug report needs. It sees what `status` cannot: encryption-key length, n8n and its runners image being the
-same version, disk usage, clock sync, Postgres connections and size, whether execution pruning keeps up,
-Valkey still on `noeviction` with AOF, and how old your newest backup and restore test are.
+same version, disk usage, clock sync, Postgres connections and size, whether execution pruning keeps up, how
+much of your retention budget is taken up by executions parked for ever (one per form submission —
+[Forms](operations/forms.md)), Valkey still on `noeviction` with AOF, and how old your newest backup and
+restore test are.
 
 ```bash
 make -C compose doctor
@@ -345,11 +347,13 @@ than theoretical.
 failure output looks like before you have a real failure, inject some on purpose:
 
 ```bash
-DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge make -C compose doctor
+DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs make -C compose doctor
 ```
 
 It prints an `[info]` line saying some failures below are injected on purpose, and exits non-zero. On this
-stack **six of the seven** keys bite: `nokey` (a blank encryption key), `unhealthy` (`n8n-worker-2` reported
+stack **seven of the eight** keys bite: `parkedexecs` (a quarter of `EXECUTIONS_DATA_PRUNE_MAX_COUNT` taken
+up by executions parked for ever — one per form submission, see [Forms](operations/forms.md)), `nokey` (a
+blank encryption key), `unhealthy` (`n8n-worker-2` reported
 unhealthy, with its log lines), `lowdisk` (93 % used), `expiredcert` (the certificate the edge serves read as
 the 12-hour leaf a real host went on serving for 14 days after it expired, on 2026-11-09), `futurecert` (that
 certificate read as starting 7 hours from now — what a wrong clock at issuance produces, measured on
@@ -868,7 +872,7 @@ files there ([Backup and restore](operations/backup-restore.md)).
 
 ### 7. `make smoke`: the automated version of everything you just did
 
-**What it is.** Fourteen scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
+**What it is.** Fifteen scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
 did by hand, and look inside containers only where the outside cannot see. They run in order and stop at the
 first failure, because later ones build on earlier ones (04 creates the workflow 05 inspects).
 
@@ -884,6 +888,7 @@ first failure, because later ones build on earlier ones (04 creates the workflow
 | `08-restore-test` | Every remote's newest bundle verifies and the newest restores into a scratch Postgres inside the backup container. The live database is never touched. |
 | `09-monitoring` | The monitoring profile end to end. Skipped when `COMPOSE_PROFILES` does not list `monitoring`. |
 | `10-error-workflow` | A workflow that fails on purpose reaches an Error Workflow built from `templates/error-handler/`: unpublished it never runs, published it runs in mode `error` on a worker and the alert names the workflow, the node and the message ([Error workflows](operations/error-workflows.md)). |
+| `15-form-order-intake` | The shipped `templates/form-order-intake/` end to end over both form routes, with **no credential of any kind**: the form is served from the webhook pool at the path taken from *Options* (where node version 2.2+ reads it), a good order is accepted and the page behind its `formWaitingUrl` carries the reference, the phone is normalised, and four bad orders each come back on the "what to fix" page rather than an error page. It also pins the cost: every submission leaves an execution parked for ever ([Forms](operations/forms.md)). |
 | `14-ai-faq-bot` | The shipped `templates/ai-faq-bot/` guardrails, with the model stubbed: a request with no secret and one with the wrong secret are refused (403), a 600-character question is refused before any spend, and the rate limit — driven against the kit's **real Valkey** — splits 23 questions from one sender in one minute exactly **20 answered / 3 refused with 429**, leaves a different sender unaffected, and keeps its counter under a 120 s TTL ([Endpoints that cost money](operations/paid-endpoints.md)). |
 | `13-sheets-order-log` | The shipped `templates/sheets-order-log/` up to the vendor node: one order becomes one row with the documented columns (they are the contract with your header row), all four bad-order refusals write nothing and name their field, and 20 orders at once become exactly 20 rows. The Sheets node's own shape is asserted statically; the append itself needs a Google account and is validated by hand ([Calling other APIs](operations/outbound-apis.md)). |
 | `12-gchat-approval` | The shipped `templates/gchat-approval/` suspends on a human decision and resumes through `/webhook-waiting/` on the pool: a link with the wrong token is refused **401** while the execution stays parked, **Approve** resumes it down the approved branch, a second click gets **409**, **Reject** takes the other branch, and the parked row's deadline is ~2 days out ([Approvals](operations/approvals.md)). |
