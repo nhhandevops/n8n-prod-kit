@@ -329,6 +329,13 @@ much of your retention budget is taken up by executions parked for ever (one per
 [Forms](operations/forms.md)), Valkey still on `noeviction` with AOF, and how old your newest backup and
 restore test are.
 
+**On a host with ACME TLS it checks four more things, which it leaves a `TLS_MODE=internal` dev box alone
+about:** SSH password authentication, unattended security upgrades, whether every owner account has **MFA**,
+and whether test accounts or the smoke suite's API key are still there. Those are the two production blockers
+(`n8n-kit-PROD-PLAN.md` D-6 and D-8) that nothing could previously verify — the editor shows MFA only to
+whoever is logged in, an API key is invisible once created, and `scripts/bootstrap-host.sh` touches neither
+sshd nor unattended-upgrades, so both were operator steps taken on trust.
+
 ```bash
 make -C compose doctor
 ```
@@ -347,11 +354,14 @@ than theoretical.
 failure output looks like before you have a real failure, inject some on purpose:
 
 ```bash
-DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs make -C compose doctor
+DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs,unhardened make -C compose doctor
 ```
 
 It prints an `[info]` line saying some failures below are injected on purpose, and exits non-zero. On this
-stack **seven of the eight** keys bite: `parkedexecs` (a quarter of `EXECUTIONS_DATA_PRUNE_MAX_COUNT` taken
+stack **eight of the nine** keys bite: `unhardened` (SSH password authentication on, unattended upgrades off,
+an owner without MFA, leftover test accounts and the smoke suite's API key — and it lifts the
+`TLS_MODE=internal` exemption those checks normally have, which is the only way to see them on a dev box),
+`parkedexecs` (a quarter of `EXECUTIONS_DATA_PRUNE_MAX_COUNT` taken
 up by executions parked for ever — one per form submission, see [Forms](operations/forms.md)), `nokey` (a
 blank encryption key), `unhealthy` (`n8n-worker-2` reported
 unhealthy, with its log lines), `lowdisk` (93 % used), `expiredcert` (the certificate the edge serves read as
