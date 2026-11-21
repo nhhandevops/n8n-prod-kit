@@ -118,6 +118,27 @@ Answer in writing, in `n8n-kit-HANDOFF.md` §3:
 
 **Gate:** all six answered and committed. An unanswered question here becomes an outage later.
 
+#### What to have open before you start P1
+
+The phases below are sequential and each one gates the next, so the evening goes badly if it stops to go
+and buy something. Have all of this in hand first:
+
+| Have ready | Why, and what goes wrong without it |
+|---|---|
+| A VPS account with billing working, and the size from §7 (Ubuntu 24.04, 4 vCPU / 8 GB with monitoring — §1 condition 3) | P1 is one command; waiting on a card verification is not |
+| A domain whose DNS you control, **with the record's TTL lowered to 300 s a day in advance** | If the first `A` record is wrong you wait out the *old* TTL before ACME can succeed, and Let's Encrypt counts failed validations against your account. Lowering the TTL is the one thing that must happen before the evening, not during it |
+| An SSH keypair, with the **public** key given to the provider at host creation | `scripts/bootstrap-host.sh` turns off password authentication. Discovering afterwards that your key never got installed means the provider's web console |
+| The password manager open, ready for **three** entries: `N8N_ENCRYPTION_KEY`, the offline recovery key, the edge basic-auth password | P2 and P3 each generate one, each is shown once, and a key you have not read back from the manager is a key you do not have |
+| An authenticator app on your phone | D-6: MFA on the owner account, before the editor is reachable from the internet |
+| An off-host bucket and a token **scoped to that bucket only**, created and empty | P4, and the kit's existing R2 token went through a chat once — production gets its own (§1) |
+| A Telegram bot token and chat id | P5 fires a real alert and resolves it (D-4); an alert path you have not seen fire is a hope |
+| A decision about `UI_ALLOW_CIDR` | P3 has the trap: a dynamic home address locks you out of your own editor, and the symptom looks like a broken deploy |
+| A phone on mobile data | The only honest way to check "refused from outside" is from outside |
+| Two uninterrupted hours | P4 is the expensive one (§7), and a half-finished TLS or backup step is worse than an unstarted one |
+
+**Secrets reach the host at the host's own prompt** — `make init`, `detach-recovery-key`, `hash-password` —
+never through a chat window, a command line (`/proc/<pid>/cmdline` is world-readable) or this file.
+
 ### P1 — The host
 
 ```bash
@@ -148,8 +169,23 @@ the recovery key as detached.
 
 ### P3 — TLS, staging first
 
-DNS `A`/`AAAA` for `DOMAIN` (and `kuma.DOMAIN` if `KUMA_ENABLED=on`) pointing at the host, propagated —
-`make preflight` checks this and will refuse a mismatch.
+DNS for `DOMAIN` (and `kuma.DOMAIN` if `KUMA_ENABLED=on`) pointing at the host, propagated — `make preflight`
+refuses a mismatched `A` record, a wrong `AAAA` and a placeholder `ACME_EMAIL` before Caddy ever calls the CA.
+
+**If your provider gave the host an IPv6, decide about the `AAAA` now.** Let's Encrypt validates over IPv6
+first when one exists, and its IPv4 fallback fires only on a connection-level failure — unreliably, because
+the IPv6 attempt can eat the whole validation timeout. So either the host genuinely serves port 80 over IPv6,
+**verified from another network** (`curl -6 http://n8n.example.com/` from somewhere else, or a phone on mobile
+data), or there is **no `AAAA` record** at all. The failure this prevents is the nastiest kind: every IPv4
+check you make by hand passes, and issuance still fails.
+
+Note what the kit does and does not do about the firewall here. `scripts/bootstrap-host.sh` opens http/https
+in **firewalld** when firewalld is running (EL hosts, both address families), and on **ufw** hosts it
+deliberately changes nothing, because Docker publishes ports through its own iptables chains ahead of ufw's
+INPUT rules. Whether that bypass also holds for **IPv6** depends on the Docker daemon's own IPv6
+configuration on your host, which this kit has never tested — no host it has run on had IPv6. Treat it as
+unknown, which is the second reason the simplest answer is to keep no `AAAA` unless you have checked IPv6
+end to end from outside.
 
 ```bash
 # .env: TLS_MODE=acme-staging
@@ -160,8 +196,42 @@ make up && make status && make doctor
 curl -s -o /dev/null -w '%{http_code}\n' https://n8n.example.com/metrics   # must be 404
 ```
 
+Then put the editor behind the edge — **the one step these phases used to skip** (D-3 was in §2 and in the
+§4 checklist, and in no phase at all):
+
+```bash
+# in compose/. Generate the hash; the plaintext never goes into .env
+docker compose --env-file versions.env --env-file .env run --rm caddy caddy hash-password --plaintext 'the edge password'
+# .env:  UI_PROTECT=on
+#        UI_BASIC_AUTH_USER=you
+#        UI_BASIC_AUTH_HASH='$2a$14$…'   <- single quotes are mandatory, or Compose eats the $ segments
+#        UI_ALLOW_CIDR=                  <- read the warning below BEFORE you set this
+make up && make doctor
+SMOKE_UI_PROTECT=1 KIT_UI_PASSWORD='the edge password' make -C compose smoke ONLY=16
+```
+
+`16-ui-protect` asserts everything about this that can be checked from the host: a bare **403 with no
+password prompt** outside the CIDR, **401 then 200** inside it, `/rest` and `/api/v1` behind the password,
+and `/webhook/*`, `/form/*`, `/form-waiting/*`, `/webhook-waiting/*` and both health paths **still open with
+no credentials**. What it cannot do is the *outside* half: from a phone on mobile data, open the editor URL
+and confirm you are refused, then open a production webhook URL and confirm it answers.
+
+**A home connection and `UI_ALLOW_CIDR` do not mix.** The allow-list matches the TCP peer, so a dynamic
+residential address locks you out of your own editor the next time the ISP rotates it — and the symptom is a
+bare 403 with no prompt, which reads like a broken deploy rather than a stale CIDR. Choose deliberately:
+leave it unset (basic auth alone, which is still a password in front of n8n's own login), set the ISP's
+range instead of one address, or reach the host through a VPN or jump host whose address is fixed. Do **not**
+add Docker's bridge range to make local tooling work — that would let the Code nodes your own workflows run
+reach the editor through the edge.
+
+**From here on, every kit script that talks to the API needs that password**, because `/rest` and `/api/v1`
+are behind it even for requests made on the host (Docker NAT: the peer is the bridge gateway, not
+127.0.0.1): `KIT_UI_PASSWORD='…' make -C compose smoke`. It belongs in the password manager beside the
+encryption key and the recovery key.
+
 **Gate:** a publicly trusted certificate, `make doctor` reporting days left, `/metrics` 404 from outside,
-and `make smoke` green.
+`UI_PROTECT=on` with the editor refused from a foreign address while a production webhook still answers,
+and `KIT_UI_PASSWORD='…' make smoke` green.
 
 ### P4 — Backups off-host, before any real data
 
@@ -241,11 +311,12 @@ Copy this into the go-live issue and tick it there.
 - [ ] `N8N_ENCRYPTION_KEY` and the recovery key read back out of the password manager
 - [ ] One alert delivered **and** resolved on the production host
 - [ ] `UI_PROTECT=on`, verified from outside `UI_ALLOW_CIDR`, with a production webhook still answering
-- [ ] MFA on the owner account; test accounts and test API keys deleted
+- [ ] MFA on the owner account; test accounts and test API keys deleted — **`make doctor` confirms all three**
+- [ ] SSH by key only, unattended upgrades on — **`make doctor` confirms both** (and nothing in the kit sets them)
 - [ ] `https://DOMAIN/metrics` returns 404 from outside
 - [ ] Firewall: tcp 80, tcp 443, udp 443, SSH — nothing else
 - [ ] One `make upgrade` plus `make rollback` rehearsed on this host
-- [ ] `make doctor` with no `[FAIL]`, `make smoke` green
+- [ ] `make doctor` with no `[FAIL]`, `KIT_UI_PASSWORD='…' make smoke` green (the password, once `UI_PROTECT=on`)
 
 **Soft gates — go without them, but write down that you did**
 
@@ -282,13 +353,13 @@ Bands: **≥ 20 blocker** (clear before production) · **8–19 next** · **< 8 
 |---|---|---|---|---|---|---|---|
 | D-2 | Raise `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` above the measured p99 execution duration (and `N8N_STOP_GRACE_PERIOD` with it) — the kit side shipped 2026-10-12: the knob is real now and `make doctor` measures the p99; what remains is setting it on the production host | 4 | 4 | 3 | 1 | **48** | blocker |
 | D-1 | Test an off-host backup target end to end (bucket, token, `make backup-now`, `make restore-test`) — **done on the dev VM 2026-10-13** (R2; the restore test restored the R2 copy); the production host needs its own bucket and token, tested the same way | 5 | 3 | 3 | 1 | **45** | blocker |
-| D-3 | `UI_PROTECT=on` with an allow-list and basic auth, verified from outside | 4 | 4 | 2 | 1 | **32** | blocker |
+| D-3 | `UI_PROTECT=on` with an allow-list and basic auth, verified from outside — **the kit half is done 2026-11-18**: `tests/smoke/16-ui-protect.sh` drives the real thing instead of only `caddy validate` (bare 403 with no prompt outside the CIDR, 401/200 inside it, `/rest` and `/api/v1` behind it even on the host, `/webhook/*` and `/form/*` open), the suite learned to carry the edge password (`KIT_UI_PASSWORD`, since `.env` keeps only the hash), and **P3 now has the step that turns it on** — it was in §2 and §4 but in no phase. What remains is the production host: the password, the CIDR decision, and the from-outside check | 4 | 4 | 2 | 1 | **32** | blocker |
 | D-4 | Prove the alert path on the production host (fire one, resolve it) | 4 | 4 | 2 | 1 | **32** | blocker |
 | D-5 | `N8N_ENCRYPTION_KEY` and the recovery key in a password manager, read back once — **rehearsed on the dev VM 2026-10-13** (both in An's password manager, each read back); production's own keys need the same | 5 | 2 | 3 | 1 | **30** | blocker |
-| D-6 | MFA on the owner account; delete test accounts and API keys | 5 | 3 | 2 | 1 | **30** | blocker |
+| D-6 | MFA on the owner account; delete test accounts and API keys — **`make doctor` checks all three from 2026-11-21** (owner accounts without MFA, `example.*` logins, and the smoke suite's own `kit-smoke` API key, which carries every scope the owner has), on ACME hosts only so a dev box is not nagged. Doing it is still An's; believing it is done is no longer necessary | 5 | 3 | 2 | 1 | **30** | blocker |
 | D-7 | ~~DR drill: restore on a host that never held the host key (`AGE_KEY` plus `ADOPT_KEY=1`)~~ — **run on 2026-11-10** on a second machine built for it (Ubuntu 24.04 cloud image, `server2`): all three of the dev VM's secrets provably absent (host age key, recovery key, `N8N_ENCRYPTION_KEY` — compared as SHA-256 fingerprints), the bundle carried across, the recovery key the only way in. Refusals at exit 4 (not a recipient) and exit 3 (key mismatch, nothing changed), then the restore adopted the old key, brought back the workflow, the credential and the old owner, 11/11 healthy, `make smoke` **10/10**, `make doctor` 0 problems / 0 warnings. **It found two defects CI structurally cannot** (both need two hosts and a shared backup target): the new host called the old host's intact bundles *"corrupt copy?"* and failed its own restore test, doctor and alert over them — now fixed, with `tests/ci/dr-drill.sh` 5a/5b asserting it; and the documented `exit 3`/`exit 5` never reach the shell, because `make` exits 2 for any failed recipe. What remains is per host: production's own rebuild is only rehearsed when it is rehearsed **with production's own recovery key**, which lives in An's password manager | 5 | 3 | 3 | 2 | **22** | done |
-| D-8 | Host hardening: firewall to 80/443/udp443 plus SSH, keys only, unattended upgrades | 5 | 4 | 2 | 2 | **20** | blocker |
-| D-9 | Route A: real Let's Encrypt on a real public host (`acme-staging` first) | 4 | 5 | 2 | 2 | **20** | blocker |
+| D-8 | Host hardening: firewall to 80/443/udp443 plus SSH, keys only, unattended upgrades — **`make doctor` now checks the two that nothing set and nothing verified** (2026-11-21): SSH `PasswordAuthentication` resolved the way sshd resolves it (drop-ins first, first match wins) and unattended upgrades needing *both* `APT::Periodic::Unattended-Upgrade=1` and an active `apt-daily-upgrade.timer`. Note `scripts/bootstrap-host.sh` does **neither** — it only works around unattended-upgrades holding the dpkg lock — so these were always operator steps. The firewall half stays manual: firewalld is checked when running, and ufw hosts need nothing for 80/443 | 5 | 4 | 2 | 2 | **20** | blocker |
+| D-9 | Route A: real Let's Encrypt on a real public host (`acme-staging` first) — **the configuration half is now exercised, 2026-11-19**: `make acme-test` issues a real certificate from **Pebble**, Let's Encrypt's own test CA, using the shipped Caddyfile byte for byte (account, order, HTTP-01 validation, finalize, install, serve, security headers intact), and `make preflight` checks the `AAAA` record and the ACME e-mail. What remains needs the internet and nothing else can substitute for it: public DNS, port 80 reachable from outside, the real rate limits, the staging → production switch, and browser trust | 4 | 5 | 2 | 2 | **20** | blocker |
 | D-10 | ~~If production is RHEL-family: SELinux-enforcing plus firewalld run on real hardware~~ — **not applicable from 2026-11-10**: the condition it hung on was decided the other way (§1 condition 3 — production runs **Ubuntu 24.04 LTS**, the platform every `docs/compat.md` row and both dev VMs already use). `bootstrap-host.sh` keeps its RHEL support and the weekly matrix keeps testing it, for users who are on that family; what is dropped is the obligation to prove a SELinux-enforcing host before *this* go-live. Re-opens only if production ever moves to Rocky/Alma/RHEL | 4 | 5 | 2 | 2 | **20** | n/a (condition false) |
 | D-26 | ~~**Stop printing the recovery private key to the terminal.** `rotate-recovery-key` and `detach-recovery-key` show the `AGE-SECRET-KEY-1…` line on screen; write it to a mode-600 file and have the operator open that instead, so there is nothing in scrollback to copy. Evidence for the likelihood: **four** separate secrets have gone through a chat in this project’s own records (recovery key 2026-10-10, Telegram token, R2 credentials, recovery key again 2026-10-25 — the last one straight past the on-screen warning not to)~~ — **shipped 2026-11-10** (PR #31): `rotate-recovery-key` and `detach-recovery-key` name the mode-600 file instead of printing the key, the paste-back check is unchanged, and there is deliberately no flag to print it | 4 | 5 | 2 | 1 | **40** | done |
 | D-11 | ~~`EXECUTIONS_TIMEOUT` from `-1` to a real ceiling~~ — **kit side done 2026-10-25**: the shipped default is 3600 s, `make doctor` warns when it is `-1` or at/below the measured p99, and preflight warns when it exceeds `EXECUTIONS_TIMEOUT_MAX`. What remains is per-host: existing `.env` files keep `-1` until their operator changes it — the 24.04 dev VM was set to 3600 on 2026-10-25, the laptop's 26.04 VM has not been touched since 2026-10-13 — and production picks its own number | 3 | 3 | 2 | 1 | **18** | next (per host) |

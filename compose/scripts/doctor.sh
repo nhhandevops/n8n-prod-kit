@@ -7,14 +7,16 @@
 # Checks: .env permissions and key length · n8n vs runners version lock · every service running+healthy (unhealthy ones
 # get their last 20 log lines) and restart counts · ports actually served by caddy · DNS vs this host's public IP ·
 # the certificate caddy actually serves and whether its key is still in caddy's storage (EVERY TLS mode) · disk on
-# the Docker root · clock sync · Postgres connections, size, execution pruning, executions parked for ever ·
+# the Docker root · clock sync · ssh keys-only and unattended upgrades (public hosts) · Postgres connections, size,
+# execution pruning, executions parked for ever · n8n owner MFA and leftover test accounts / API keys (public hosts) ·
 # Valkey eviction policy, AOF, memory · N8N_ENDPOINT_* overrides (would break the Caddyfile routing) · recovery key still
 # on this host · backups (from S5) · SELinux/firewalld on RHEL hosts · WSL hints.
 #
-# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs  injects failures so the
-# output format and exit code can be tested without breaking a real host (TC-026). baddns only bites in the ACME
-# modes; expiredcert, certwedge and parkedexecs work in every TLS mode, including the internal one the kit's own dev
-# hosts run.
+# DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs,unhardened  injects
+# failures so the output format and exit code can be tested without breaking a real host (TC-026). baddns only bites in
+# the ACME modes; expiredcert, certwedge and parkedexecs work in every TLS mode, including the internal one the kit's
+# own dev hosts run. `unhardened` also lifts the TLS_MODE=internal exemption, so the host-hardening and account checks
+# — which a dev box is not nagged about — can be seen and tested anywhere.
 # shellcheck disable=SC2310,SC2311,SC2312
 set -euo pipefail
 
@@ -349,6 +351,54 @@ if command -v firewall-cmd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>
   fi
 fi
 
+# --- host hardening (PROD-PLAN D-8) ----------------------------------------------------------------------------------
+# Two things the production plan asks for in a sentence and nothing then verifies: SSH by key only, and unattended
+# security updates. `scripts/bootstrap-host.sh` does NEITHER — it works around unattended-upgrades holding the dpkg
+# lock and leaves sshd alone — so they are operator steps that have, until now, been believed rather than checked.
+# Only reported on a host that is reachable from the internet: in TLS_MODE=internal these are a LAN dev box's business.
+if [[ "${tls_mode}" == "internal" ]] && ! sim unhardened; then
+  info "host hardening: not checked under TLS_MODE=internal (SSH keys-only and unattended upgrades matter once the host is public; DOCTOR_SIMULATE=unhardened shows the checks)"
+else
+  # The EFFECTIVE value, as sshd resolves it: the drop-ins are listed first because Ubuntu's sshd_config begins with
+  # `Include /etc/ssh/sshd_config.d/*.conf` and sshd takes the FIRST occurrence of a keyword, not the last. Read from
+  # the files rather than from `sshd -T`, which needs root; a config this misreads is unusual and the message says so.
+  ssh_pw="$(grep -rhiE '^[[:space:]]*PasswordAuthentication[[:space:]]+' \
+    /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null | awk '{print tolower($2); exit}' || true)"
+  if sim unhardened; then ssh_pw="yes"; fi
+  case "${ssh_pw}" in
+    no)
+      ok "ssh: password authentication is off (keys only)"
+      ;;
+    yes)
+      flag_warn "ssh: PasswordAuthentication is **yes** — a public host with passwords is brute-forced within hours: set 'PasswordAuthentication no' in /etc/ssh/sshd_config.d/99-hardening.conf and 'systemctl reload ssh' (make sure your key works first)"
+      ;;
+    *)
+      flag_warn "ssh: PasswordAuthentication is not set in /etc/ssh/sshd_config or its drop-ins, and OpenSSH defaults to **yes** — set 'PasswordAuthentication no' in /etc/ssh/sshd_config.d/99-hardening.conf and 'systemctl reload ssh' (verify your key first). Read from the config files, not from a running sshd: confirm with 'sudo sshd -T | grep -i passwordauthentication'"
+      ;;
+  esac
+  if command -v apt-get >/dev/null 2>&1; then
+    # Both halves are needed: the APT::Periodic setting says "do it", the systemd timer is what runs it.
+    auto_cfg="$(grep -hE '^[[:space:]]*APT::Periodic::Unattended-Upgrade' /etc/apt/apt.conf.d/*auto-upgrades 2>/dev/null | tail -1 | tr -dc '0-9' || true)"
+    auto_timer="$(systemctl is-active apt-daily-upgrade.timer 2>/dev/null || true)"
+    if sim unhardened; then auto_cfg="0"; auto_timer="inactive"; fi
+    if [[ "${auto_cfg}" == *1* && "${auto_timer}" == "active" ]]; then
+      ok "unattended upgrades: on (APT::Periodic::Unattended-Upgrade=1, apt-daily-upgrade.timer active)"
+    else
+      flag_warn "unattended upgrades: off or incomplete (APT::Periodic::Unattended-Upgrade=${auto_cfg:-unset}, apt-daily-upgrade.timer=${auto_timer:-unknown}) — a host nobody patches is the most common way a small stack is lost: sudo apt install unattended-upgrades && sudo dpkg-reconfigure -plow unattended-upgrades"
+    fi
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf_timer="$(systemctl is-enabled dnf-automatic.timer 2>/dev/null || true)"
+    if sim unhardened; then dnf_timer="disabled"; fi
+    if [[ "${dnf_timer}" == "enabled" ]]; then
+      ok "unattended upgrades: dnf-automatic.timer enabled"
+    else
+      flag_warn "unattended upgrades: dnf-automatic.timer is ${dnf_timer:-not installed} — sudo dnf install dnf-automatic && sudo systemctl enable --now dnf-automatic.timer"
+    fi
+  else
+    info "unattended upgrades: unknown package manager — check your distribution's automatic security updates by hand"
+  fi
+fi
+
 # ---------------------------------------------------------------------------------------------------------------------
 section "database"
 if [[ "$(service_health postgres)" == "healthy" ]]; then
@@ -435,6 +485,43 @@ if [[ "$(service_health postgres)" == "healthy" ]]; then
     flag_warn "error workflows: ${wf_no_handler} of ${wf_published} published workflow(s) have no Error Workflow — a failure there is silent and is never retried: import templates/error-handler, publish it, then set it per workflow (Settings → Error Workflow). docs/operations/error-workflows.md"
   else
     ok "error workflows: all ${wf_published} published workflow(s) have one (or carry an Error Trigger themselves)"
+  fi
+  # --- accounts (PROD-PLAN D-6) --------------------------------------------------------------------------------------
+  # "MFA on the owner account; delete test accounts and API keys" is a blocker that nothing could verify: the editor
+  # shows MFA state to whoever is logged in, and an API key is invisible once created. Postgres knows all three.
+  # Like the hardening checks above, this is reported on a public host only — a LAN dev box with MFA off is fine.
+  if [[ "${tls_mode}" == "internal" ]] && ! sim unhardened; then
+    info "accounts: not checked under TLS_MODE=internal (MFA and leftover API keys matter once the host is public)"
+  else
+    # n8n 2.46 keeps the role in "user"."roleSlug" (there is no "role" column), and `kind` separates people from
+    # service accounts, which cannot have MFA at all.
+    owners_total="$(pg "select count(*) from \"user\" where \"roleSlug\" = 'global:owner' and kind = 'person'")"
+    owners_nomfa="$(pg "select count(*) from \"user\" where \"roleSlug\" = 'global:owner' and kind = 'person' and \"mfaEnabled\" = false")"
+    if sim unhardened; then owners_total="1"; owners_nomfa="1"; fi
+    if [[ ! "${owners_nomfa}" =~ ^[0-9]+$ ]]; then
+      flag_warn "accounts: could not read MFA state — check by hand in Settings → Personal"
+    elif (( owners_nomfa > 0 )); then
+      flag_warn "accounts: ${owners_nomfa} of ${owners_total:-?} owner account(s) have no MFA — that password is the only thing between the internet and every credential in the instance: Settings → Personal → Two-factor authentication (PROD-PLAN D-6)"
+    else
+      ok "accounts: every owner account has MFA enabled"
+    fi
+    # Leftovers from building the thing: example.com logins and the smoke suite's own API key.
+    test_users="$(pg "select count(*) from \"user\" where email ilike '%@example.com' or email ilike '%@example.org' or email ilike '%@example.net'")"
+    if [[ "${test_users}" =~ ^[0-9]+$ ]] && (( test_users > 0 )); then
+      flag_warn "accounts: ${test_users} account(s) with an example.* e-mail still exist — delete the ones left over from testing (Settings → Users), or they are permanent logins nobody owns"
+    fi
+    if [[ "$(pg "select to_regclass('public.user_api_keys') is not null")" == "t" ]]; then
+      keys_total="$(pg "select count(*) from user_api_keys")"
+      keys_smoke="$(pg "select count(*) from user_api_keys where label = 'kit-smoke'")"
+      if sim unhardened; then keys_total="2"; keys_smoke="1"; fi
+      if [[ "${keys_smoke}" =~ ^[0-9]+$ ]] && (( keys_smoke > 0 )); then
+        flag_warn "accounts: the smoke suite's 'kit-smoke' API key exists on this host — it has every scope the owner has. Delete it (Settings → n8n API) unless you are still running make smoke here"
+      elif [[ "${keys_total}" =~ ^[0-9]+$ ]] && (( keys_total > 0 )); then
+        ok "accounts: ${keys_total} API key(s), none of them the smoke suite's"
+      else
+        ok "accounts: no API keys"
+      fi
+    fi
   fi
 else
   flag_warn "postgres not healthy — database checks skipped"

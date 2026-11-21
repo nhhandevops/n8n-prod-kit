@@ -80,6 +80,20 @@ routes and never go through it, so integrations keep working. Two details bite:
 
 An empty `UI_ALLOW_CIDR` means everyone; an empty user or hash with `UI_PROTECT=on` makes Caddy refuse to start.
 
+**The kit's own tooling is a client too.** `/rest` and `/api/v1` are behind both layers, and "it is running on the
+host" is no exemption — see Docker NAT above. So with `UI_PROTECT=on`:
+
+- **`make smoke` needs the password**, which `.env` cannot supply because it holds only the bcrypt hash:
+  `KIT_UI_PASSWORD='<the edge password>' make -C compose smoke`. Without it the suite fails at its first API call
+  with a 401 from the edge, which reads like a broken stack; the suite now says so in one line instead.
+- **Do not add the bridge range to `UI_ALLOW_CIDR` to work around it.** That would let anything on the Docker
+  network — including the Code nodes your workflows run — reach the editor and the API through the edge. Supply the
+  password instead.
+- `make kuma-setup` talks to Kuma on its own port rather than through this handler, so it is unaffected.
+
+All of it is asserted on a real stack by `tests/smoke/16-ui-protect.sh`, which turns the protection on, probes every
+claim above, and restores your `.env` — it is opt-in (`SMOKE_UI_PROTECT=1`) for that reason.
+
 ## 2 Secrets
 
 `make init` generates all of these. `FORCE=1` regenerates them, which is destructive: a fresh `N8N_ENCRYPTION_KEY`

@@ -329,6 +329,13 @@ much of your retention budget is taken up by executions parked for ever (one per
 [Forms](operations/forms.md)), Valkey still on `noeviction` with AOF, and how old your newest backup and
 restore test are.
 
+**On a host with ACME TLS it checks four more things, which it leaves a `TLS_MODE=internal` dev box alone
+about:** SSH password authentication, unattended security upgrades, whether every owner account has **MFA**,
+and whether test accounts or the smoke suite's API key are still there. Those are the two production blockers
+(`n8n-kit-PROD-PLAN.md` D-6 and D-8) that nothing could previously verify — the editor shows MFA only to
+whoever is logged in, an API key is invisible once created, and `scripts/bootstrap-host.sh` touches neither
+sshd nor unattended-upgrades, so both were operator steps taken on trust.
+
 ```bash
 make -C compose doctor
 ```
@@ -347,11 +354,14 @@ than theoretical.
 failure output looks like before you have a real failure, inject some on purpose:
 
 ```bash
-DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs make -C compose doctor
+DOCTOR_SIMULATE=lowdisk,nokey,baddns,unhealthy,expiredcert,futurecert,certwedge,parkedexecs,unhardened make -C compose doctor
 ```
 
 It prints an `[info]` line saying some failures below are injected on purpose, and exits non-zero. On this
-stack **seven of the eight** keys bite: `parkedexecs` (a quarter of `EXECUTIONS_DATA_PRUNE_MAX_COUNT` taken
+stack **eight of the nine** keys bite: `unhardened` (SSH password authentication on, unattended upgrades off,
+an owner without MFA, leftover test accounts and the smoke suite's API key — and it lifts the
+`TLS_MODE=internal` exemption those checks normally have, which is the only way to see them on a dev box),
+`parkedexecs` (a quarter of `EXECUTIONS_DATA_PRUNE_MAX_COUNT` taken
 up by executions parked for ever — one per form submission, see [Forms](operations/forms.md)), `nokey` (a
 blank encryption key), `unhealthy` (`n8n-worker-2` reported
 unhealthy, with its log lines), `lowdisk` (93 % used), `expiredcert` (the certificate the edge serves read as
@@ -389,6 +399,22 @@ make -C compose preflight
 meaning nothing about this host will stop `make up`. With `TLS_MODE=internal`, DNS is informational: any
 address is fine, and a name that does not resolve on the host is a warning, not a failure. It takes seconds
 and is safe at any time.
+
+In the **ACME modes** the DNS block is the strictest part of the script, because what it is really checking is
+whether Let's Encrypt will be able to reach you:
+
+- the **`A` record must equal this host's public IP**, or issuance cannot work — a `[FAIL]`;
+- an **`AAAA` record must equal this host's public IPv6, or not exist at all.** This is the one that surprises
+  people: Let's Encrypt validates over **IPv6 first** when the name has an `AAAA`, and its fallback to IPv4
+  happens only on a connection-level failure — and not dependably, since the IPv6 attempt can consume the
+  whole validation timeout. So a stale `AAAA` (a previous host, a provider's default address, a tunnel that no
+  longer exists) breaks ACME *while every IPv4 test you run by hand passes*. A wrong `AAAA` is a `[FAIL]`; an
+  `AAAA` on a host with no reachable IPv6 is a `[warn]` telling you to delete the record unless the host
+  really serves port 80 over IPv6;
+- **`ACME_EMAIL` must not be a placeholder.** `init.sh` only checks that it parses, so `admin@example.com`
+  survives to production, where Let's Encrypt accepts it and the "certificate expiring" notice — your last
+  warning when renewal has been failing quietly — goes nowhere. An `example.*` or `localhost` address is a
+  `[warn]`.
 
 **If it goes wrong.** It exits with `[FAIL] preflight: N problem(s) — fix them and re-run make preflight`. The
 two you will probably meet are `docker daemon not reachable` (the re-login trap) and a port in use, reported
@@ -872,7 +898,7 @@ files there ([Backup and restore](operations/backup-restore.md)).
 
 ### 7. `make smoke`: the automated version of everything you just did
 
-**What it is.** Fifteen scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
+**What it is.** Sixteen scripts in `tests/smoke/` that drive the running stack through Caddy the way you just
 did by hand, and look inside containers only where the outside cannot see. They run in order and stop at the
 first failure, because later ones build on earlier ones (04 creates the workflow 05 inspects).
 
@@ -888,6 +914,7 @@ first failure, because later ones build on earlier ones (04 creates the workflow
 | `08-restore-test` | Every remote's newest bundle verifies and the newest restores into a scratch Postgres inside the backup container. The live database is never touched. |
 | `09-monitoring` | The monitoring profile end to end. Skipped when `COMPOSE_PROFILES` does not list `monitoring`. |
 | `10-error-workflow` | A workflow that fails on purpose reaches an Error Workflow built from `templates/error-handler/`: unpublished it never runs, published it runs in mode `error` on a worker and the alert names the workflow, the node and the message ([Error workflows](operations/error-workflows.md)). |
+| `16-ui-protect` | `UI_PROTECT=on`, exercised rather than only parsed: a client outside `UI_ALLOW_CIDR` gets a bare **403** and is never offered a prompt, inside it the editor answers **401** then **200** with the right password, `/rest` and `/api/v1` are behind the same password **even from the host** (Docker NAT), and `/webhook/*`, `/form/*`, `/form-waiting/*`, `/webhook-waiting/*` and both health paths stay open with no credentials. **Opt-in** (`SMOKE_UI_PROTECT=1`), because it changes your `.env` and restores it ([Configuration](configuration.md)). |
 | `15-form-order-intake` | The shipped `templates/form-order-intake/` end to end over both form routes, with **no credential of any kind**: the form is served from the webhook pool at the path taken from *Options* (where node version 2.2+ reads it), a good order is accepted and the page behind its `formWaitingUrl` carries the reference, the phone is normalised, and four bad orders each come back on the "what to fix" page rather than an error page. It also pins the cost: every submission leaves an execution parked for ever ([Forms](operations/forms.md)). |
 | `14-ai-faq-bot` | The shipped `templates/ai-faq-bot/` guardrails, with the model stubbed: a request with no secret and one with the wrong secret are refused (403), a 600-character question is refused before any spend, and the rate limit — driven against the kit's **real Valkey** — splits 23 questions from one sender in one minute exactly **20 answered / 3 refused with 429**, leaves a different sender unaffected, and keeps its counter under a 120 s TTL ([Endpoints that cost money](operations/paid-endpoints.md)). |
 | `13-sheets-order-log` | The shipped `templates/sheets-order-log/` up to the vendor node: one order becomes one row with the documented columns (they are the contract with your header row), all four bad-order refusals write nothing and name their field, and 20 orders at once become exactly 20 rows. The Sheets node's own shape is asserted statically; the append itself needs a Google account and is validated by hand ([Calling other APIs](operations/outbound-apis.md)). |

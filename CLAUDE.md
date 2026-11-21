@@ -31,14 +31,15 @@ Instructions for AI coding agents (Claude Code, Cursor, …) and a cheat-sheet f
 | Target | What |
 |---|---|
 | `make help` | list targets |
-| `make lint` | shellcheck + hadolint + yamllint over tracked files, then `compose/` lint (compose config, caddy validate x12) |
+| `make lint` | shellcheck + hadolint + yamllint over tracked files, that every tracked `*.sh` is executable in the index, then `compose/` lint (compose config, caddy validate x12) |
 | `make bootstrap-test` | run `scripts/bootstrap-host.sh` inside Ubuntu/Debian/Rocky/Alma containers (~5–15 min) |
+| `make acme-test` | issue a real certificate from Pebble (Let's Encrypt's test CA) with the shipped Caddyfile — the ACME path, without a public host (~1 min; `tests/acme/README.md` says what it does **not** prove) |
 
 The Compose kit's targets live in `compose/Makefile` — `make -C compose help`. All shipped: `init`, `pin`, `render`, `preflight`, `config`, `up`, `down`, `restart`, `pull`, `ps`, `logs`, `status`, `smoke`, `doctor`, `scale-workers`, `kuma-setup`, `backup-now`, `backups`, `restore`, `restore-clean`, `restore-test`, `detach-recovery-key`, `rotate-recovery-key`, `upgrade`, `rollback`, `loadtest`, `chaos`, `dev-ca`, `trust-ca`, `lint`, `version`, `env-keys`, `clean`.
 
 `make chaos SCENARIO=worker|redis|main` kills or stops containers on purpose. Never run it against a stack you did not create for testing, and read `docs/operations/chaos-drills.md` first — it records what a killed worker actually costs (in-flight executions are lost, not retried) and why `docker kill` does not exercise the restart policy.
 
-Smoke suite rules: `tests/smoke/NN-*.sh` share `tests/smoke/lib.sh`; never pipe into an early-exiting reader (`| grep -q`, `| head`) under pipefail — capture first; n8n allows only 5 logins per window, so reuse the session/API key in `compose/.smoke/`.
+Smoke suite rules: `tests/smoke/NN-*.sh` share `tests/smoke/lib.sh`; never pipe into an early-exiting reader (`| grep -q`, `| head`) under pipefail — capture first; n8n allows only 5 logins per window, so reuse the session/API key in `compose/.smoke/`. On a host with `UI_PROTECT=on` the suite needs the edge password — `KIT_UI_PASSWORD='…' make -C compose smoke` — because `.env` keeps only its bcrypt hash and `/rest` and `/api/v1` are behind basic auth even for requests made on the host.
 
 Remote shell tip (learned the hard way): `docker compose up` and `make up` read stdin — never feed a multi-step script to a remote host through `ssh host 'bash -s' <<EOF`; copy it to a file and run `bash file </dev/null`.
 

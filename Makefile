@@ -8,7 +8,7 @@ SH_FILES    := $(shell $(LS_FILES) '*.sh' 2>/dev/null)
 DOCKERFILES := $(shell $(LS_FILES) '*Dockerfile*' 2>/dev/null)
 YAML_FILES  := $(shell $(LS_FILES) '*.yml' '*.yaml' '.yamllint' 2>/dev/null)
 
-.PHONY: help lint bootstrap-test
+.PHONY: help lint bootstrap-test acme-test
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-16s %s\n", $$1, $$2}'
@@ -17,8 +17,17 @@ help: ## Show this help
 bootstrap-test: ## Run scripts/bootstrap-host.sh inside Ubuntu/Debian/Rocky/Alma containers (install-only, ~10 min)
 	@tests/bootstrap/test-in-container.sh
 
+acme-test: ## Issue a real certificate from Pebble (Let's Encrypt's test CA) using the shipped Caddyfile (~1 min)
+	@tests/acme/run.sh
+
 lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then compose/ lint if present
 	@if [ -n "$(SH_FILES)" ]; then shellcheck -x $(SH_FILES) && echo "shellcheck: OK"; else echo "shellcheck: no .sh files yet"; fi
+	@# Mode bits, because a .sh committed 644 from the Windows clone reads perfectly in a diff and then fails at
+	@# runtime as "Permission denied" — a make target that does nothing, or a smoke script the suite skips. It
+	@# cost PR #48 and then cost another round on 2026-11-19, so it fails here instead. Every tracked .sh in this
+	@# repo is executable, sourced libraries included; fix with: git update-index --chmod=+x <file>
+	@bad=$$(git ls-files -s '*.sh' 2>/dev/null | awk '$$1 != "100755" { print "  " $$4 }'); \
+	if [ -n "$$bad" ]; then printf 'not executable in git:\n%s\n' "$$bad" >&2; exit 1; else echo "script modes: OK"; fi
 	@if [ -n "$(DOCKERFILES)" ]; then hadolint $(DOCKERFILES) && echo "hadolint: OK"; else echo "hadolint: no Dockerfiles yet"; fi
 	@if [ -n "$(YAML_FILES)" ]; then yamllint -s $(YAML_FILES) && echo "yamllint: OK"; else echo "yamllint: no YAML yet"; fi
 	@if [ -f compose/Makefile ]; then $(MAKE) -C compose lint; fi
@@ -35,6 +44,6 @@ lint: ## shellcheck + hadolint + yamllint over tracked files (empty-safe), then 
 	@if [ -f compose/Makefile ] && grep -qE "^$@:" compose/Makefile; then \
 	  printf '"%s" is a Compose-kit target, not a root one. Run:\n\n    make -C compose %s\n\n' "$@" "$@" >&2; \
 	else \
-	  printf 'no "%s" target here. This Makefile has: help, lint, bootstrap-test.\nThe Compose kit has the rest: make -C compose help\n' "$@" >&2; \
+	  printf 'no "%s" target here. This Makefile has: help, lint, bootstrap-test, acme-test.\nThe Compose kit has the rest: make -C compose help\n' "$@" >&2; \
 	fi; \
 	exit 2
