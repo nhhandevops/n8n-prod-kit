@@ -7,6 +7,11 @@ This page is the numbers. [Scaling](operations/scaling.md) is the knobs: what `W
 `WORKER_CONCURRENCY` do, what each worker costs, when to scale webhook processors instead, and how to run
 `make loadtest` against your own workflows. Read this to choose a host; read that to tune one.
 
+**Before you buy one**, the size is only half the decision: `n8n-kit-PROD-PLAN.md` P1 lists what a provider
+must actually give you (KVM — Docker needs a real kernel — x86-64, a dedicated IPv4, inbound 80/443/udp443,
+40 GB of disk) and §7 has current prices for Singapore and Vietnam. A plan with the right core count and the
+wrong virtualisation runs nothing.
+
 ## The short answer
 
 | Host | What it did with the test workflow | Pick it when |

@@ -125,7 +125,7 @@ and buy something. Have all of this in hand first:
 
 | Have ready | Why, and what goes wrong without it |
 |---|---|
-| A VPS account with billing working, and the size from §7 (Ubuntu 24.04, 4 vCPU / 8 GB with monitoring — §1 condition 3) | P1 is one command; waiting on a card verification is not |
+| A VPS account with billing working, and the size from §7 (Ubuntu 24.04, 4 vCPU / 8 GB with monitoring — §1 condition 3). **Read P1's "what to demand from the provider" table before paying** — KVM, x86-64, a dedicated IPv4 and open 80/443 are not universal on cheap plans | P1 is one command; waiting on a card verification, or discovering the plan is LXC, is not |
 | A domain whose DNS you control, **with the record's TTL lowered to 300 s a day in advance** | If the first `A` record is wrong you wait out the *old* TTL before ACME can succeed, and Let's Encrypt counts failed validations against your account. Lowering the TTL is the one thing that must happen before the evening, not during it |
 | An SSH keypair, with the **public** key given to the provider at host creation | `scripts/bootstrap-host.sh` turns off password authentication. Discovering afterwards that your key never got installed means the provider's web console |
 | The password manager open, ready for **three** entries: `N8N_ENCRYPTION_KEY`, the offline recovery key, the edge basic-auth password | P2 and P3 each generate one, each is shown once, and a key you have not read back from the manager is a key you do not have |
@@ -140,6 +140,26 @@ and buy something. Have all of this in hand first:
 never through a chat window, a command line (`/proc/<pid>/cmdline` is world-readable) or this file.
 
 ### P1 — The host
+
+#### What to demand from the provider, before paying
+
+Five of these are not universal on cheap plans, and each one turns the evening into a refund request:
+
+| Require | Because |
+|---|---|
+| **KVM** virtualisation | Docker needs a real kernel. OpenVZ and LXC plans cannot run this stack, and the cheapest tiers are often exactly those |
+| **x86-64** | Every row in [`docs/compat.md`](docs/compat.md) is amd64. The kit has **never run on arm64** — Oracle's free Ampere tier is tempting and would make production the first test |
+| A **dedicated IPv4** | ACME validates against the address the `A` record points at; a shared or CGNAT address cannot serve HTTP-01 |
+| **80, 443 and udp/443 open** without a support ticket | Some providers filter inbound by default. Check before buying, not after |
+| **40 GB** disk, 80 GB if backups stay local | Images, Postgres, and whatever `BACKUP_REMOTES` keeps on-host. What bounds database growth is `EXECUTIONS_DATA_PRUNE_MAX_COUNT`, not the disk |
+| Ubuntu 24.04 available as a clean image | §1 condition 3, and the only platform `docs/compat.md` records |
+
+Two further things, both of which have bitten this kit already:
+
+- **If the provider hands you an IPv6, decide about the `AAAA` record before issuing a certificate** — P3 has the detail. The short version: Let's Encrypt validates over IPv6 first, so a published `AAAA` the host does not actually serve on port 80 breaks issuance while every IPv4 test you run by hand passes.
+- **Do not put Cloudflare's proxy (the orange cloud) in front of this stack.** Caddy's `UI_ALLOW_CIDR` matches the TCP peer, so behind a proxy every request arrives from the proxy's addresses and the allow-list stops meaning anything — `compose/caddy/ui-protect-on.caddy` says it would need `trusted_proxies` plus the `client_ip` matcher instead. Cloudflare for **DNS only** (grey cloud) is a good choice though: free, and its API makes P0's TTL change a one-liner.
+
+**Provider snapshots are not the backup.** They are a convenience for rebuilding the box; the thing that survives the provider losing your account is the encrypted off-host bundle in P4.
 
 ```bash
 # on a fresh host, as a user with sudo
@@ -406,16 +426,22 @@ instance, lowers the effort behind D-5 and raises nothing.
 
 ## 7. What it costs
 
-| Item | Rough |
+**The earlier estimate here was Europe-only and has been corrected** (checked 2026-11-22). €4–6 for 2 vCPU / 8 GB is a real German price and an unreal Asian one, and this kit's templates serve Vietnamese customers, so Europe is the wrong continent whatever it costs: ~250 ms to every form submit, and to the editor.
+
+| Item | Rough, for the decided 4 vCPU / 8 GB shape |
 |---|---|
-| VPS, 2 vCPU / 8 GB, core stack only | 100–150k đ per month (or about €4–6) |
-| VPS, 4 vCPU / 8 GB, with monitoring | roughly double |
-| Domain | about 200k đ per year |
+| **Singapore**, international provider (Vultr ≈ $40, DigitalOcean ≈ $56) | **$40–56/month** — ~30–50 ms to Vietnamese customers, snapshots, a real API |
+| **Vietnam**, local provider (Vietnix ≈ 420k for 8 GB, VMON ≈ 655k, Interdata ≈ 696–776k, VinaHost ≈ $37) | **420k–776k đ/month** — lowest latency and VND billing; quality varies, so check reviews and confirm KVM |
+| Europe (Hetzner and similar), for reference only | €5–10/month, and not worth it here |
+| 2 vCPU / 8 GB, core stack only, no monitoring | roughly half the above — and bursts drain in 35–40 s instead of 18–19 s ([sizing](docs/sizing.md)) |
+| Domain | about 200k đ per year for a `.com`; a `.vn` is several times that |
 | Off-host backups (Cloudflare R2: 10 GB free tier, no egress fee) | 0 at this size |
 | Telegram alerts | 0 |
 | A second scratch host for the DR drill, for one hour | hourly billing, pennies |
 
-The expensive resource is not money. It is the hour in P4.
+So the honest figure for what §1 decided is **500k–1.4M đ a month**, two to four times what this table used to say. Vendor pages move and promotions expire; re-check before buying rather than trusting this row.
+
+The expensive resource is still not money. It is the hour in P4.
 
 ---
 
