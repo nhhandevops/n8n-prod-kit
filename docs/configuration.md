@@ -184,6 +184,26 @@ history out of the database — which is why `make loadtest` warns and asks for 
 prunes hourly, and `make doctor` warns when the oldest execution is older than twice `EXECUTIONS_DATA_MAX_AGE`, which
 means pruning has stalled.
 
+### Two defaults n8n has announced it will shrink
+
+Upgrading to 2.48.7 made n8n print this at startup, about variables **this kit does not set** and therefore
+inherits:
+
+| Variable | Default today | Announced |
+|---|---|---|
+| `N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES` | 2 GiB | 256 MiB |
+| `N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES` | 5000 | 1000 |
+
+n8n's own advice is *"set it explicitly to keep your current limit"*, and it is worth taking if any workflow
+of yours unzips archives: after the version that lands the change, a job that works today starts failing with
+nothing in your own diff to explain it. That is the same hazard as a floating image tag, which is why this
+kit pins digests — a value that moves under you on an upgrade is not a default, it is a surprise. Put both in
+`.env` with the numbers above if you rely on them; leave them alone if you do not use the Compression node.
+
+**Read the startup log after every upgrade for exactly this reason.** `make upgrade` leaves it in
+`compose/.upgrade/<time>-upgrade.log`, and n8n's deprecation service prints one block naming every variable
+it intends to change.
+
 **Waiting executions are exempt from pruning but not from the count.** Pruning never deletes a `waiting` row — an
 approval link must survive until its deadline — while the count cap's cutoff is computed over *all* executions,
 waiting ones included. So anything that parks executions permanently eats the retention budget of every other
